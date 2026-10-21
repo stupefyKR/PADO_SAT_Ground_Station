@@ -2,20 +2,28 @@
 
 ## 현재 상태
 
-- 현재 단계: 단계 1 인터페이스·공통 파일 교환 기준선 완료; 수정된 단계 2(VM 간 통신 기반) 진행 중
-- 다음 작업: Linux 서버·가상화 환경이 준비되면 서브시스템별 VM의 실제 연결·격리 시험. F19의 archive 시작 원시데이터 회수를 포함
+- 현재 단계: 단계 1 인터페이스·공통 파일 교환 기준선과 단계 2 공통 통신 기반 완료
+- 다음 작업: 단계 3의 모의 TM 수신 경로 구현. 실제 TM 패킷 정의는 ICD 확정 때 연결
 - 미결 사항: TBD(ICD) 항우연·연세대 연동 포트·프로토콜·프레임, TC 명령·TM 실제 항목, DGS-GS 임시 원시데이터 용량·보관시간·회수 주기; TBD(HMAC) 트랜시버 세부 사양
 
 ## 기록
 
+### 2026-10-21 — 단계 2 개발용 컨테이너 네트워크 검증
+
+- 환경: 사용자가 제공한 VMware Ubuntu 26.04 VM 한 대의 Docker 29.6.1. 최종 서브시스템별 VM 구조를 대체하지 않는 개발용 격리 네트워크로 사용
+- 구현: `tests/container/`에 Ubuntu 24.04 시험 이미지, 서로 다른 컨테이너 IP의 mTLS 왕복·상대 IP SAN 거부, SSH 호스트 키 고정 SFTP ACK 업로드·F19 원시데이터 회수·오류 거부, 연결되지 않은 Docker 네트워크의 접속 거부 시험 추가. 비밀 키·인증서는 실행 시 임시 생성
+- 시험: VM 시험 컨테이너에서 GCC Release CTest 3/3, Clang ASan+UBSan CTest 3/3 통과. 컨테이너 간 mTLS·SFTP·격리 시험 통과. 단계 2 개발 기준선 완료
+- 남은 검증: 실제 서브시스템별 VM 네트워크, UFW, 호스트·장비 격리와 서비스 배포는 단계 7에서 수행
+- 다음: 단계 3 모의 TM 수신 경로
+
 ### 2026-10-21 — 단계 2 공통 전송 기반
 
 - 완료: Linux `libgs`에 상호 인증 TLS 길이 접두 프레임, VM 내부 Unix socket JSON 프레임, 호스트 키 고정 SFTP 데이터·매니페스트 업로드/회수 구현. 임시 인증서·SSH 키를 생성하는 통합 시험 추가
-- 시험: Windows MSVC Release·ASan CTest 각 1/1, Python 10/10, 비밀정보 검사 통과. [Ubuntu CI 실행 #8](https://github.com/stupefyKR/PADO_SAT_Ground_Station/actions/runs/39561524833)에서 GCC Release·Clang ASan+UBSan CTest 각 3/3, clang-tidy, Python·비밀정보 검사 통과
+- 시험: Windows MSVC Release·ASan CTest 각 1/1, Python 10/10, 비밀정보 검사 통과. [Ubuntu CI 실행 #9](https://github.com/stupefyKR/PADO_SAT_Ground_Station/actions/runs/39561766519)에서 GCC Release·Clang ASan+UBSan CTest 각 3/3, clang-tidy, Python·비밀정보 검사 통과
 - 변경 파일: `libgs/include/gs/`, `libgs/src/`, `tests/`, `CMakeLists.txt`, `.github/workflows/ci.yml`, `README.md`, `docs/`
 - 결정: 전송 계약과 제한값 → DECISIONS.md #8
-- 미완료: 실제 서브시스템별 VM 사이 연결·격리 시험. 사용자는 Linux 서버·가상화 환경이 아직 준비되지 않았다고 확인함
-- 다음: 서버 준비 시 실제 VM 검증 수행. 그 전까지 단계 2는 진행 중으로 유지
+- 당시 미완료: 실제 서브시스템별 VM 사이 연결·격리 시험. 이후 제공된 VMware VM의 Docker 격리 네트워크에서 개발용 통신 시험을 수행함
+- 다음: 실제 VM 배포 검증은 단계 7에서 수행
 
 ### 2026-10-21 — 앱 우선 개발 순서 조정
 

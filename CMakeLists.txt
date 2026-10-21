@@ -65,6 +65,8 @@ if(BUILD_TESTING)
         target_link_libraries(gs_sftp_tests PRIVATE gs)
         add_test(NAME gs_sftp_tests COMMAND ${Python3_EXECUTABLE}
                  ${CMAKE_SOURCE_DIR}/tests/run_sftp.py $<TARGET_FILE:gs_sftp_tests>)
+        add_executable(gs_container_net_probe tests/container/network_probe.c)
+        target_link_libraries(gs_container_net_probe PRIVATE gs)
     endif()
 endif()
 
