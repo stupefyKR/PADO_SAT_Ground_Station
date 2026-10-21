@@ -12,9 +12,10 @@ static int valid_json_object(const char *json, size_t length)
 {
     char input[GS_IPC_MAX_BYTES + 1u];
     cJSON *root;
+    size_t index;
     if (json == NULL || length == 0u || length > GS_IPC_MAX_BYTES ||
             memchr(json, '\0', length) != NULL) return 0;
-    memcpy(input, json, length);
+    for (index = 0u; index < length; ++index) input[index] = json[index];
     input[length] = '\0';
     root = cJSON_ParseWithLengthOpts(input, length + 1u, NULL, 1);
     if (!cJSON_IsObject(root)) {

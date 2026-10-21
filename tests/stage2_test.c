@@ -62,9 +62,10 @@ static int bind_ip(int fd, const char *ip, unsigned short port)
 }
 
 static int server_child(int listener, const char *server_cert, const char *server_key,
-                        const char *ca_path, int wrong_identity)
+                        const char *ca_path, int mode)
 {
     unsigned char buffer[16];
+    const unsigned char oversized[] = {0, 16, 0, 1};
     size_t length = 0u;
     SSL_CTX *context = gs_tls_context_new(server_cert, server_key, ca_path, 1);
     SSL *session;
@@ -74,8 +75,11 @@ static int server_child(int listener, const char *server_cert, const char *serve
     client = accept(listener, NULL, NULL);
     if (client < 0) goto done;
     session = gs_tls_session_new(context, client, 1, "127.0.0.3");
-    if (wrong_identity) {
+    if (mode == 1) {
         result = session == NULL ? 0 : 1;
+    } else if (mode == 2) {
+        result = session != NULL &&
+                 SSL_write(session, oversized, sizeof(oversized)) == (int)sizeof(oversized) ? 0 : 1;
     } else if (session != NULL &&
                gs_tls_recv_frame(session, buffer, sizeof(buffer), &length) == 0 &&
                length == 3u && memcmp(buffer, "abc", 3u) == 0 &&
@@ -92,7 +96,7 @@ done:
 
 static void test_tls(const char *server_cert, const char *server_key,
                      const char *client_cert, const char *client_key,
-                     const char *ca_path, int wrong_identity)
+                     const char *ca_path, int mode)
 {
     struct sockaddr_in address = {0};
     socklen_t address_size = sizeof(address);
@@ -113,7 +117,7 @@ static void test_tls(const char *server_cert, const char *server_key,
     expect(child >= 0, "TLS fork");
     if (child < 0) goto done;
     if (child == 0) _exit(server_child(listener, server_cert, server_key,
-                                      ca_path, wrong_identity));
+                                      ca_path, mode));
     client = socket(AF_INET, SOCK_STREAM, 0);
     if (client < 0 || bind_ip(client, "127.0.0.3", 0) != 0 ||
             connect(client, (const struct sockaddr *)&address, sizeof(address)) != 0) {
@@ -124,12 +128,15 @@ static void test_tls(const char *server_cert, const char *server_key,
     expect(context != NULL, "TLS client context");
     if (context == NULL) goto parent_done;
     session = gs_tls_session_new(context, client, 0,
-                                 wrong_identity ? "127.0.0.9" : "127.0.0.2");
-    if (wrong_identity) {
+                                 mode == 1 ? "127.0.0.9" : "127.0.0.2");
+    if (mode == 1) {
         expect(session == NULL, "TLS reject wrong peer IP");
     } else {
         expect(session != NULL, "TLS mTLS handshake");
-        if (session != NULL) {
+        if (session != NULL && mode == 2) {
+            expect(gs_tls_recv_frame(session, buffer, sizeof(buffer), &length) != 0,
+                   "TLS reject oversized frame length");
+        } else if (session != NULL) {
             expect(gs_tls_send_frame(session, (const unsigned char *)"abc", 3u) == 0,
                    "TLS frame send");
             expect(gs_tls_recv_frame(session, buffer, sizeof(buffer), &length) == 0 &&
@@ -158,5 +165,6 @@ int main(int argc, char **argv)
     test_ipc();
     test_tls(argv[1], argv[2], argv[3], argv[4], argv[5], 0);
     test_tls(argv[1], argv[2], argv[3], argv[4], argv[5], 1);
+    test_tls(argv[1], argv[2], argv[3], argv[4], argv[5], 2);
     return failures == 0 ? 0 : 1;
 }

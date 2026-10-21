@@ -38,10 +38,26 @@ int main(int argc, char **argv)
     failures += check(gs_sftp_upload_pair(client, argv[6], argv[7], argv[10],
                                           "mps", "ros", ack_types, 1u) != 0,
                       "reject wrong route");
+    {
+        FILE *tampered = fopen(argv[6], "wb");
+        failures += check(tampered != NULL, "open tampered fixture");
+        if (tampered != NULL) {
+            failures += check(fwrite("changed", 1u, 7u, tampered) == 7u,
+                              "write tampered fixture");
+            failures += check(fclose(tampered) == 0, "close tampered fixture");
+            failures += check(gs_sftp_upload_pair(client, argv[6], argv[7], argv[10],
+                                                  "ros", "mps", ack_types, 1u) != 0,
+                              "reject altered payload hash");
+        }
+    }
     failures += check(gs_sftp_download_pair(client, argv[11], "raw.bin", argv[12],
                                             "dgs-gs", "dgs-archive", raw_types, 2u,
                                             1024u) == 0,
                       "F19 read-only raw pull");
+    failures += check(gs_sftp_download_pair(client, argv[11], "raw.bin", argv[13],
+                                            "dgs-gs", "dgs-archive", raw_types, 2u,
+                                            3u) != 0,
+                      "reject oversized raw pull");
     failures += check(gs_sftp_download_pair(client, argv[11], "raw.bin", argv[13],
                                             "ros", "mps", raw_types, 2u, 1024u) != 0,
                       "reject wrong pull route");

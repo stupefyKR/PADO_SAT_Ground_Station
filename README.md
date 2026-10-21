@@ -14,7 +14,7 @@ GitHub 원격 저장소는 비공개로 설정되어 있습니다(2026-10-21 확
 |---|---|---|---|
 | 초기 구성 | 저장소·빌드·시험 골격 | 완료 | Windows 일반·ASan 시험 통과; 이후 단계 1에서 Linux CI 검증 |
 | 1 | `interfaces/`, `libgs/` | 완료(기준선) | N2 21개 원본 화살표, 승인 흐름 21개, Windows·Linux 매니페스트·로그·파일 교환 시험 통과; TC/TM 실값은 ICD 대기 |
-| 2 | VM 간 통신 기반 | 대기 | 확정된 연결의 스트림·파일 교환 |
+| 2 | VM 간 통신 기반 | 진행 중 | Linux 공통 모듈·CI 통합 시험 구현; 실제 VM 연결 시험 대기 |
 | 3 | TM 수신 경로 | 대기 | 시험용 프레임 |
 | 4 | MPS 핵심 기능 | 대기 | 웹 UI는 단계 9 |
 | 5 | TC 경로 | 대기 | 실제 명령 값은 ICD 대기 |
@@ -67,6 +67,8 @@ $env:PATH = 'C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MS
 
 GNU/Clang 빌드에는 개발방향 11.5절의 경고·하드닝 옵션을 적용하고, `GS_ENABLE_SANITIZERS=ON`은 AddressSanitizer와 UndefinedBehaviorSanitizer를 함께 활성화합니다. MSVC는 대응 보안 옵션을 사용하며 sanitizer 빌드에는 AddressSanitizer만 제공합니다.
 
+단계 2의 Linux 빌드에는 `libssh-dev`와 `openssh-server`도 필요합니다. CTest는 시험 실행 중 임시 CA·TLS 인증서·SSH 키를 생성하고 127.0.0.2의 임시 SFTP 서버를 사용합니다. 비밀 키와 인증서 개인키는 저장소에 생성하지 않습니다. `libgs`는 상호 인증 TLS 길이 접두 프레임, Unix socket JSON 프레임, SSH 호스트 키 고정 SFTP 파일·매니페스트 업로드와 읽기 전용 회수 경로를 제공합니다. 실제 서비스와 VM 배포 설정은 아직 없습니다.
+
 현재 Windows Release와 AddressSanitizer 빌드는 각각 CTest 1/1을 통과했고, Python 비밀정보·인터페이스 시험은 10/10을 통과했습니다. Ubuntu CI에서 GCC Release, Clang AddressSanitizer+UndefinedBehaviorSanitizer CTest, clang-tidy, Python·비밀정보 검사도 통과했습니다([실행 #3](https://github.com/stupefyKR/PADO_SAT_Ground_Station/actions/runs/39551198200)). 매니페스트 파서는 `tests/fuzz_manifest.c`에 libFuzzer 대상으로 등록했으나 퍼징 실행은 단계 8에서 수행합니다. 단계 1의 파일 교환은 로컬 원자적 공개·검증까지이며 SFTP 송수신, 격리·삭제, inbox 감시는 해당 서비스 단계에서 추가합니다.
 
 `.github/workflows/ci.yml`은 Ubuntu GCC Release, Clang ASan+UBSan, 정적 분석, Python 검사를 푸시마다 실행합니다. 같은 시험을 Linux에서 재현하려면 OpenSSL 개발 헤더, Ninja, GCC, Clang, Python이 필요합니다.
@@ -84,7 +86,7 @@ python3 tools/check_secrets.py --staged
 
 ## 로컬 개발 환경
 
-현재 서비스와 시뮬레이터가 구현되지 않아 전체 경로 실행 방법은 없습니다.
+현재 서비스와 시뮬레이터가 구현되지 않아 전체 경로 실행 방법은 없습니다. 단계 2 공통 통신의 Linux 시험은 위 CMake·CTest 명령으로 실행합니다. 실제 VM 간 연결·격리 시험은 Linux 서버와 가상화 환경이 준비된 뒤 수행합니다.
 
 ## 보안 주의 사항
 
