@@ -11,10 +11,12 @@ static int copy_string(const cJSON *object, const char *key, char *destination,
 {
     const cJSON *value = cJSON_GetObjectItemCaseSensitive(object, key);
     size_t length;
+    size_t index;
     if (!cJSON_IsString(value) || value->valuestring == NULL) return -1;
     length = strlen(value->valuestring);
     if (length == 0 || length >= capacity) return -1;
-    memcpy(destination, value->valuestring, length + 1u);
+    for (index = 0; index < length; ++index) destination[index] = value->valuestring[index];
+    destination[length] = '\0';
     return 0;
 }
 
@@ -125,10 +127,11 @@ int gs_manifest_parse(const char *json, size_t length, gs_manifest_t *out)
     gs_manifest_t parsed = {0};
     const cJSON *version;
     cJSON *root;
+    size_t index;
     if (json == NULL || out == NULL || length == 0 ||
             length > GS_MANIFEST_MAX_BYTES || memchr(json, '\0', length) != NULL ||
             contains_unicode_nul(json, length)) return -1;
-    memcpy(input, json, length);
+    for (index = 0; index < length; ++index) input[index] = json[index];
     input[length] = '\0';
     root = cJSON_ParseWithLengthOpts(input, length + 1u, NULL, 1);
     if (!cJSON_IsObject(root) || !exact_fields(root)) goto invalid;
