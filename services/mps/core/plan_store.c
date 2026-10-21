@@ -27,6 +27,15 @@ static int bounded_actor(const char *actor)
     return 0;
 }
 
+static void copy_actor(char destination[GS_MPS_ACTOR_SIZE], const char *actor)
+{
+    size_t index;
+    for (index = 0u; index < GS_MPS_ACTOR_SIZE; ++index) {
+        destination[index] = actor[index];
+        if (actor[index] == '\0') break;
+    }
+}
+
 static int find_pass(const gs_mps_pass_catalog_t *passes, const char *id,
                      gs_mps_pass_t *out)
 {
@@ -97,11 +106,11 @@ int gs_mps_plan_create(gs_mps_plan_store_t *store,
             !bounded_id(pass_id, GS_MPS_PASS_ID_SIZE, 0) ||
             find_pass(passes, pass_id, &selected) != 0) return -1;
     first = &store->history[0];
-    memset(first, 0, sizeof(*first));
+    *first = (gs_mps_plan_revision_t){0};
     first->revision = 1u;
     first->command_db_version = commands->version;
     first->pass = selected;
-    memcpy(first->edited_by, actor, strlen(actor) + 1u);
+    copy_actor(first->edited_by, actor);
     first->non_operational = 1;
     store->revision_count = 1u;
     return 0;
@@ -162,11 +171,11 @@ int gs_mps_plan_edit(gs_mps_plan_store_t *store, uint32_t expected_revision,
         for (index = position; index + 1u < next.step_count; ++index)
             next.steps[index] = next.steps[index + 1u];
         --next.step_count;
-        memset(&next.steps[next.step_count], 0, sizeof(next.steps[0]));
+        next.steps[next.step_count] = (gs_mps_step_t){0};
     } else return -1;
     sort_steps(&next);
     next.revision = (uint32_t)(store->revision_count + 1u);
-    memcpy(next.edited_by, actor, strlen(actor) + 1u);
+    copy_actor(next.edited_by, actor);
     store->history[store->revision_count] = next;
     ++store->revision_count;
     *new_revision = next.revision;
