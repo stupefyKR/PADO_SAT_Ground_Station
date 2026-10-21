@@ -2,7 +2,7 @@
 
 ## 개요
 
-경희대학교 PWNLAB의 PADO-SAT 큐브위성 지상국 소프트웨어 저장소입니다. 작업 폴더 안의 `pado-gs/`가 Git 저장소 루트입니다. 개발방향은 온프레미스 VM과 컨테이너를 배포 단위로 삼고, VM을 보안 경계로 사용합니다. 단계 1의 인터페이스 기준선, 단계 2의 공통 통신 라이브러리와 단계 3의 시험용 TM 수신 경로가 있습니다. 위성에 송신하거나 실제 외부 지상국에 연결하는 실행 기능은 없습니다.
+경희대학교 PWNLAB의 PADO-SAT 큐브위성 지상국 소프트웨어 저장소입니다. 작업 폴더 안의 `pado-gs/`가 Git 저장소 루트입니다. 개발방향은 온프레미스 VM과 컨테이너를 배포 단위로 삼고, VM을 보안 경계로 사용합니다. 단계 1의 인터페이스 기준선, 단계 2의 공통 통신 라이브러리, 단계 3의 시험용 TM 수신 경로와 단계 4-1의 MPS 입력 모델이 있습니다. 위성에 송신하거나 실제 외부 지상국에 연결하는 실행 기능은 없습니다.
 
 GitHub 원격 저장소는 비공개로 설정되어 있습니다(2026-10-21 확인). 초기 푸시 뒤 공개 설정을 발견해 즉시 비공개로 전환한 기록은 [진행 기록](docs/PROGRESS.md)에 남겼습니다.
 
@@ -16,7 +16,11 @@ GitHub 원격 저장소는 비공개로 설정되어 있습니다(2026-10-21 확
 | 1 | `interfaces/`, `libgs/` | 완료(기준선) | N2 21개 원본 화살표, 승인 흐름 21개, Windows·Linux 매니페스트·로그·파일 교환 시험 통과; TC/TM 실값은 ICD 대기 |
 | 2 | VM 간 통신 기반 | 완료(개발 기준선) | VMware Linux VM의 Docker 격리 네트워크에서 mTLS·SFTP 송수신/거부 시험 통과; 실제 VM 배포 검증은 단계 7 |
 | 3 | TM 수신 경로 | 완료(시뮬레이터 기준선) | `fake_kari` → `dgs-gs` → `ros-core`; 실제 ICD·TM 해석 대기 |
-| 4 | MPS 핵심 기능 | 대기 | 웹 UI는 단계 9 |
+| 4-1 | MPS 입력·카탈로그 기준선 | 완료(비운용 기준선) | 빈 명령 DB만 판독; 내부 패스 모델 검증, 실제 FDS 형식 대기 |
+| 4-2 | 시퀀스 초안·버전 이력 | 대기 | |
+| 4-3 | 충돌 분석 | 대기 | 확정된 명령 속성 필요 |
+| 4-4 | 승인·출력·ROS 연동 | 대기 | |
+| 4-5 | Mission Request·업링크 반입 | 대기 | 웹 UI는 단계 9 |
 | 5 | TC 경로 | 대기 | 실제 명령 값은 ICD 대기 |
 | 6 | FDS·DGS-NET·아카이브·SDC | 대기 | |
 | 7 | 실제 서버·VM 배포 기반 | 대기 | 장비·네트워크 확정 후 검증 |
@@ -27,7 +31,7 @@ GitHub 원격 저장소는 비공개로 설정되어 있습니다(2026-10-21 확
 
 개발방향 4.1절의 VM은 `vm-portal`, `vm-ros`, `vm-mps`, `vm-fds`, `vm-dgs-archive`, `vm-dgs-gs`, `vm-dgs-net`, `vm-mgmt`입니다. 이 저장소에는 아직 VM 배포 설정이 없습니다.
 
-계획된 TC 경로는 MPS 시퀀스 승인 → `ros-core` 명령 DB 재검증 → `ros-signer` 승인 확인·HMAC → TLS → `dgs-gs` `tc-gate` → `kari-adapter`입니다. 현재 이 경로는 구현되지 않았습니다.
+계획된 TC 경로는 MPS 시퀀스 승인 → `ros-core` 명령 DB 재검증 → `ros-signer` 승인 확인·HMAC → TLS → `dgs-gs` `tc-gate` → `kari-adapter`입니다. 현재 이 경로는 구현되지 않았습니다. 단계 4의 세부 범위와 완료 기준은 [개발방향 12장](docs/PADO-SAT_지상국_개발방향.md)에 기록했습니다.
 
 ## 저장소 구조
 
@@ -87,6 +91,8 @@ python3 tools/check_secrets.py --staged
 ## 로컬 개발 환경
 
 단계 3의 `fake_kari` → `dgs-gs` → `ros-core` 수신 경로는 Linux에서 CTest의 `gs_stage3_tests`로 실행합니다. `openssl`이 시험용 CA·상호 인증서를 임시 디렉터리에 만들고, 두 유효 프레임의 ROS 기록과 다섯 무효 입력의 DGS-GS 격리를 검사합니다. 프레임은 [시험 전용 규격](interfaces/frames/simulator.md)이며 실제 TM 항목을 해석하지 않습니다.
+
+단계 4-1의 `gs_mps_inputs_tests`는 Windows와 Linux CTest에 포함됩니다. 현재 `interfaces/command_db/commands.json`의 비운용 상태를 확인하고, 운용 활성화·미정 명령 항목·비정상 JSON을 거부합니다. 패스 목록은 ID와 UTC AOS/LOS, 여유 시간, 개수 경계를 확인하는 내부 모델입니다. 실제 FDS Contact Schedule 파일 형식, 수신·출처 검증과 명령 항목 스키마는 확정 전이며 이 코드에는 네트워크 수신·TC 출력 경로가 없습니다. 입력 파서는 `GS_BUILD_MPS_CATALOG_FUZZER=ON`으로 Clang libFuzzer 대상으로 빌드할 수 있습니다.
 
 단계 2 공통 통신의 Linux 시험도 위 CMake·CTest 명령으로 실행합니다. Docker가 있는 개발용 Linux VM에서는 다음 명령으로 두 컨테이너의 실제 네트워크 주소를 이용해 상호 인증 TLS, SFTP 파일·매니페스트, 잘못된 상대 인증서와 분리된 네트워크의 접속 거부를 시험합니다. `openssl`과 `ssh-keygen`이 필요하며, 시험 키·인증서는 임시 디렉터리에 생성됩니다. 스크립트는 시험 컨테이너·네트워크를 제거하고, 빌드된 이미지 `pado-stage2-test:local`은 재사용할 수 있게 남깁니다.
 

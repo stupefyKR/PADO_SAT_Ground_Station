@@ -35,7 +35,7 @@ jobs:
           cmake --build build-linux-sanitized --parallel 2
           ctest --test-dir build-linux-sanitized --output-on-failure
       - name: Analyze first-party C sources
-        run: clang-tidy -p build-linux-sanitized -checks='clang-analyzer-*' -warnings-as-errors='*' libgs/src/exchange.c libgs/src/hash.c libgs/src/log.c libgs/src/manifest.c libgs/src/framing.c libgs/src/ipc.c libgs/src/sftp.c sim/tm_frame.c sim/fake_kari.c services/common/tm_sim_support.c services/dgs-gs/main.c services/ros/core/main.c
+        run: clang-tidy -p build-linux-sanitized -checks='clang-analyzer-*' -warnings-as-errors='*' libgs/src/exchange.c libgs/src/hash.c libgs/src/log.c libgs/src/manifest.c libgs/src/framing.c libgs/src/ipc.c libgs/src/sftp.c sim/tm_frame.c sim/fake_kari.c services/common/tm_sim_support.c services/dgs-gs/main.c services/ros/core/main.c services/mps/core/inputs.c
       - name: Check interface and secret rules
         run: |
           python3 -m unittest discover -s tests -p 'test_*.py' -v
