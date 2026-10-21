@@ -11,7 +11,7 @@
 ### 2026-10-21 — 단계 5 합성 TC 검증·승인·게이트·ACK 기준선
 
 - 구현: 단계 4 시험 시퀀스의 ROS 재검증과 시험 명령 존재·정수 파라미터·스케줄·시간창·상태 조건, 일반/주의/위험 승인 분기, 런타임 시험 키를 받는 signer, tc-gate 형식·SCID·출처·시간·속도 제한, `fake_sat` HMAC·재전송 검사와 ACK
-- 시험: 위험 TC 자가 승인·잘못된 역할·재인증 누락, 다섯 자동 검증 항목의 실패, signer 미승인, 게이트 출처·길이·SCID·버전·패스 차단, 태그 변조·재전송 거부 및 정상 ACK. Windows Release·ASan CTest 각각 5/5, Python 10/10 통과. Linux CI 결과는 확인 후 갱신
+- 시험: 위험 TC 자가 승인·잘못된 역할·재인증 누락, 다섯 자동 검증 항목의 실패, signer 미승인, 게이트 출처·길이·SCID·버전·패스 차단, 태그 변조·재전송 거부 및 정상 ACK. Windows Release·ASan CTest 각각 5/5, Python 10/10 통과. [Ubuntu CI 실행 #27](https://github.com/stupefyKR/PADO_SAT_Ground_Station/actions/runs/39616614345)에서 GCC Release, Clang ASan+UBSan, clang-tidy, Python·비밀정보 및 격리 컨테이너 시험 전체 성공
 - 경계: 실제 TC ICD·프레임·HMAC 사양 및 Portal/ROS/DGS 서비스 프로세스 연결이 없어 합성 계약에만 적용. 실제 항우연·위성으로 전송하는 코드 경로는 없음
 - 결정: DECISIONS.md #14, `interfaces/tc/test_contract.md`
 
