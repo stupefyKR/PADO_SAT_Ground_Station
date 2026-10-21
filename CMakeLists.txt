@@ -50,6 +50,19 @@ else()
     target_link_libraries(gs PUBLIC OpenSSL::Crypto OpenSSL::SSL PkgConfig::LIBSSH)
 endif()
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_library(gs_tm_sim STATIC sim/tm_frame.c services/common/tm_sim_support.c)
+    target_include_directories(gs_tm_sim PUBLIC sim services/common)
+    target_link_libraries(gs_tm_sim PUBLIC gs)
+
+    add_executable(gs_fake_kari sim/fake_kari.c)
+    target_link_libraries(gs_fake_kari PRIVATE gs_tm_sim)
+    add_executable(gs_dgs_gs_sim services/dgs-gs/main.c)
+    target_link_libraries(gs_dgs_gs_sim PRIVATE gs_tm_sim)
+    add_executable(gs_ros_core_sim services/ros/core/main.c)
+    target_link_libraries(gs_ros_core_sim PRIVATE gs_tm_sim)
+endif()
+
 include(CTest)
 if(BUILD_TESTING)
     add_executable(gs_stage1_tests tests/stage1_test.c)
@@ -67,6 +80,16 @@ if(BUILD_TESTING)
                  ${CMAKE_SOURCE_DIR}/tests/run_sftp.py $<TARGET_FILE:gs_sftp_tests>)
         add_executable(gs_container_net_probe tests/container/network_probe.c)
         target_link_libraries(gs_container_net_probe PRIVATE gs)
+        if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+            add_executable(gs_sim_tm_tests tests/sim_tm_test.c)
+            target_link_libraries(gs_sim_tm_tests PRIVATE gs_tm_sim)
+            add_test(NAME gs_sim_tm_tests COMMAND gs_sim_tm_tests)
+            add_test(NAME gs_stage3_tests COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_SOURCE_DIR}/tests/run_stage3.py
+                     $<TARGET_FILE:gs_fake_kari>
+                     $<TARGET_FILE:gs_dgs_gs_sim>
+                     $<TARGET_FILE:gs_ros_core_sim>)
+        endif()
     endif()
 endif()
 
