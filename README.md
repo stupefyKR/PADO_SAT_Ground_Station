@@ -2,7 +2,7 @@
 
 ## 개요
 
-경희대학교 PWNLAB의 PADO-SAT 큐브위성 지상국 소프트웨어 저장소입니다. 작업 폴더 안의 `pado-gs/`가 Git 저장소 루트입니다. 개발방향은 온프레미스 VM과 컨테이너를 배포 단위로 삼고, VM을 보안 경계로 사용합니다. 단계 1의 인터페이스 기준선, 단계 2의 공통 통신 라이브러리, 단계 3의 시험용 TM 수신 경로와 단계 4의 비운용 MPS 계획·승인·반입 모델이 있습니다. 위성에 송신하거나 실제 외부 지상국에 연결하는 실행 기능은 없습니다.
+경희대학교 PWNLAB의 PADO-SAT 큐브위성 지상국 소프트웨어 저장소입니다. 작업 폴더 안의 `pado-gs/`가 Git 저장소 루트입니다. 개발방향은 온프레미스 VM과 컨테이너를 배포 단위로 삼고, VM을 보안 경계로 사용합니다. 단계 1의 인터페이스 기준선, 단계 2의 공통 통신 라이브러리, 단계 3의 시험용 TM 수신 경로, 단계 4의 비운용 MPS 모델과 단계 5의 시험용 TC 경로가 있습니다. 위성에 송신하거나 실제 외부 지상국에 연결하는 실행 기능은 없습니다.
 
 GitHub 원격 저장소는 비공개로 설정되어 있습니다(2026-10-21 확인). 초기 푸시 뒤 공개 설정을 발견해 즉시 비공개로 전환한 기록은 [진행 기록](docs/PROGRESS.md)에 남겼습니다.
 
@@ -21,7 +21,7 @@ GitHub 원격 저장소는 비공개로 설정되어 있습니다(2026-10-21 확
 | 4-3 | 충돌 분석 | 완료(시험 계약 기준선) | 6개 규칙의 시험용 속성 계약; 실제 명령 속성은 ICD 대기 |
 | 4-4 | 승인·출력·ROS 연동 | 완료(비운용 시험 기준선) | 최신 초안 승인, `TEST_ONLY_SEQUENCE`·매니페스트, ROS 독립 재검증; 실제 TC ICD 대기 |
 | 4-5 | Mission Request·업링크 반입 | 완료(비운용 시험 기준선) | 두 단계 출처 체인·해시·버전·권한·FlatSat 기록 ID 검사; 외부 본문 형식 대기 |
-| 5 | TC 경로 | 대기 | 실제 명령 값은 ICD 대기 |
+| 5 | TC 검증→승인→signer→tc-gate→`fake_sat` ACK | 완료(비운용 시험 기준선) | 위험 TC 별도 lead 승인·게이트 차단 시험 통과; 실제 명령·프레임·HMAC 사양 대기 |
 | 6 | FDS·DGS-NET·아카이브·SDC | 대기 | |
 | 7 | 실제 서버·VM 배포 기반 | 대기 | 장비·네트워크 확정 후 검증 |
 | 8 | 백업·복구·퍼징·핵심 서비스 보안 시험 | 대기 | |
@@ -31,7 +31,7 @@ GitHub 원격 저장소는 비공개로 설정되어 있습니다(2026-10-21 확
 
 개발방향 4.1절의 VM은 `vm-portal`, `vm-ros`, `vm-mps`, `vm-fds`, `vm-dgs-archive`, `vm-dgs-gs`, `vm-dgs-net`, `vm-mgmt`입니다. 이 저장소에는 아직 VM 배포 설정이 없습니다.
 
-계획된 TC 경로는 MPS 시퀀스 승인 → `ros-core` 명령 DB 재검증 → `ros-signer` 승인 확인·HMAC → TLS → `dgs-gs` `tc-gate` → `kari-adapter`입니다. 현재 이 경로는 구현되지 않았습니다. 단계 4의 비운용 시험 경로는 로컬 파일 쌍에서 ROS 검증까지 수행합니다. [개발방향 12장](docs/PADO-SAT_지상국_개발방향.md)과 [시험 계약](interfaces/mps/test_contract.md)을 참고하세요.
+계획된 운용 TC 경로는 MPS 시퀀스 승인 → `ros-core` 명령 DB 재검증 → `ros-signer` 승인 확인·HMAC → TLS → `dgs-gs` `tc-gate` → `kari-adapter`입니다. 현재 단계 5는 합성 프레임을 이용한 모듈 간 시험 경로이며 실제 송출 경로는 구현되지 않았습니다. [개발방향 12장](docs/PADO-SAT_지상국_개발방향.md), [MPS 시험 계약](interfaces/mps/test_contract.md), [TC 시험 계약](interfaces/tc/test_contract.md)을 참고하세요.
 
 ## 저장소 구조
 
@@ -75,6 +75,8 @@ GNU/Clang 빌드에는 개발방향 11.5절의 경고·하드닝 옵션을 적�
 
 단계 4-4·4-5는 Windows와 Linux CTest의 `gs_stage4_tests`로 승인·출력·ROS 재검증 및 요청·업링크 반입의 허용·거부 경로를 확인합니다. 검증 결과는 [진행 기록](docs/PROGRESS.md)에 남깁니다. VMware Ubuntu 26.04 VM 안의 Ubuntu 24.04 시험 컨테이너에서 단계 2의 컨테이너 간 mTLS·SFTP·격리 시험을 수행했습니다. 매니페스트·MPS 입력 파서는 libFuzzer 대상으로 등록했으며 퍼징 실행은 단계 8에서 수행합니다. 공통 SFTP 송수신은 단계 2에 있고, 서비스별 inbox 감시·격리·삭제는 이후 서비스 통합에서 추가합니다.
 
+단계 5의 `gs_stage5_tests`는 합성 TC 검증부터 승인·태그 부착·게이트·`fake_sat` ACK까지의 한 프로세스 시험과 거부 사례를 확인합니다. 시험 키는 실행 중에 생성하며 실제 위성 키나 프레임 형식을 사용하지 않습니다.
+
 `.github/workflows/ci.yml`은 Ubuntu GCC Release, Clang ASan+UBSan, 정적 분석, Python 검사를 푸시마다 실행합니다. 같은 시험을 Linux에서 재현하려면 OpenSSL 개발 헤더, Ninja, GCC, Clang, Python이 필요합니다.
 
 ```sh
@@ -106,7 +108,7 @@ python3 tests/container/run_network.py --build
 
 비밀 키, 인증서 개인키, 비밀번호, 토큰과 로컬 데이터는 Git에 넣지 않습니다. `.gitignore`와 `.githooks/pre-commit`의 검사는 기본 방어이며, 커밋 전 `python tools/check_secrets.py --staged`로 색인 전체를 검사합니다. 이 검사는 알려진 파일 경로와 일부 자격증명 패턴을 감지하므로 전문 비밀정보 감사의 대체재가 아닙니다.
 
-TC는 계획된 검증·승인·서명·게이트 경로로만 송출하며, 위험 TC는 작성자와 승인자가 달라야 합니다. 관련 기능은 아직 구현되지 않았습니다.
+TC는 계획된 검증·승인·서명·게이트 경로로만 송출하며, 위험 TC는 작성자와 승인자가 달라야 합니다. 현재 검증·승인·서명·게이트 로직은 시험용으로 구현됐고 실제 송출 기능은 없습니다.
 
 ## 미결 사항
 
