@@ -35,7 +35,7 @@ typedef struct {
     int non_operational;
 } gs_mps_plan_revision_t;
 
-/* One bounded plan and its immutable revision history. No file export or TC path. */
+/* One bounded plan and its immutable revision history. No operational TC path. */
 typedef struct {
     gs_mps_plan_revision_t history[GS_MPS_MAX_REVISIONS];
     size_t revision_count;
