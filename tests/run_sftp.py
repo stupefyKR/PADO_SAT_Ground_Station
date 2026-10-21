@@ -53,6 +53,7 @@ def main() -> int:
         run("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", "host", cwd=root)
         run("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", "client", cwd=root)
         (root / "authorized_keys").write_bytes((root / "client.pub").read_bytes())
+        (root / "authorized_keys").chmod(0o600)
         raw_key = base64.b64decode((root / "host.pub").read_text().split()[1])
         pin = hashlib.sha256(raw_key).hexdigest()
         username = pwd.getpwuid(os.getuid()).pw_name
@@ -66,7 +67,7 @@ def main() -> int:
             "PasswordAuthentication no", "KbdInteractiveAuthentication no",
             "PubkeyAuthentication yes", "AuthenticationMethods publickey",
             f"AuthorizedKeysFile {root / 'authorized_keys'}",
-            f"AllowUsers {username}", "Subsystem sftp internal-sftp", "LogLevel ERROR",
+            f"AllowUsers {username}", "Subsystem sftp internal-sftp", "LogLevel VERBOSE",
         ]) + "\n", encoding="ascii")
         run("sudo", "install", "-d", "-m", "0755", "/run/sshd", cwd=root)
         server = subprocess.Popen(["sudo", "-n", "/usr/sbin/sshd", "-D", "-e", "-f",
@@ -82,6 +83,18 @@ def main() -> int:
                 time.sleep(0.05)
             else:
                 raise RuntimeError("temporary sshd did not start")
+            (root / "known_hosts").write_text(
+                f"[127.0.0.2]:{port} {(root / 'host.pub').read_text()}", encoding="ascii")
+            ssh_probe = subprocess.run([
+                "ssh", "-i", str(root / "client"), "-p", str(port),
+                "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes",
+                "-o", "StrictHostKeyChecking=yes", "-o",
+                f"UserKnownHostsFile={root / 'known_hosts'}",
+                f"{username}@127.0.0.2", "true",
+            ], check=False, capture_output=True, text=True, timeout=10)
+            if ssh_probe.returncode != 0:
+                print(f"OpenSSH probe failed: {ssh_probe.stderr}", file=sys.stderr)
+                return 1
             result = subprocess.run([
                 str(executable), "127.0.0.2", str(port), username,
                 str(root / "client"), pin, str(ack), str(ack_manifest),
