@@ -35,11 +35,12 @@ int gs_sim_tm_build(uint32_t sequence, const unsigned char *payload, size_t payl
                     unsigned char *frame, size_t capacity, size_t *frame_length)
 {
     size_t length;
+    size_t index;
     if (payload == NULL || frame == NULL || frame_length == NULL ||
             payload_length == 0u || payload_length > GS_SIM_TM_MAX_PAYLOAD) return -1;
     length = GS_SIM_TM_HEADER_SIZE + payload_length + 4u;
     if (capacity < length) return -1;
-    memcpy(frame, magic, sizeof(magic));
+    for (index = 0u; index < sizeof(magic); ++index) frame[index] = magic[index];
     frame[8] = 1u;
     frame[9] = 1u;
     frame[10] = (unsigned char)(GS_SIM_TM_SCID >> 8u);
@@ -47,7 +48,8 @@ int gs_sim_tm_build(uint32_t sequence, const unsigned char *payload, size_t payl
     frame[12] = (unsigned char)(payload_length >> 8u);
     frame[13] = (unsigned char)payload_length;
     write32(frame + 14u, sequence);
-    memcpy(frame + GS_SIM_TM_HEADER_SIZE, payload, payload_length);
+    for (index = 0u; index < payload_length; ++index)
+        frame[GS_SIM_TM_HEADER_SIZE + index] = payload[index];
     write32(frame + length - 4u, crc32_ieee(frame, length - 4u));
     *frame_length = length;
     return 0;

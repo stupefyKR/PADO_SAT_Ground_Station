@@ -6,7 +6,6 @@
 
 #include <fcntl.h>
 #include <stdint.h>
-#include <string.h>
 #include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
@@ -17,6 +16,7 @@ int gs_sim_record_append(const char *path, unsigned char tag,
     unsigned char record[5u + GS_SIM_TM_MAX_FRAME];
     struct stat status;
     size_t done = 0u;
+    size_t index;
     size_t record_length = 5u + length;
     int fd;
     int result = -1;
@@ -27,7 +27,7 @@ int gs_sim_record_append(const char *path, unsigned char tag,
     record[2] = (unsigned char)(length >> 16u);
     record[3] = (unsigned char)(length >> 8u);
     record[4] = (unsigned char)length;
-    if (length > 0u) memcpy(record + 5u, data, length);
+    for (index = 0u; index < length; ++index) record[5u + index] = data[index];
     fd = open(path, O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
     if (fd < 0) return -1;
     if (fstat(fd, &status) != 0 || !S_ISREG(status.st_mode) ||

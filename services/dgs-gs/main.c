@@ -62,6 +62,7 @@ static int forward_input(SSL *session, const char *quarantine)
         uint32_t declared;
         gs_sim_tm_result_t verdict;
         uint32_t sequence = 0u;
+        size_t index;
         size_t got = read_bytes(prefix, sizeof(prefix));
         char detail[80];
         if (got == 0u && feof(stdin)) break;
@@ -91,7 +92,7 @@ static int forward_input(SSL *session, const char *quarantine)
             continue;
         }
         message[0] = GS_SIM_MSG_TM;
-        memcpy(message + 1u, frame, got);
+        for (index = 0u; index < got; ++index) message[1u + index] = frame[index];
         if (gs_tls_send_frame(session, message, got + 1u) != 0) return -1;
         if (snprintf(detail, sizeof(detail), "sim_sequence=%u", sequence) < 0 ||
                 gs_sim_log(stderr, "dgs-gs", "dmz-gs", "tm_forwarded", detail) != 0)

@@ -2,7 +2,7 @@
 
 ## 개요
 
-경희대학교 PWNLAB의 PADO-SAT 큐브위성 지상국 소프트웨어 저장소입니다. 작업 폴더 안의 `pado-gs/`가 Git 저장소 루트입니다. 개발방향은 온프레미스 VM과 컨테이너를 배포 단위로 삼고, VM을 보안 경계로 사용합니다. 단계 1의 인터페이스 기준선과 단계 2의 공통 통신 라이브러리가 있으며, 위성에 송신하거나 외부 지상국에 연결하는 실행 기능은 없습니다.
+경희대학교 PWNLAB의 PADO-SAT 큐브위성 지상국 소프트웨어 저장소입니다. 작업 폴더 안의 `pado-gs/`가 Git 저장소 루트입니다. 개발방향은 온프레미스 VM과 컨테이너를 배포 단위로 삼고, VM을 보안 경계로 사용합니다. 단계 1의 인터페이스 기준선, 단계 2의 공통 통신 라이브러리와 단계 3의 시험용 TM 수신 경로가 있습니다. 위성에 송신하거나 실제 외부 지상국에 연결하는 실행 기능은 없습니다.
 
 GitHub 원격 저장소는 비공개로 설정되어 있습니다(2026-10-21 확인). 초기 푸시 뒤 공개 설정을 발견해 즉시 비공개로 전환한 기록은 [진행 기록](docs/PROGRESS.md)에 남겼습니다.
 
@@ -15,7 +15,7 @@ GitHub 원격 저장소는 비공개로 설정되어 있습니다(2026-10-21 확
 | 초기 구성 | 저장소·빌드·시험 골격 | 완료 | Windows 일반·ASan 시험 통과; 이후 단계 1에서 Linux CI 검증 |
 | 1 | `interfaces/`, `libgs/` | 완료(기준선) | N2 21개 원본 화살표, 승인 흐름 21개, Windows·Linux 매니페스트·로그·파일 교환 시험 통과; TC/TM 실값은 ICD 대기 |
 | 2 | VM 간 통신 기반 | 완료(개발 기준선) | VMware Linux VM의 Docker 격리 네트워크에서 mTLS·SFTP 송수신/거부 시험 통과; 실제 VM 배포 검증은 단계 7 |
-| 3 | TM 수신 경로 | 대기 | 시험용 프레임 |
+| 3 | TM 수신 경로 | 완료(시뮬레이터 기준선) | `fake_kari` → `dgs-gs` → `ros-core`; 실제 ICD·TM 해석 대기 |
 | 4 | MPS 핵심 기능 | 대기 | 웹 UI는 단계 9 |
 | 5 | TC 경로 | 대기 | 실제 명령 값은 ICD 대기 |
 | 6 | FDS·DGS-NET·아카이브·SDC | 대기 | |
@@ -67,9 +67,9 @@ $env:PATH = 'C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MS
 
 GNU/Clang 빌드에는 개발방향 11.5절의 경고·하드닝 옵션을 적용하고, `GS_ENABLE_SANITIZERS=ON`은 AddressSanitizer와 UndefinedBehaviorSanitizer를 함께 활성화합니다. MSVC는 대응 보안 옵션을 사용하며 sanitizer 빌드에는 AddressSanitizer만 제공합니다.
 
-단계 2의 Linux 빌드에는 `libssh-dev`와 `openssh-server`도 필요합니다. CTest는 시험 실행 중 임시 CA·TLS 인증서·SSH 키를 생성하고 127.0.0.2의 임시 SFTP 서버를 사용합니다. 비밀 키와 인증서 개인키는 저장소에 생성하지 않습니다. `libgs`는 상호 인증 TLS 길이 접두 프레임, Unix socket JSON 프레임, SSH 호스트 키 고정 SFTP 파일·매니페스트 업로드와 읽기 전용 회수 경로를 제공합니다. 실제 서비스와 VM 배포 설정은 아직 없습니다.
+단계 2 이후 Linux 빌드에는 `libssh-dev`와 `openssh-server`도 필요합니다. CTest는 시험 실행 중 임시 CA·TLS 인증서·SSH 키를 생성하고 127.0.0.2의 임시 SFTP 서버를 사용합니다. 비밀 키와 인증서 개인키는 저장소에 생성하지 않습니다. `libgs`는 상호 인증 TLS 길이 접두 프레임, Unix socket JSON 프레임, SSH 호스트 키 고정 SFTP 파일·매니페스트 업로드와 읽기 전용 회수 경로를 제공합니다. 단계 3 서비스는 `--sim-only` 시험 경로로만 실행되며 VM 배포 설정은 아직 없습니다.
 
-현재 Windows Release와 AddressSanitizer 빌드는 각각 CTest 1/1을 통과했고, Python 비밀정보·인터페이스 시험은 10/10을 통과했습니다. [Ubuntu CI 실행 #9](https://github.com/stupefyKR/PADO_SAT_Ground_Station/actions/runs/39561766519)에서 GCC Release, Clang AddressSanitizer+UndefinedBehaviorSanitizer CTest 각 3/3, clang-tidy, Python·비밀정보 검사도 통과했습니다. VMware Ubuntu 26.04 VM 안의 Ubuntu 24.04 시험 컨테이너에서도 GCC CTest 3/3, Clang ASan+UBSan CTest 3/3 및 컨테이너 간 mTLS·SFTP·격리 시험이 통과했습니다. 매니페스트 파서는 `tests/fuzz_manifest.c`에 libFuzzer 대상으로 등록했으나 퍼징 실행은 단계 8에서 수행합니다. 단계 2에서는 공통 SFTP 송수신을 추가했으며, 서비스별 inbox 감시·격리·삭제는 해당 서비스 단계에서 추가합니다.
+Windows Release와 AddressSanitizer 빌드는 단계 2까지 각각 CTest 1/1을 통과했고, Python 비밀정보·인터페이스 시험은 10/10을 통과했습니다. [Ubuntu CI 실행 #11](https://github.com/stupefyKR/PADO_SAT_Ground_Station/actions/runs/39565341737)에서 단계 2 GCC Release·Clang AddressSanitizer+UndefinedBehaviorSanitizer 시험과 정적 분석이 통과했습니다. VMware Ubuntu 26.04 VM 안의 Ubuntu 24.04 시험 컨테이너에서도 단계 2 GCC CTest 3/3, Clang ASan+UBSan CTest 3/3 및 컨테이너 간 mTLS·SFTP·격리 시험이 통과했습니다. 단계 3은 Linux CTest에 모의 TM 경로 시험 2개를 추가했습니다. 매니페스트 파서는 `tests/fuzz_manifest.c`에 libFuzzer 대상으로 등록했으나 퍼징 실행은 단계 8에서 수행합니다. 단계 2에서는 공통 SFTP 송수신을 추가했으며, 서비스별 inbox 감시·격리·삭제는 해당 서비스 단계에서 추가합니다.
 
 `.github/workflows/ci.yml`은 Ubuntu GCC Release, Clang ASan+UBSan, 정적 분석, Python 검사를 푸시마다 실행합니다. 같은 시험을 Linux에서 재현하려면 OpenSSL 개발 헤더, Ninja, GCC, Clang, Python이 필요합니다.
 
@@ -86,7 +86,9 @@ python3 tools/check_secrets.py --staged
 
 ## 로컬 개발 환경
 
-현재 서비스와 시뮬레이터가 구현되지 않아 전체 경로 실행 방법은 없습니다. 단계 2 공통 통신의 Linux 시험은 위 CMake·CTest 명령으로 실행합니다. Docker가 있는 개발용 Linux VM에서는 다음 명령으로 두 컨테이너의 실제 네트워크 주소를 이용해 상호 인증 TLS, SFTP 파일·매니페스트, 잘못된 상대 인증서와 분리된 네트워크의 접속 거부를 시험합니다. `openssl`과 `ssh-keygen`이 필요하며, 시험 키·인증서는 임시 디렉터리에 생성됩니다. 스크립트는 시험 컨테이너·네트워크를 제거하고, 빌드된 이미지 `pado-stage2-test:local`은 재사용할 수 있게 남깁니다.
+단계 3의 `fake_kari` → `dgs-gs` → `ros-core` 수신 경로는 Linux에서 CTest의 `gs_stage3_tests`로 실행합니다. `openssl`이 시험용 CA·상호 인증서를 임시 디렉터리에 만들고, 두 유효 프레임의 ROS 기록과 다섯 무효 입력의 DGS-GS 격리를 검사합니다. 프레임은 [시험 전용 규격](interfaces/frames/simulator.md)이며 실제 TM 항목을 해석하지 않습니다.
+
+단계 2 공통 통신의 Linux 시험도 위 CMake·CTest 명령으로 실행합니다. Docker가 있는 개발용 Linux VM에서는 다음 명령으로 두 컨테이너의 실제 네트워크 주소를 이용해 상호 인증 TLS, SFTP 파일·매니페스트, 잘못된 상대 인증서와 분리된 네트워크의 접속 거부를 시험합니다. `openssl`과 `ssh-keygen`이 필요하며, 시험 키·인증서는 임시 디렉터리에 생성됩니다. 스크립트는 시험 컨테이너·네트워크를 제거하고, 빌드된 이미지 `pado-stage2-test:local`은 재사용할 수 있게 남깁니다.
 
 ```sh
 python3 tests/container/run_network.py --build
