@@ -2,11 +2,20 @@
 
 ## 현재 상태
 
-- 현재 단계: 단계 1 인터페이스·공통 파일 교환, 단계 2 공통 통신, 단계 3 시험용 TM 수신 기준선 완료
-- 다음 작업: 단계 4 MPS 핵심 기능. 실제 TM 패킷 정의와 해석은 ICD 확정 뒤 검증
+- 현재 단계: 단계 1 인터페이스·공통 파일 교환, 단계 2 공통 통신, 단계 3 시험용 TM 수신, 단계 4-1 MPS 입력·카탈로그 기준선 완료
+- 다음 작업: 단계 4-2 MPS 시퀀스 초안·계획 버전 이력. 실제 명령 항목과 FDS 파일 형식은 확정 뒤 연결
 - 미결 사항: TBD(ICD) 항우연·연세대 연동 포트·프로토콜·프레임, TC 명령·TM 실제 항목, DGS-GS 임시 원시데이터 용량·보관시간·회수 주기; TBD(HMAC) 트랜시버 세부 사양
 
 ## 기록
+
+### 2026-10-21 — 단계 4 세분화와 4-1 MPS 입력 기준선
+
+- 분할: 단계 4를 4-1 입력·카탈로그, 4-2 초안·버전, 4-3 충돌 분석, 4-4 승인·출력·ROS 연동, 4-5 Mission Request·업링크 반입으로 나눔. 웹 UI는 기존 단계 9에 유지
+- 구현: `services/mps/core/inputs.c`에 현재 비운용 명령 DB의 정확한 봉투 판독과 내부 패스 목록 모델 추가. 운용 활성화, 미정 명령 항목, 중복 JSON 키, 길이 초과를 거부하고 패스 ID·AOS/LOS·여유 시간·목록 상한을 검사함
+- 범위: 명령 DB는 계속 `operational: false`, 실제 TC 명령 0건. FDS Contact Schedule 파일 형식·출처 검증이 미정이라 내부 모델만 제공하며 외부 파일 수신, 시퀀스 승인·출력과 TC 송출 경로는 없음
+- 시험: Windows MSVC Release·ASan CTest 각 2/2, Python 10/10, 비밀정보 검사 통과. [Ubuntu CI 실행 #16](https://github.com/stupefyKR/PADO_SAT_Ground_Station/actions/runs/39574837655)에서 GCC Release, Clang ASan+UBSan, clang-tidy, Python·비밀정보 및 기존 격리 컨테이너 시험 전체 성공. MPS JSON 파서의 libFuzzer 대상 등록, 퍼징 실행은 단계 8
+- 결정: 단계 구분과 외부 입력 미정 처리 → DECISIONS.md #11
+- 다음: 단계 4-2의 초안 편집·버전 이력
 
 ### 2026-10-21 — 단계 3 시험용 TM 수신 경로 완료
 
