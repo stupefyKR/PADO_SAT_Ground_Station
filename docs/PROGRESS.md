@@ -11,7 +11,7 @@
 ### 2026-10-21 — 단계 4-4·4-5 비운용 승인·ROS 검증·반입 기준선
 
 - 구현: 최신 초안·패스·DB 버전·충돌 결과에 결합한 별도 lead 시험 승인, `TEST_ONLY_SEQUENCE`와 SHA-256 매니페스트 출력, ROS 별도 파서의 파일 쌍·의미 재검증. SDC→DGS-Archive→MPS 요청·업링크 매니페스트 체인, 반영·반려 판정, 독립 해시·목적·버전·FlatSat 기록 ID·역할 검사
-- 시험: 승인 전·오래된 승인·자가 승인·재인증 누락·운용 출력명·해시 변조·매니페스트를 다시 만든 의미 변조·출처/버전 불일치·FlatSat 기록 누락·반입 후 파일 변조 거부. Windows Release·ASan CTest 각각 4/4, Python 10/10 통과. Linux CI 결과는 확인 후 갱신
+- 시험: 승인 전·오래된 승인·자가 승인·재인증 누락·운용 출력명·해시 변조·매니페스트를 다시 만든 의미 변조·출처/버전 불일치·FlatSat 기록 누락·반입 후 파일 변조 거부. Windows Release·ASan CTest 각각 4/4, Python 10/10, 비밀정보 검사 105개 파일 통과. [Ubuntu CI 실행 #24](https://github.com/stupefyKR/PADO_SAT_Ground_Station/actions/runs/39614494249)에서 GCC Release, Clang ASan+UBSan, clang-tidy, Python·비밀정보 및 격리 컨테이너 시험 전체 성공
 - 경계: 실제 TC ICD·명령 DB, FDS Contact Schedule·Mission Request 본문·업링크 정책, 인증/FlatSat 증거 서비스는 아직 미정. 현재 ROS 연결은 로컬 시험 파일 쌍이며 운용 TC 경로를 열지 않음. 전체 단계 4의 운용 완료는 이 계약들이 확정된 후 별도 판정
 - 결정: DECISIONS.md #13
 
