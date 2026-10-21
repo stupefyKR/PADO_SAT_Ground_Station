@@ -23,7 +23,7 @@ jobs:
       - name: Check out exact commit
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0, Node.js 24
       - name: Install build dependencies
-        run: sudo apt-get update && sudo apt-get install -y clang clang-tidy libssl-dev ninja-build
+        run: sudo apt-get update && sudo apt-get install -y clang clang-tidy libssl-dev libssh-dev openssh-server ninja-build
       - name: Build and test GCC Release
         run: |
           cmake -S . -B build-linux-release -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc
@@ -35,7 +35,7 @@ jobs:
           cmake --build build-linux-sanitized --parallel 2
           ctest --test-dir build-linux-sanitized --output-on-failure
       - name: Analyze first-party C sources
-        run: clang-tidy -p build-linux-sanitized -checks='clang-analyzer-*' -warnings-as-errors='*' libgs/src/exchange.c libgs/src/hash.c libgs/src/log.c libgs/src/manifest.c
+        run: clang-tidy -p build-linux-sanitized -checks='clang-analyzer-*' -warnings-as-errors='*' libgs/src/exchange.c libgs/src/hash.c libgs/src/log.c libgs/src/manifest.c libgs/src/framing.c libgs/src/ipc.c libgs/src/sftp.c
       - name: Check interface and secret rules
         run: |
           python3 -m unittest discover -s tests -p 'test_*.py' -v
