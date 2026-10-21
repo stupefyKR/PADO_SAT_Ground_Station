@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "source": {
+    "document": "docs/지상국.pdf",
+    "sha256": "2fd303dfc20a59b27db6c36a01d2fb2b960f550c4c46b50b4a7dfa8779b2ee22",
+    "location": "Table 5-1, pages 1-2",
+    "interpretation": "Original N2 data directions are separate from network connection initiators. See decisions #2 and #3."
+  },
+  "rules": {
+    "unlisted_flow": "deny",
+    "dmz_to_operations_new_connection": "deny",
+    "sdc_reachable_service": "dgs-archive",
+    "unknown_external_icd": "TBD(ICD)"
+  },
+  "source_n2_edges": [
+    {"from": "ground-antenna", "to": "dgs", "data": ["TM", "Payload Data"]},
+    {"from": "space-track", "to": "dgs", "data": ["NORAD TLE"]},
+    {"from": "launch-provider", "to": "dgs", "data": ["State Vector File"]},
+    {"from": "dgs", "to": "ground-antenna", "data": ["TC", "Antenna Pointing File"]},
+    {"from": "dgs", "to": "ros", "data": ["TM", "TLE"], "note": "TLE destination conflicts with PDF prose; FDS selected in decision #3."},
+    {"from": "dgs", "to": "fds", "data": ["NORAD TLE", "State Vector File"]},
+    {"from": "dgs", "to": "cdps", "data": ["CREST Raw Data"]},
+    {"from": "dgs", "to": "sdps", "data": ["SIREN Raw Data"]},
+    {"from": "ros", "to": "dgs", "data": ["TC", "Backup File"]},
+    {"from": "ros", "to": "mps", "data": ["ACK", "Bus SOH File"]},
+    {"from": "ros", "to": "fds", "data": ["GNSS File"]},
+    {"from": "ros", "to": "cdps", "data": ["S/C Attitude File", "Bus SOH File"]},
+    {"from": "ros", "to": "sdps", "data": ["S/C Attitude File", "Bus SOH File"]},
+    {"from": "mps", "to": "dgs", "data": ["Backup File"]},
+    {"from": "mps", "to": "ros", "data": ["Mission Schedule File"]},
+    {"from": "fds", "to": "dgs", "data": ["Antenna Pointing File", "Backup File"]},
+    {"from": "fds", "to": "mps", "data": ["Contact Schedule File", "Orbital Event File"]},
+    {"from": "fds", "to": "cdps", "data": ["Orbit Ephemeris", "Pass Information File"]},
+    {"from": "fds", "to": "sdps", "data": ["Orbit Ephemeris", "Pass Information File"]},
+    {"from": "cdps", "to": "mps", "data": ["Mission Request File"]},
+    {"from": "sdps", "to": "mps", "data": ["Mission Request File"]}
+  ],
+  "approved_flows": [
+    {"id": "N01", "data_from": "ground-antenna", "data_to": "dgs-gs", "types": ["TM", "PAYLOAD_DATA"], "connection_from": null, "connection_to": null, "transport": "TBD(ICD)", "port": null, "reference": "F05", "phase": 3},
+    {"id": "N02", "data_from": "dgs-gs", "data_to": "ground-antenna", "types": ["TC", "ANTENNA_POINTING"], "connection_from": null, "connection_to": null, "transport": "TBD(ICD)", "port": null, "reference": "F05", "phase": 5},
+    {"id": "N03", "data_from": "space-track", "data_to": "dgs-net", "types": ["NORAD_TLE"], "connection_from": "dgs-net", "connection_to": "space-track", "transport": "HTTPS", "port": 443, "reference": "F08", "phase": 7},
+    {"id": "N04", "data_from": "launch-provider", "data_to": "dgs-net", "types": ["STATE_VECTOR"], "connection_from": null, "connection_to": null, "transport": "TBD(ICD)", "port": null, "reference": "F09", "phase": 7},
+    {"id": "N05", "data_from": "dgs-net", "data_to": "fds", "types": ["NORAD_TLE", "STATE_VECTOR"], "connection_from": "fds", "connection_to": "dgs-net", "transport": "SFTP_PULL", "port": 2222, "reference": "F07", "phase": 7},
+    {"id": "N06", "data_from": "dgs-gs", "data_to": "ros", "types": ["TM"], "connection_from": "ros", "connection_to": "dgs-gs", "transport": "TLS_STREAM", "port": 7001, "reference": "F04", "phase": 3},
+    {"id": "N07", "data_from": "ros", "data_to": "dgs-gs", "types": ["TC"], "connection_from": "ros", "connection_to": "dgs-gs", "transport": "TLS_STREAM", "port": 7001, "reference": "F04", "phase": 5},
+    {"id": "N08", "data_from": "fds", "data_to": "dgs-gs", "types": ["ANTENNA_POINTING", "PASS_REQUEST"], "connection_from": "fds", "connection_to": "dgs-gs", "transport": "SFTP_PUSH", "port": 2222, "reference": "F06", "phase": 7},
+    {"id": "N09", "data_from": "dgs-gs", "data_to": "dgs-archive", "consumer": ["cdps", "sdps"], "types": ["CREST_RAW", "SIREN_RAW"], "connection_from": "dgs-archive", "connection_to": "dgs-gs", "transport": "SFTP_PULL", "port": 2222, "account": "raw_archive_readonly", "outbox": "dgs-gs:/outbox/to_archive", "reference": "F19", "phase": 7},
+    {"id": "N10", "data_from": "ros", "data_to": "mps", "types": ["ACK", "BUS_SOH"], "connection_from": "ros", "connection_to": "mps", "transport": "SFTP_PUSH", "port": 2222, "inbox": "mps:/inbox/from_ros", "reference": "F10", "phase": 6},
+    {"id": "N11", "data_from": "ros", "data_to": "fds", "types": ["GNSS"], "connection_from": "ros", "connection_to": "fds", "transport": "SFTP_PUSH", "port": 2222, "inbox": "fds:/inbox/from_ros", "reference": "F10", "phase": 7},
+    {"id": "N12", "data_from": "mps", "data_to": "ros", "types": ["MISSION_SCHEDULE", "TC_SEQUENCE", "APPROVED_UPLINK"], "connection_from": "mps", "connection_to": "ros", "transport": "SFTP_PUSH", "port": 2222, "inbox": "ros:/inbox/from_mps", "reference": "F10", "phase": 6},
+    {"id": "N13", "data_from": "fds", "data_to": "mps", "types": ["CONTACT_SCHEDULE", "ORBITAL_EVENT"], "connection_from": "fds", "connection_to": "mps", "transport": "SFTP_PUSH", "port": 2222, "inbox": "mps:/inbox/from_fds", "reference": "F10", "phase": 7},
+    {"id": "N14", "data_from": "ros", "data_to": "dgs-archive", "consumer": ["cdps", "sdps"], "types": ["SC_ATTITUDE", "BUS_SOH"], "connection_from": "ros", "connection_to": "dgs-archive", "transport": "SFTP_PUSH", "port": 2222, "inbox": "dgs-archive:/exchange/to_sdc/from_ros", "reference": "F10", "phase": 7},
+    {"id": "N15", "data_from": "fds", "data_to": "dgs-archive", "consumer": ["cdps", "sdps"], "types": ["ORBIT_EPHEMERIS", "PASS_INFORMATION"], "connection_from": "fds", "connection_to": "dgs-archive", "transport": "SFTP_PUSH", "port": 2222, "inbox": "dgs-archive:/exchange/to_sdc/from_fds", "reference": "F10", "phase": 7},
+    {"id": "N16", "data_from": "sdc", "data_to": "dgs-archive", "types": ["MISSION_REQUEST", "UPLINK_FILE"], "connection_from": "sdc", "connection_to": "dgs-archive", "transport": "SFTP_PUSH", "port": 2222, "inbox": "dgs-archive:/exchange/from_sdc", "reference": "F12", "phase": 7},
+    {"id": "N17", "data_from": "dgs-archive", "data_to": "sdc", "types": ["CREST_RAW", "SIREN_RAW", "SC_ATTITUDE", "BUS_SOH", "ORBIT_EPHEMERIS", "PASS_INFORMATION"], "connection_from": "sdc", "connection_to": "dgs-archive", "transport": "SFTP_PULL", "port": 2222, "reference": "F12", "phase": 7},
+    {"id": "N18", "data_from": "dgs-archive", "data_to": "mps", "types": ["MISSION_REQUEST", "UPLINK_FILE"], "connection_from": "dgs-archive", "connection_to": "mps", "transport": "SFTP_PUSH", "port": 2222, "inbox": "mps:/inbox/from_archive", "reference": "F10", "phase": 7},
+    {"id": "N19", "data_from": "ros", "data_to": "dgs-archive", "types": ["BACKUP"], "connection_from": "ros", "connection_to": "dgs-archive", "transport": "SFTP_PUSH", "port": 2222, "reference": "F11", "phase": 7},
+    {"id": "N20", "data_from": "mps", "data_to": "dgs-archive", "types": ["BACKUP"], "connection_from": "mps", "connection_to": "dgs-archive", "transport": "SFTP_PUSH", "port": 2222, "reference": "F11", "phase": 7},
+    {"id": "N21", "data_from": "fds", "data_to": "dgs-archive", "types": ["BACKUP"], "connection_from": "fds", "connection_to": "dgs-archive", "transport": "SFTP_PUSH", "port": 2222, "reference": "F11", "phase": 7}
+  ]
+}

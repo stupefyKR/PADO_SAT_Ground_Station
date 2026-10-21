@@ -366,6 +366,7 @@ services:
 | F16 | 전 VM → vm-mgmt | 5000/tcp, 3142/tcp | 이미지 레지스트리, OS 업데이트 | L1, L3 |
 | F17 | 전 VM → NAS | 협의 (rsync/SMB 쓰기 전용) | 백업 전송 | L1, L3 |
 | F18 | 관리자 단말 → 전 VM, 하이퍼바이저 | 22/tcp, 하이퍼바이저 관리 포트 | 시스템 관리 | L1 (VLAN 50에서만) |
+| F19 | vm-dgs-archive → vm-dgs-gs | 2222/tcp (SFTP, 읽기 전용) | CREST·SIREN Payload Raw Data 회수. 연결은 archive가 시작하고 데이터는 DGS-GS → archive 방향 | L1, L3 |
 | F99 | 그 외 전부 | - | **차단 및 기록** | 전 계층 |
 
 ### 6.3 VLAN 20 내부 파일 흐름 (F10 상세)
@@ -386,6 +387,8 @@ N2 chart의 내부 화살표 하나 = SFTP 계정 하나 = 수신 측 inbox 디�
 - SFTP 서버는 관리용 SSH(22)와 **별도 프로세스·별도 포트(2222)**로 띄우고, 각 계정은 자기 inbox에만 chroot되며 셸 접근이 없다(`ForceCommand internal-sftp`).
 - 각 계정은 **SSH 키 인증만** 허용하고, 키는 송신 서비스 컨테이너에만 마운트한다.
 - 계정·디렉터리 목록은 `interfaces/n2_chart.json`에서 생성하며, 여기에 없는 흐름은 계정이 없으므로 불가능하다.
+- F19는 DMZ에서 운용 VLAN으로 새 연결을 열 수 없으므로 이 절의 push 원칙에 대한 **명시적 예외**다. DGS-GS는 별도 읽기 전용 SFTP 계정으로 CREST·SIREN 원시데이터와 매니페스트를 제공하고, DGS-Archive가 접속해 회수·해시 및 유형 검증·수신 확인을 수행한다. DGS-GS는 용량과 보관시간을 제한한 임시 영역에서 확인 후 삭제한다. 제한값은 원시데이터 규모와 수신 주기 확인 후 정한다(TBD(ICD)). SDC는 계속 DGS-Archive 교환 영역만 접근한다.
+- 원본 N2 표의 DGS→ROS `TLE` 표기와 같은 문서의 FDS 수신 설명이 상충한다. TLE는 DGS-NET에서 검증한 뒤 FDS로 전달하는 경로를 기준으로 삼고, ROS로 직접 전달하는 TLE 경로는 만들지 않는다(결정 기록 #3).
 
 ### 6.4 VM nftables 예시
 
@@ -443,6 +446,7 @@ table inet filter {
 ```nft
 define ROS      = 10.10.20.10
 define FDS      = 10.10.20.12
+define ARCHIVE  = 10.10.20.13
 define KARI     = <항우연 상대 주소>
 define YONSEI   = <연세대 상대 주소>
 define MGMT     = 10.10.40.20
@@ -457,6 +461,7 @@ table inet filter {
 
     ip saddr $ROS tcp dport 7001 accept                       # F04
     ip saddr $FDS tcp dport 2222 accept                       # F06
+    ip saddr $ARCHIVE tcp dport 2222 accept                   # F19 원시데이터 회수 연결
     ip saddr { $KARI, $YONSEI } tcp dport <ICD 포트> accept   # F05
     ip saddr $ADMIN tcp dport 22 accept                       # F18
 
@@ -493,7 +498,7 @@ table inet filter {
 | 출발 \ 목적 | OPS(10) | SVC(20) | DMZ-GS(30) | DMZ-NET(31) | STOR(40) | MGMT(50) | SDC(60) | WAN |
 |---|---|---|---|---|---|---|---|---|
 | OPS(10) | - | portal:443만 | ✕ | ✕ | ✕ | ✕ | ✕ | ✕ |
-| SVC(20) | ✕ | (L2·L3) | 7001, 2222 | 2222 (fds만) | NAS 백업 | mgmt 서비스 포트 | ✕ | ✕ |
+| SVC(20) | ✕ | (L2·L3) | 7001 (ros), 2222 (fds·archive) | 2222 (fds만) | NAS 백업 | mgmt 서비스 포트 | ✕ | ✕ |
 | DMZ-GS(30) | ✕ | **✕ (새 연결 없음)** | - | ✕ | NAS 백업 | mgmt 서비스 포트 | ✕ | VPN만 |
 | DMZ-NET(31) | ✕ | **✕ (새 연결 없음)** | ✕ | - | ✕ | mgmt 서비스 포트 | ✕ | 443 (+발사체 한시) |
 | STOR(40) | ✕ | ✕ | ✕ | ✕ | - | ✕ | ✕ | ✕ |

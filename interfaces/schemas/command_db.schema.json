@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pado-sat.local/schemas/command_db.schema.json",
+  "title": "PADO-SAT command database envelope; entry contract TBD(ICD)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "operational", "status", "source", "commands"],
+  "properties": {
+    "version": {"type": "integer", "minimum": 1},
+    "operational": {"type": "boolean"},
+    "status": {"type": "string"},
+    "source": {"type": "string"},
+    "commands": {"type": "array", "items": {"type": "object"}}
+  }
+}

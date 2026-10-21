@@ -2,18 +2,18 @@
 
 ## 개요
 
-경희대학교 PWNLAB의 PADO-SAT 큐브위성 지상국 소프트웨어 저장소입니다. 작업 폴더 안의 `pado-gs/`가 Git 저장소 루트입니다. 개발방향은 온프레미스 VM과 컨테이너를 배포 단위로 삼고, VM을 보안 경계로 사용합니다. 현재는 첫 세션의 저장소·빌드·시험 골격만 있으며, 위성에 송신하거나 외부 지상국에 연결하는 실행 기능은 없습니다.
+경희대학교 PWNLAB의 PADO-SAT 큐브위성 지상국 소프트웨어 저장소입니다. 작업 폴더 안의 `pado-gs/`가 Git 저장소 루트입니다. 개발방향은 온프레미스 VM과 컨테이너를 배포 단위로 삼고, VM을 보안 경계로 사용합니다. 단계 1의 인터페이스 기준선과 공통 파일 교환 라이브러리가 있으며, 위성에 송신하거나 외부 지상국에 연결하는 실행 기능은 없습니다.
 
 GitHub 원격 저장소는 비공개로 설정되어 있습니다(2026-10-21 확인). 초기 푸시 뒤 공개 설정을 발견해 즉시 비공개로 전환한 기록은 [진행 기록](docs/PROGRESS.md)에 남겼습니다.
 
-기준 문서: [개발방향](docs/PADO-SAT_지상국_개발방향.md), [보안 계획서](docs/PADO-SAT_지상국_보안설계_개발방향계획서.md), [진행 기록](docs/PROGRESS.md), [결정 기록](docs/DECISIONS.md)
+기준 문서: [원본 N2 포함 제안서](docs/지상국.pdf), [개발방향](docs/PADO-SAT_지상국_개발방향.md), [보안 계획서](docs/PADO-SAT_지상국_보안설계_개발방향계획서.md), [진행 기록](docs/PROGRESS.md), [결정 기록](docs/DECISIONS.md)
 
 ## 진행 상태
 
 | 단계 | 내용 | 상태 | 비고 |
 |---|---|---|---|
 | 초기 구성 | 저장소·빌드·시험 골격 | 완료 | Windows 일반·ASan 시험 통과; Linux UBSan 미실행 |
-| 1 | `interfaces/`, `libgs/` | 대기 | 세부 계획 검토 필요 |
+| 1 | `interfaces/`, `libgs/` | 완료(기준선) | N2 21개 원본 화살표, 승인 흐름 21개, 매니페스트·로그·파일 교환 시험 통과; TC/TM 실값은 ICD 대기 |
 | 2 | 배포 기반 | 대기 | |
 | 3 | TM 수신 경로 | 대기 | |
 | 4 | 인증·관제 대시보드 | 대기 | |
@@ -32,9 +32,9 @@ GitHub 원격 저장소는 비공개로 설정되어 있습니다(2026-10-21 확
 
 | 디렉터리 | 계획된 역할 |
 |---|---|
-| `interfaces/` | N2 흐름, 명령·TM DB, 스키마, 프레임 규격 |
-| `libgs/` | 공통 C 라이브러리; 현재 빌드 확인용 임시 심볼만 있음 |
-| `third_party/` | 승인된 소스 내장 의존성 |
+| `interfaces/` | 원본 N2와 승인된 연결 방향, 비운용 명령·TM DB, 매니페스트 스키마, 프레임 TBD |
+| `libgs/` | 매니페스트 파싱·검증, SHA-256, 한 줄 JSON 로그, 원자적 파일 공개·교환 검증 |
+| `third_party/` | cJSON v1.7.19 소스·라이선스·해시 |
 | `services/` | 서브시스템 서비스 |
 | `web/` | 로컬 웹 리소스 |
 | `docker/`, `deploy/` | 컨테이너 및 VM 배포 설정 |
@@ -52,7 +52,7 @@ $ctest = 'C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\Co
 & $cmake -S . -B build-msvc-1444 -G 'Visual Studio 17 2022' -A x64 -T 'v143,version=14.44.35207'
 & $cmake --build build-msvc-1444 --config Release --parallel 1 -- /nr:false /p:VCToolsVersion=14.44.35207
 & $ctest --test-dir build-msvc-1444 -C Release --output-on-failure
-python -m unittest discover -s tests -p test_check_secrets.py -v
+python -m unittest discover -s tests -p 'test_*.py' -v
 ```
 
 AddressSanitizer 빌드·시험:
@@ -65,6 +65,8 @@ $env:PATH = 'C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MS
 ```
 
 GNU/Clang 빌드에는 개발방향 11.5절의 경고·하드닝 옵션을 적용하고, `GS_ENABLE_SANITIZERS=ON`은 AddressSanitizer와 UndefinedBehaviorSanitizer를 함께 활성화합니다. MSVC는 대응 보안 옵션을 사용하며 sanitizer 빌드에는 AddressSanitizer만 제공합니다. Linux 빌드와 UndefinedBehaviorSanitizer 시험은 아직 실행하지 못했습니다.
+
+현재 Windows Release와 AddressSanitizer 빌드는 각각 CTest 1/1을 통과했고, Python 비밀정보·인터페이스 시험은 10/10을 통과했습니다. 매니페스트 파서는 `tests/fuzz_manifest.c`에 libFuzzer 대상으로 등록했으나 이 Windows 환경에서는 실행하지 못했습니다. 단계 1에서 구현한 파일 교환은 로컬 원자적 공개·검증까지이며 SFTP 송수신, 격리·삭제, inbox 감시는 해당 서비스 단계에서 추가합니다.
 
 ## 로컬 개발 환경
 
@@ -80,7 +82,8 @@ TC는 계획된 검증·승인·서명·게이트 경로로만 송출하며, 위
 
 - TBD(ICD): 항우연·연세대 연동 포트, 프로토콜, 프레임 형식
 - TBD(HMAC): 트랜시버 HMAC 세부 사양
-- 단계 1의 명령·TM 기준 데이터와 스키마 필드 확정
+- TBD(ICD): TC 명령·TM 실제 항목과 항목 스키마. 현재 DB는 `operational: false`
+- TBD(ICD): DGS-GS 원시데이터 임시 영역의 용량·보관시간·회수 주기
 
 ## 변경 이력 요약
 

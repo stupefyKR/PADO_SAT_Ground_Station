@@ -1,0 +1,2 @@
+third_party/cJSON.h whitespace=-blank-at-eol
+third_party/LICENSE.cJSON whitespace=-blank-at-eof

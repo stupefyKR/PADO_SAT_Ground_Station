@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pado-sat.local/schemas/telemetry.schema.json",
+  "title": "PADO-SAT telemetry database envelope; entry contract TBD(ICD)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "operational", "status", "source", "parameters"],
+  "properties": {
+    "version": {"type": "integer", "minimum": 1},
+    "operational": {"type": "boolean"},
+    "status": {"type": "string"},
+    "source": {"type": "string"},
+    "parameters": {"type": "array", "items": {"type": "object"}}
+  }
+}
