@@ -63,7 +63,7 @@ def main() -> int:
         config = root / "sshd_config"
         config.write_text("\n".join([
             f"Port {port}", "ListenAddress 127.0.0.2", f"HostKey {root / 'host'}",
-            f"PidFile {root / 'sshd.pid'}", "UsePAM no", "StrictModes no",
+            f"PidFile {root / 'sshd.pid'}", "UsePAM yes", "StrictModes no",
             "PasswordAuthentication no", "KbdInteractiveAuthentication no",
             "PubkeyAuthentication yes", "AuthenticationMethods publickey",
             f"AuthorizedKeysFile {root / 'authorized_keys'}",
@@ -94,6 +94,9 @@ def main() -> int:
             ], check=False, capture_output=True, text=True, timeout=10)
             if ssh_probe.returncode != 0:
                 print(f"OpenSSH probe failed: {ssh_probe.stderr}", file=sys.stderr)
+                server.terminate()
+                server.wait(timeout=5)
+                print(server.stderr.read().decode(errors="replace"), file=sys.stderr)
                 return 1
             result = subprocess.run([
                 str(executable), "127.0.0.2", str(port), username,
