@@ -69,7 +69,7 @@ GNU/Clang 빌드에는 개발방향 11.5절의 경고·하드닝 옵션을 적�
 
 단계 2 이후 Linux 빌드에는 `libssh-dev`와 `openssh-server`도 필요합니다. CTest는 시험 실행 중 임시 CA·TLS 인증서·SSH 키를 생성하고 127.0.0.2의 임시 SFTP 서버를 사용합니다. 비밀 키와 인증서 개인키는 저장소에 생성하지 않습니다. `libgs`는 상호 인증 TLS 길이 접두 프레임, Unix socket JSON 프레임, SSH 호스트 키 고정 SFTP 파일·매니페스트 업로드와 읽기 전용 회수 경로를 제공합니다. 단계 3 서비스는 `--sim-only` 시험 경로로만 실행되며 VM 배포 설정은 아직 없습니다.
 
-Windows Release와 AddressSanitizer 빌드는 단계 2까지 각각 CTest 1/1을 통과했고, Python 비밀정보·인터페이스 시험은 10/10을 통과했습니다. [Ubuntu CI 실행 #11](https://github.com/stupefyKR/PADO_SAT_Ground_Station/actions/runs/39565341737)에서 단계 2 GCC Release·Clang AddressSanitizer+UndefinedBehaviorSanitizer 시험과 정적 분석이 통과했습니다. VMware Ubuntu 26.04 VM 안의 Ubuntu 24.04 시험 컨테이너에서도 단계 2 GCC CTest 3/3, Clang ASan+UBSan CTest 3/3 및 컨테이너 간 mTLS·SFTP·격리 시험이 통과했습니다. 단계 3은 Linux CTest에 모의 TM 경로 시험 2개를 추가했습니다. 매니페스트 파서는 `tests/fuzz_manifest.c`에 libFuzzer 대상으로 등록했으나 퍼징 실행은 단계 8에서 수행합니다. 단계 2에서는 공통 SFTP 송수신을 추가했으며, 서비스별 inbox 감시·격리·삭제는 해당 서비스 단계에서 추가합니다.
+Windows Release와 AddressSanitizer 빌드는 단계 2까지 각각 CTest 1/1을 통과했고, Python 비밀정보·인터페이스 시험은 10/10을 통과했습니다. [Ubuntu CI 실행 #13](https://github.com/stupefyKR/PADO_SAT_Ground_Station/actions/runs/39567480530)에서 단계 3 GCC Release·Clang AddressSanitizer+UndefinedBehaviorSanitizer CTest, 정적 분석, Python 검사 및 격리 컨테이너 시험이 통과했습니다. VMware Ubuntu 26.04 VM 안의 Ubuntu 24.04 시험 컨테이너에서도 단계 2 GCC CTest 3/3, Clang ASan+UBSan CTest 3/3 및 컨테이너 간 mTLS·SFTP·격리 시험이 통과했습니다. 단계 3은 Linux CTest에 모의 TM 경로 시험 2개를 추가했습니다. 매니페스트 파서는 `tests/fuzz_manifest.c`에 libFuzzer 대상으로 등록했으나 퍼징 실행은 단계 8에서 수행합니다. 단계 2에서는 공통 SFTP 송수신을 추가했으며, 서비스별 inbox 감시·격리·삭제는 해당 서비스 단계에서 추가합니다.
 
 `.github/workflows/ci.yml`은 Ubuntu GCC Release, Clang ASan+UBSan, 정적 분석, Python 검사를 푸시마다 실행합니다. 같은 시험을 Linux에서 재현하려면 OpenSSL 개발 헤더, Ninja, GCC, Clang, Python이 필요합니다.
 
