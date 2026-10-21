@@ -12,8 +12,8 @@ GitHub 원격 저장소는 비공개로 설정되어 있습니다(2026-10-21 확
 
 | 단계 | 내용 | 상태 | 비고 |
 |---|---|---|---|
-| 초기 구성 | 저장소·빌드·시험 골격 | 완료 | Windows 일반·ASan 시험 통과; Linux UBSan 미실행 |
-| 1 | `interfaces/`, `libgs/` | 검증 대기 | N2 21개 원본 화살표, 승인 흐름 21개, Windows 매니페스트·로그·파일 교환 시험 통과; Linux ASan+UBSan 미실행, TC/TM 실값은 ICD 대기 |
+| 초기 구성 | 저장소·빌드·시험 골격 | 완료 | Windows 일반·ASan 시험 통과; 이후 단계 1에서 Linux CI 검증 |
+| 1 | `interfaces/`, `libgs/` | 완료(기준선) | N2 21개 원본 화살표, 승인 흐름 21개, Windows·Linux 매니페스트·로그·파일 교환 시험 통과; TC/TM 실값은 ICD 대기 |
 | 2 | 배포 기반 | 대기 | |
 | 3 | TM 수신 경로 | 대기 | |
 | 4 | 인증·관제 대시보드 | 대기 | |
@@ -64,11 +64,22 @@ $env:PATH = 'C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MS
 & $ctest --test-dir build-asan -C Release --output-on-failure
 ```
 
-GNU/Clang 빌드에는 개발방향 11.5절의 경고·하드닝 옵션을 적용하고, `GS_ENABLE_SANITIZERS=ON`은 AddressSanitizer와 UndefinedBehaviorSanitizer를 함께 활성화합니다. MSVC는 대응 보안 옵션을 사용하며 sanitizer 빌드에는 AddressSanitizer만 제공합니다. Linux 빌드와 UndefinedBehaviorSanitizer 시험은 아직 실행하지 못했습니다.
+GNU/Clang 빌드에는 개발방향 11.5절의 경고·하드닝 옵션을 적용하고, `GS_ENABLE_SANITIZERS=ON`은 AddressSanitizer와 UndefinedBehaviorSanitizer를 함께 활성화합니다. MSVC는 대응 보안 옵션을 사용하며 sanitizer 빌드에는 AddressSanitizer만 제공합니다.
 
-현재 Windows Release와 AddressSanitizer 빌드는 각각 CTest 1/1을 통과했고, Python 비밀정보·인터페이스 시험은 10/10을 통과했습니다. 단계 1의 최종 완료에는 개발 지시서 5.2절의 Linux `-fsanitize=address,undefined` 시험이 남아 있습니다. 매니페스트 파서는 `tests/fuzz_manifest.c`에 libFuzzer 대상으로 등록했으나 이 Windows 환경에서는 실행하지 못했습니다. 단계 1에서 구현한 파일 교환은 로컬 원자적 공개·검증까지이며 SFTP 송수신, 격리·삭제, inbox 감시는 해당 서비스 단계에서 추가합니다.
+현재 Windows Release와 AddressSanitizer 빌드는 각각 CTest 1/1을 통과했고, Python 비밀정보·인터페이스 시험은 10/10을 통과했습니다. Ubuntu CI에서 GCC Release, Clang AddressSanitizer+UndefinedBehaviorSanitizer CTest, clang-tidy, Python·비밀정보 검사도 통과했습니다([실행 #3](https://github.com/stupefyKR/PADO_SAT_Ground_Station/actions/runs/39551198200)). 매니페스트 파서는 `tests/fuzz_manifest.c`에 libFuzzer 대상으로 등록했으나 퍼징 실행은 단계 8에서 수행합니다. 단계 1의 파일 교환은 로컬 원자적 공개·검증까지이며 SFTP 송수신, 격리·삭제, inbox 감시는 해당 서비스 단계에서 추가합니다.
 
-`.github/workflows/ci.yml`에 Ubuntu GCC Release, Clang ASan+UBSan, 정적 분석, Python 검사를 등록했습니다. 첫 CI 결과를 확인하기 전까지 Linux 검증은 미완료로 취급합니다.
+`.github/workflows/ci.yml`은 Ubuntu GCC Release, Clang ASan+UBSan, 정적 분석, Python 검사를 푸시마다 실행합니다. 같은 시험을 Linux에서 재현하려면 OpenSSL 개발 헤더, Ninja, GCC, Clang, Python이 필요합니다.
+
+```sh
+cmake -S . -B build-linux-release -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc
+cmake --build build-linux-release --parallel 2
+ctest --test-dir build-linux-release --output-on-failure
+cmake -S . -B build-linux-sanitized -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_COMPILER=clang -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DGS_ENABLE_SANITIZERS=ON
+cmake --build build-linux-sanitized --parallel 2
+ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 ctest --test-dir build-linux-sanitized --output-on-failure
+python3 -m unittest discover -s tests -p 'test_*.py' -v
+python3 tools/check_secrets.py --staged
+```
 
 ## 로컬 개발 환경
 
@@ -89,4 +100,4 @@ TC는 계획된 검증·승인·서명·게이트 경로로만 송출하며, 위
 
 ## 변경 이력 요약
 
-단계 완료 이력은 아직 없습니다. 세부 작업 기록은 [진행 기록](docs/PROGRESS.md)을 참조합니다.
+단계 1 인터페이스·공통 파일 교환 기준선은 2026-10-21 완료했습니다. 세부 시험·결정 기록은 [진행 기록](docs/PROGRESS.md)을 참조합니다.

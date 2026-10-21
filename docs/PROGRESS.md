@@ -2,8 +2,8 @@
 
 ## 현재 상태
 
-- 현재 단계: 단계 1 인터페이스·공통 파일 교환 기준선 구현, Linux ASan+UBSan 검증 대기
-- 다음 작업: Linux GNU/Clang 빌드 및 AddressSanitizer+UndefinedBehaviorSanitizer 시험 후 단계 1 완료 판정. 이후 단계 2의 방화벽·SFTP 계정 생성과 `check_flows` 대조
+- 현재 단계: 단계 1 인터페이스·공통 파일 교환 기준선 완료; 단계 2 대기
+- 다음 작업: 단계 2의 방화벽·SFTP 계정 생성과 `check_flows` 대조. F19의 archive 시작 원시데이터 회수 연결을 포함
 - 미결 사항: TBD(ICD) 항우연·연세대 연동 포트·프로토콜·프레임, TC 명령·TM 실제 항목, DGS-GS 임시 원시데이터 용량·보관시간·회수 주기; TBD(HMAC) 트랜시버 세부 사양
 
 ## 기록
@@ -45,3 +45,12 @@
 - 결정: CI가 보고한 checkout v4의 Node.js 20 지원 종료 안내를 없애기 위해 공식 v6.1.0(Node.js 24) 커밋으로 고정 → DECISIONS.md #6 갱신
 - 문제: checkout 액션 업데이트 후 재실행 결과 대기
 - 다음: 새 액션 버전의 CI를 확인하고 단계 1 완료 상태를 문서에 반영
+
+### 2026-10-21 — 단계 1 완료
+
+- 완료: GitHub Actions 실행 #3(`2110180`)에서 GCC Release, Clang ASan+UBSan, clang-tidy, Python·비밀정보 검사 전체 성공. Node.js 지원 종료 알림도 제거함
+- 시험: Windows MSVC Release·ASan CTest 각 1/1, Python 10/10; [Linux CI 실행 #3](https://github.com/stupefyKR/PADO_SAT_Ground_Station/actions/runs/39551198200) 성공
+- 변경 파일: `README.md`, `docs/PROGRESS.md`
+- 결정: 미확정 TC·TM 운용 값은 사용자 지시에 따라 미구현으로 유지 → DECISIONS.md #4
+- 문제: 외부 ICD, HMAC 사양, DGS-GS 임시 원시데이터 제한값 미확정. 이는 후속 서비스 단계에서 확정할 사항
+- 다음: 사용자 요청 시 단계 2 배포 기반 구현
