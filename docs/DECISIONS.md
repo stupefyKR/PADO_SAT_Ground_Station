@@ -52,4 +52,4 @@
 - 선택지: (a) GitHub Actions Ubuntu CI 추가 (b) 로컬 Linux 환경을 기다림 (c) Windows ASan 결과만 유지
 - 결정: (a), 사용자 승인. `.github/workflows/` 디렉터리에 Linux 일반·ASan+UBSan 빌드 및 시험을 추가한다.
 - 이유: 같은 비공개 저장소의 커밋에서 재현 가능한 필수 검증을 수행한다.
-- 영향: 푸시마다 GitHub Actions 사용 시간이 소모된다. `actions/checkout`은 검증한 v4.2.2 커밋 SHA로 고정한다. CI 성공을 확인하기 전까지 단계 1 완료로 표시하지 않는다.
+- 영향: 푸시마다 GitHub Actions 사용 시간이 소모된다. `actions/checkout`은 검증한 v6.1.0 커밋 SHA(Node.js 24)로 고정한다. CI 성공을 확인하기 전까지 단계 1 완료로 표시하지 않는다.

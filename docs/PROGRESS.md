@@ -36,3 +36,12 @@
 - 결정: Linux CI 사용 → DECISIONS.md #6
 - 문제: Linux CI 첫 실행 미확인
 - 다음: CI 결과를 확인하고 오류를 수정한 뒤 단계 1 완료 판정
+
+### 2026-10-21 — Linux CI 첫 검증
+
+- 완료: 첫 CI 실행에서 GCC Release와 Clang ASan+UBSan 시험 통과. 정적 분석의 `memcpy` 경고 2건을 경계가 드러나는 복사로 수정한 뒤 두 번째 CI 실행에서 전체 성공
+- 시험: GitHub Actions `Ground station CI` 실행 #2 성공 (`70ee53e`): GCC Release CTest, Clang ASan+UBSan CTest, clang-tidy, Python·비밀정보 검사 통과
+- 변경 파일: `libgs/src/manifest.c`, `.github/workflows/ci.yml`
+- 결정: CI가 보고한 checkout v4의 Node.js 20 지원 종료 안내를 없애기 위해 공식 v6.1.0(Node.js 24) 커밋으로 고정 → DECISIONS.md #6 갱신
+- 문제: checkout 액션 업데이트 후 재실행 결과 대기
+- 다음: 새 액션 버전의 CI를 확인하고 단계 1 완료 상태를 문서에 반영
