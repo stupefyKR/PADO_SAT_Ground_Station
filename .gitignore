@@ -1,0 +1,35 @@
+# Local secrets and credentials
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+*.crt
+*.cer
+*.asc
+secrets/
+keys/
+
+# Local data, generated files, and build output
+/srv/
+/build/
+/build-*/
+/out/
+/cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+Testing/
+*.obj
+*.o
+*.a
+*.lib
+*.exe
+*.pdb
+*.ilk
+*.dll
+*.so
+*.dylib
+__pycache__/
+*.pyc
