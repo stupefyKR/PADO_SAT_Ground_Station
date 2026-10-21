@@ -68,6 +68,8 @@ GNU/Clang 빌드에는 개발방향 11.5절의 경고·하드닝 옵션을 적�
 
 현재 Windows Release와 AddressSanitizer 빌드는 각각 CTest 1/1을 통과했고, Python 비밀정보·인터페이스 시험은 10/10을 통과했습니다. 단계 1의 최종 완료에는 개발 지시서 5.2절의 Linux `-fsanitize=address,undefined` 시험이 남아 있습니다. 매니페스트 파서는 `tests/fuzz_manifest.c`에 libFuzzer 대상으로 등록했으나 이 Windows 환경에서는 실행하지 못했습니다. 단계 1에서 구현한 파일 교환은 로컬 원자적 공개·검증까지이며 SFTP 송수신, 격리·삭제, inbox 감시는 해당 서비스 단계에서 추가합니다.
 
+`.github/workflows/ci.yml`에 Ubuntu GCC Release, Clang ASan+UBSan, 정적 분석, Python 검사를 등록했습니다. 첫 CI 결과를 확인하기 전까지 Linux 검증은 미완료로 취급합니다.
+
 ## 로컬 개발 환경
 
 현재 서비스와 시뮬레이터가 구현되지 않아 전체 경로 실행 방법은 없습니다.

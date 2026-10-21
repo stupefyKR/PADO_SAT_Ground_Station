@@ -1,0 +1,42 @@
+name: Ground station CI
+
+on:
+  push:
+    branches: [main, "feat/**", "fix/**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ground-station-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux-stage1:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+      UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+    steps:
+      - name: Check out exact commit
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y clang clang-tidy libssl-dev ninja-build
+      - name: Build and test GCC Release
+        run: |
+          cmake -S . -B build-linux-release -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc
+          cmake --build build-linux-release --parallel 2
+          ctest --test-dir build-linux-release --output-on-failure
+      - name: Build and test Clang ASan and UBSan
+        run: |
+          cmake -S . -B build-linux-sanitized -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_COMPILER=clang -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DGS_ENABLE_SANITIZERS=ON
+          cmake --build build-linux-sanitized --parallel 2
+          ctest --test-dir build-linux-sanitized --output-on-failure
+      - name: Analyze first-party C sources
+        run: clang-tidy -p build-linux-sanitized -checks='clang-analyzer-*' -warnings-as-errors='*' libgs/src/exchange.c libgs/src/hash.c libgs/src/log.c libgs/src/manifest.c
+      - name: Check interface and secret rules
+        run: |
+          python3 -m unittest discover -s tests -p 'test_*.py' -v
+          python3 tools/check_secrets.py --staged

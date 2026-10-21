@@ -44,3 +44,12 @@
 - 결정: (b). cJSON v1.7.19를 소스·라이선스와 함께 고정하고, Windows는 CNG BCrypt, Linux는 OpenSSL EVP를 사용한다.
 - 이유: 자체 암호 알고리즘 구현을 피하고 두 환경에서 동일한 SHA-256 출력 계약을 시험한다.
 - 영향: Linux 빌드에는 OpenSSL 개발 패키지가 필요하다. Windows 일반·ASan 시험은 수행했으나 Linux GNU/Clang·UBSan 시험은 아직 수행하지 못했다. `third_party/README.md`에 출처·해시·업데이트 주기를 기록한다.
+
+## #6 Linux sanitizer 검증 자동화
+
+- 날짜: 2026-10-21
+- 배경: 개발 지시서 5.2절은 Linux `-fsanitize=address,undefined` 시험을 요구하지만 현재 Windows 작업 환경에는 Linux GNU/Clang, WSL, Docker가 없다.
+- 선택지: (a) GitHub Actions Ubuntu CI 추가 (b) 로컬 Linux 환경을 기다림 (c) Windows ASan 결과만 유지
+- 결정: (a), 사용자 승인. `.github/workflows/` 디렉터리에 Linux 일반·ASan+UBSan 빌드 및 시험을 추가한다.
+- 이유: 같은 비공개 저장소의 커밋에서 재현 가능한 필수 검증을 수행한다.
+- 영향: 푸시마다 GitHub Actions 사용 시간이 소모된다. `actions/checkout`은 검증한 v4.2.2 커밋 SHA로 고정한다. CI 성공을 확인하기 전까지 단계 1 완료로 표시하지 않는다.
