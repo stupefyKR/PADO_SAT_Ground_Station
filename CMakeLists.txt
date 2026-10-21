@@ -51,7 +51,8 @@ else()
     target_link_libraries(gs PUBLIC OpenSSL::Crypto OpenSSL::SSL PkgConfig::LIBSSH)
 endif()
 
-add_library(gs_mps STATIC services/mps/core/inputs.c)
+add_library(gs_mps STATIC services/mps/core/inputs.c
+    services/mps/core/plan_store.c services/mps/core/conflict.c)
 target_include_directories(gs_mps PUBLIC services/mps/core)
 target_link_libraries(gs_mps PUBLIC gs)
 
@@ -77,6 +78,9 @@ if(BUILD_TESTING)
     target_link_libraries(gs_mps_inputs_tests PRIVATE gs_mps)
     add_test(NAME gs_mps_inputs_tests COMMAND gs_mps_inputs_tests
              ${CMAKE_SOURCE_DIR}/interfaces/command_db/commands.json)
+    add_executable(gs_mps_planning_tests tests/mps_planning_test.c)
+    target_link_libraries(gs_mps_planning_tests PRIVATE gs_mps)
+    add_test(NAME gs_mps_planning_tests COMMAND gs_mps_planning_tests)
     if(UNIX)
         find_package(Python3 REQUIRED COMPONENTS Interpreter)
         add_executable(gs_stage2_tests tests/stage2_test.c)
