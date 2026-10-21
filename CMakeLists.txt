@@ -78,6 +78,12 @@ add_library(gs_fake_sat STATIC sim/fake_sat.c)
 target_include_directories(gs_fake_sat PUBLIC sim)
 target_link_libraries(gs_fake_sat PUBLIC gs_test_tc_wire)
 
+add_library(gs_stage6_exchange STATIC services/common/stage6_routes.c
+    services/dgs-net/tle.c services/dgs-archive/catalog.c)
+target_include_directories(gs_stage6_exchange PUBLIC services/common
+    services/dgs-net services/dgs-archive)
+target_link_libraries(gs_stage6_exchange PUBLIC gs)
+
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_library(gs_tm_sim STATIC sim/tm_frame.c services/common/tm_sim_support.c)
     target_include_directories(gs_tm_sim PUBLIC sim services/common)
@@ -110,6 +116,10 @@ if(BUILD_TESTING)
     target_link_libraries(gs_stage5_tests PRIVATE gs_mps gs_ros_tc_workflow
         gs_ros_test_signer gs_dgs_tc_gate gs_fake_sat)
     add_test(NAME gs_stage5_tests COMMAND gs_stage5_tests ${CMAKE_CURRENT_BINARY_DIR})
+    add_executable(gs_stage6_tests tests/stage6_test.c)
+    target_link_libraries(gs_stage6_tests PRIVATE gs_stage6_exchange)
+    add_test(NAME gs_stage6_tests COMMAND gs_stage6_tests ${CMAKE_CURRENT_BINARY_DIR}
+             ${CMAKE_SOURCE_DIR}/interfaces/n2_chart.json)
     if(UNIX)
         find_package(Python3 REQUIRED COMPONENTS Interpreter)
         add_executable(gs_stage2_tests tests/stage2_test.c)
@@ -117,9 +127,12 @@ if(BUILD_TESTING)
         add_test(NAME gs_stage2_tests COMMAND ${Python3_EXECUTABLE}
                  ${CMAKE_SOURCE_DIR}/tests/run_stage2.py $<TARGET_FILE:gs_stage2_tests>)
         add_executable(gs_sftp_tests tests/sftp_test.c)
-        target_link_libraries(gs_sftp_tests PRIVATE gs)
+        target_link_libraries(gs_sftp_tests PRIVATE gs_stage6_exchange)
+        add_executable(gs_stage6_sftp_tests tests/stage6_sftp_test.c)
+        target_link_libraries(gs_stage6_sftp_tests PRIVATE gs_stage6_exchange)
         add_test(NAME gs_sftp_tests COMMAND ${Python3_EXECUTABLE}
-                 ${CMAKE_SOURCE_DIR}/tests/run_sftp.py $<TARGET_FILE:gs_sftp_tests>)
+                 ${CMAKE_SOURCE_DIR}/tests/run_sftp.py $<TARGET_FILE:gs_sftp_tests>
+                 $<TARGET_FILE:gs_stage6_sftp_tests> ${CMAKE_SOURCE_DIR}/interfaces/n2_chart.json)
         add_executable(gs_container_net_probe tests/container/network_probe.c)
         target_link_libraries(gs_container_net_probe PRIVATE gs)
         if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
