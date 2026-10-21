@@ -13,7 +13,7 @@ GitHub 원격 저장소는 비공개로 설정되어 있습니다(2026-10-21 확
 | 단계 | 내용 | 상태 | 비고 |
 |---|---|---|---|
 | 초기 구성 | 저장소·빌드·시험 골격 | 완료 | Windows 일반·ASan 시험 통과; Linux UBSan 미실행 |
-| 1 | `interfaces/`, `libgs/` | 완료(기준선) | N2 21개 원본 화살표, 승인 흐름 21개, 매니페스트·로그·파일 교환 시험 통과; TC/TM 실값은 ICD 대기 |
+| 1 | `interfaces/`, `libgs/` | 검증 대기 | N2 21개 원본 화살표, 승인 흐름 21개, Windows 매니페스트·로그·파일 교환 시험 통과; Linux ASan+UBSan 미실행, TC/TM 실값은 ICD 대기 |
 | 2 | 배포 기반 | 대기 | |
 | 3 | TM 수신 경로 | 대기 | |
 | 4 | 인증·관제 대시보드 | 대기 | |
@@ -66,7 +66,7 @@ $env:PATH = 'C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MS
 
 GNU/Clang 빌드에는 개발방향 11.5절의 경고·하드닝 옵션을 적용하고, `GS_ENABLE_SANITIZERS=ON`은 AddressSanitizer와 UndefinedBehaviorSanitizer를 함께 활성화합니다. MSVC는 대응 보안 옵션을 사용하며 sanitizer 빌드에는 AddressSanitizer만 제공합니다. Linux 빌드와 UndefinedBehaviorSanitizer 시험은 아직 실행하지 못했습니다.
 
-현재 Windows Release와 AddressSanitizer 빌드는 각각 CTest 1/1을 통과했고, Python 비밀정보·인터페이스 시험은 10/10을 통과했습니다. 매니페스트 파서는 `tests/fuzz_manifest.c`에 libFuzzer 대상으로 등록했으나 이 Windows 환경에서는 실행하지 못했습니다. 단계 1에서 구현한 파일 교환은 로컬 원자적 공개·검증까지이며 SFTP 송수신, 격리·삭제, inbox 감시는 해당 서비스 단계에서 추가합니다.
+현재 Windows Release와 AddressSanitizer 빌드는 각각 CTest 1/1을 통과했고, Python 비밀정보·인터페이스 시험은 10/10을 통과했습니다. 단계 1의 최종 완료에는 개발 지시서 5.2절의 Linux `-fsanitize=address,undefined` 시험이 남아 있습니다. 매니페스트 파서는 `tests/fuzz_manifest.c`에 libFuzzer 대상으로 등록했으나 이 Windows 환경에서는 실행하지 못했습니다. 단계 1에서 구현한 파일 교환은 로컬 원자적 공개·검증까지이며 SFTP 송수신, 격리·삭제, inbox 감시는 해당 서비스 단계에서 추가합니다.
 
 ## 로컬 개발 환경
 
