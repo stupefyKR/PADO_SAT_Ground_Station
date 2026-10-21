@@ -212,8 +212,15 @@ static void test_intake(const char *directory, gs_mps_plan_store_t *store,
     gs_mps_identity_t submitter = {"submitter.one", GS_MPS_ROLE_LEAD, 1};
     (void)snprintf(request_path, sizeof(request_path), "%s/MISSION_REQUEST_%u.dat",
                    directory, (unsigned int)test_pid());
-    (void)snprintf(request_up, sizeof(request_up), "%s.up.json", request_path);
-    (void)snprintf(request_down, sizeof(request_down), "%s.down.json", request_path);
+    if (snprintf(request_up, sizeof(request_up),
+                 "%s/MISSION_REQUEST_%u.dat.up.json", directory,
+                 (unsigned int)test_pid()) >= (int)sizeof(request_up) ||
+        snprintf(request_down, sizeof(request_down),
+                 "%s/MISSION_REQUEST_%u.dat.down.json", directory,
+                 (unsigned int)test_pid()) >= (int)sizeof(request_down)) {
+        expect(0, "request test path too long");
+        return;
+    }
     expect(write_bytes(request_path, "opaque request", 14u) == 0 &&
            make_manifest(request_up, request_path, "MISSION_REQUEST",
                          "sdc", "dgs-archive", 1u) == 0 &&
@@ -257,8 +264,15 @@ static void test_intake(const char *directory, gs_mps_plan_store_t *store,
            "request changed after registration denied");
     (void)snprintf(uplink_path, sizeof(uplink_path), "%s/UPLINK_%u.bin",
                    directory, (unsigned int)test_pid());
-    (void)snprintf(uplink_up, sizeof(uplink_up), "%s.up.json", uplink_path);
-    (void)snprintf(uplink_down, sizeof(uplink_down), "%s.down.json", uplink_path);
+    if (snprintf(uplink_up, sizeof(uplink_up),
+                 "%s/UPLINK_%u.bin.up.json", directory,
+                 (unsigned int)test_pid()) >= (int)sizeof(uplink_up) ||
+        snprintf(uplink_down, sizeof(uplink_down),
+                 "%s/UPLINK_%u.bin.down.json", directory,
+                 (unsigned int)test_pid()) >= (int)sizeof(uplink_down)) {
+        expect(0, "uplink test path too long");
+        return;
+    }
     expect(write_bytes(uplink_path, "test uplink bytes", 17u) == 0 &&
            make_manifest(uplink_up, uplink_path, "UPLINK_FILE",
                          "sdc", "dgs-archive", 2u) == 0 &&
