@@ -3,7 +3,7 @@
 ## 현재 상태
 
 - 현재 단계: 단계 1 인터페이스·공통 파일 교환 기준선 완료; 수정된 단계 2(VM 간 통신 기반) 진행 중
-- 다음 작업: 단계 2 Linux CI 결과를 최종 확인하고 실제 VM 간 연결·격리 시험 환경이 준비되면 실행. F19의 archive 시작 원시데이터 회수를 포함
+- 다음 작업: Linux 서버·가상화 환경이 준비되면 서브시스템별 VM의 실제 연결·격리 시험. F19의 archive 시작 원시데이터 회수를 포함
 - 미결 사항: TBD(ICD) 항우연·연세대 연동 포트·프로토콜·프레임, TC 명령·TM 실제 항목, DGS-GS 임시 원시데이터 용량·보관시간·회수 주기; TBD(HMAC) 트랜시버 세부 사양
 
 ## 기록
@@ -11,11 +11,11 @@
 ### 2026-10-21 — 단계 2 공통 전송 기반
 
 - 완료: Linux `libgs`에 상호 인증 TLS 길이 접두 프레임, VM 내부 Unix socket JSON 프레임, 호스트 키 고정 SFTP 데이터·매니페스트 업로드/회수 구현. 임시 인증서·SSH 키를 생성하는 통합 시험 추가
-- 시험: Windows MSVC Release CTest 1/1, Python 10/10, 비밀정보 검사 통과. Ubuntu CI에서 GCC·Clang ASan+UBSan CTest 각 3/3 통과를 확인했으며 정적 분석의 IPC 복사 경고를 수정하고 재검증 대기
+- 시험: Windows MSVC Release·ASan CTest 각 1/1, Python 10/10, 비밀정보 검사 통과. [Ubuntu CI 실행 #8](https://github.com/stupefyKR/PADO_SAT_Ground_Station/actions/runs/39561524833)에서 GCC Release·Clang ASan+UBSan CTest 각 3/3, clang-tidy, Python·비밀정보 검사 통과
 - 변경 파일: `libgs/include/gs/`, `libgs/src/`, `tests/`, `CMakeLists.txt`, `.github/workflows/ci.yml`, `README.md`, `docs/`
 - 결정: 전송 계약과 제한값 → DECISIONS.md #8
-- 미완료: Linux CI 최종 성공 및 실제 서브시스템별 VM 사이 연결·격리 시험. 사용자는 Linux 서버·가상화 환경이 아직 준비되지 않았다고 확인함
-- 다음: CI 통과 후 단계 2 공통 코드 상태를 정리하고, 서버 준비 시 실제 VM 검증 수행
+- 미완료: 실제 서브시스템별 VM 사이 연결·격리 시험. 사용자는 Linux 서버·가상화 환경이 아직 준비되지 않았다고 확인함
+- 다음: 서버 준비 시 실제 VM 검증 수행. 그 전까지 단계 2는 진행 중으로 유지
 
 ### 2026-10-21 — 앱 우선 개발 순서 조정
 
