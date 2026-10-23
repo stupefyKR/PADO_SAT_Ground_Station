@@ -6,6 +6,7 @@
 
 - N05 TLE: 69자 2행, 체크섬, 설정한 `expected_norad_id`와 일치하는 위성 번호, 현재 계획 시작 시각보다 과거이며 72시간 미만인 epoch를 확인한다. Orekit이 실제 SGP4 경로를 선택한 LEO TLE만 받는다. 출처·전송 인증은 현재 이 CLI 밖의 단계 6 파일 교환 경계에서 수행하며, CLI를 운용 수신기로 직접 연결하지 않는다.
 - N11 GNSS: 현재는 `fds.gnss-state.v1` 시험용 정규화 파일이다. `norad_id`, `epoch_utc`(UTC), `frame=ITRF`, `position_valid=true`, `velocity_valid=true`, `x_m/y_m/z_m`, `vx_mps/vy_mps/vz_mps`가 모두 필요하다. 실제 TM 패킷·NovAtel 로그 디코더는 **TBD(ICD)**다. OEM719의 `BESTXYZ`는 ECEF 위치·속도와 유효 상태를 제공할 수 있고 CubeADCS 공개 ICD의 기본 GNSS 연동도 ECEF 벡터를 사용한다. 이것이 PADO-SAT 다운링크의 확정 필드라는 뜻은 아니다. 자세 쿼터니안은 궤도 상태 벡터와 별개다.
+- 공개 자료 재확인(2026-10-23): NovAtel [OEM719 `BESTXYZ` 로그](https://docs.novatel.com/OEM7/Content/Logs/BESTXYZ.htm)는 ECEF 위치·속도, 각각의 solution status, 좌표 표준편차, 속도 시각 지연을 정의한다. 출력 datum은 `OUTPUTDATUM` 설정에 좌우된다. [CubeADCS ICD 1.05 §3.2](https://www.cubespace.co.za/uploads/c862e5e3-eff7-4519-b67f-b0dc2d5590a0.pdf)는 일반적인 OBC→ADCS GNSS 입력에 ECEF 위치·속도 벡터를 요구한다. 두 자료 모두 **PADO-SAT OBC가 실제로 내려보낼 TM 패킷의 필드·프레임·바이트 순서·스케일·시간 태그를 정의하지 않는다**. 따라서 실제 어댑터에는 위성 측 TM 패킷/파라미터 ICD 또는 동일 내용을 담은 샘플 프레임과 해설이 필요하다.
 - 계획 시작 시각에 유효 GNSS 상태의 나이가 **72시간 미만**이면 GNSS를 사용한다. GNSS 파일 부재 또는 **72시간 이상**이면 TLE로 전환한다. 손상된 GNSS 파일은 조용히 TLE로 대체하지 않고 실패한다. TLE까지 없거나 낡으면 실패한다. 선택한 입력과 이유·해시를 `run.properties`에 기록한다.
 - HPOP 경로는 ITRF/ECEF 상태를 GCRF로 변환해 수치 적분한다. 현재 모델은 지구 구면조화 중력(차수/차수는 설정), 태양·달 중력이다. 항력·태양복사압·궤도결정·기동·오차 공분산은 미포함이다. 따라서 **운용 정밀도를 검증한 HPOP가 아니라 예비 수치 전파 기준선**이다.
 
@@ -94,6 +95,8 @@ python3 tools/run_fds_pipeline.py \
 ```
 
 실제 호스트·계정·호스트 키·수신함 경로는 배포 설정에서 지정한다. N05가 아직 구성되지 않았다면 N11 수신함만 지정해 실행할 수 있다. N11의 최신 완료 파일이 손상되면 `blocked.txt`가 생기고 FDS 계산이 중단된다. 유효한 새 파일이 들어오면 차단이 해제된다. N05 접속 장애는 기존의 검증된 TLE를 보존하며 그 사용 가능 여부는 FDS의 72시간 신선도 검사로 결정한다. 이 경계는 **정규화된 시험 GNSS 상태만** 받아들이며 PADO-SAT의 원시 GNSS TM 패킷 형식을 추정하거나 변환하지 않는다. N11 SFTP 서버 계정과 실제 상대 연결 시험은 아직 남아 있다.
+
+Linux의 `gs_sftp_tests`는 CI에서 일시적인 키 전용 `sshd`를 시작해 N05를 인증된 SFTP로 내려받고, N11을 SFTP로 올린 뒤 수신 스냅샷에 반영하는 경로를 시험한다. 잘못된 호스트 키와 전송 뒤 변조된 N11은 거부해야 한다. 이 임시 서버는 운용 계정·권한 설정이나 최종 VM 배포 시험을 대신하지 않는다.
 
 ### N13/N15 전송용 출고함
 

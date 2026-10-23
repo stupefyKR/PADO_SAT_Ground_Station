@@ -146,9 +146,13 @@ if(BUILD_TESTING)
         target_link_libraries(gs_sftp_tests PRIVATE gs_stage6_exchange)
         add_executable(gs_stage6_sftp_tests tests/stage6_sftp_test.c)
         target_link_libraries(gs_stage6_sftp_tests PRIVATE gs_stage6_exchange)
+        if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+            set(GS_FDS_SFTP_TEST_CLIENT $<TARGET_FILE:gs_fds_exchange>)
+        endif()
         add_test(NAME gs_sftp_tests COMMAND ${Python3_EXECUTABLE}
                  ${CMAKE_SOURCE_DIR}/tests/run_sftp.py $<TARGET_FILE:gs_sftp_tests>
-                 $<TARGET_FILE:gs_stage6_sftp_tests> ${CMAKE_SOURCE_DIR}/interfaces/n2_chart.json)
+                 $<TARGET_FILE:gs_stage6_sftp_tests> ${CMAKE_SOURCE_DIR}/interfaces/n2_chart.json
+                 ${GS_FDS_SFTP_TEST_CLIENT})
         add_executable(gs_container_net_probe tests/container/network_probe.c)
         target_link_libraries(gs_container_net_probe PRIVATE gs)
         if(CMAKE_SYSTEM_NAME STREQUAL "Linux")

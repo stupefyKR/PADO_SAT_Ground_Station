@@ -1,6 +1,7 @@
 """Start a temporary key-only SFTP server and test approved upload/pull paths."""
 
 import base64
+import argparse
 import hashlib
 import json
 import os
@@ -11,6 +12,10 @@ import subprocess
 import sys
 import tempfile
 import time
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+from tools.receive_fds_inputs import ingest_inbox, pull_n05
+from tools.run_fds_pipeline import current_pair, verified_pair
 
 
 def run(*args: str, cwd: pathlib.Path) -> None:
@@ -32,7 +37,7 @@ def fixture(directory: pathlib.Path, name: str, data: bytes,
 
 
 def main() -> int:
-    if len(sys.argv) != 4:
+    if len(sys.argv) not in (4, 5):
         return 2
     executable = pathlib.Path(sys.argv[1]).resolve()
     stage6_executable = pathlib.Path(sys.argv[2]).resolve()
@@ -61,7 +66,9 @@ def main() -> int:
         assert {flow["id"] for flow in stage6_flows} == stage6_ids
         for flow in stage6_flows:
             item = flow["id"]
-            route_data = f"stage6-{item}".encode("ascii")
+            route_data = ((pathlib.Path(__file__).resolve().parents[1] /
+                           "services/fds/src/test/resources/test-gnss.properties").read_bytes()
+                          if item == "N11" else f"stage6-{item}".encode("ascii"))
             route_file, route_manifest = fixture(route_source, f"{item}.bin",
                                                  route_data, flow["types"][0],
                                                  flow["data_from"], flow["data_to"])
@@ -164,9 +171,36 @@ def main() -> int:
                 item = flow["id"]
                 target = ((route_remote if flow["transport"] == "SFTP_PUSH"
                            else route_download) / item)
-                assert (target / f"{item}.bin").read_bytes() == f"stage6-{item}".encode("ascii")
+                expected = ((pathlib.Path(__file__).resolve().parents[1] /
+                             "services/fds/src/test/resources/test-gnss.properties").read_bytes()
+                            if item == "N11" else f"stage6-{item}".encode("ascii"))
+                assert (target / f"{item}.bin").read_bytes() == expected
                 assert json.loads((target / f"{item}.bin.manifest.json").read_text())[
                     "type"] == flow["types"][0]
+            if len(sys.argv) == 5:
+                fds_executable = pathlib.Path(sys.argv[4]).resolve()
+                ingress = root / "fds-ingress"
+                settings = argparse.Namespace(
+                    exchange_bin=fds_executable, n05_host="127.0.0.2", n05_port=port,
+                    n05_user=username, n05_key=root / "client", n05_host_key_sha256=pin,
+                    n05_remote_dir=str(tle_outbox), n05_filename="tle.bin")
+                pull_n05(settings, ingress / "tle")
+                assert verified_pair(*current_pair(ingress / "tle", "tle"), "tle") == b"test-only-tle"
+                ingest_inbox("gnss", route_remote / "N11", ingress / "gnss")
+                assert verified_pair(*current_pair(ingress / "gnss", "gnss"), "gnss") == \
+                    (route_remote / "N11/N11.bin").read_bytes()
+                settings.n05_host_key_sha256 = "0" * 64
+                try:
+                    pull_n05(settings, ingress / "wrong-pin")
+                    raise AssertionError("N05 accepted an incorrect SFTP host key")
+                except subprocess.CalledProcessError:
+                    assert not (ingress / "wrong-pin/current.txt").exists()
+                (route_remote / "N11/N11.bin").write_bytes(b"tampered-after-upload")
+                try:
+                    ingest_inbox("gnss", route_remote / "N11", ingress / "gnss")
+                    raise AssertionError("N11 accepted a tampered received body")
+                except ValueError:
+                    assert (ingress / "gnss/blocked.txt").is_file()
             return 0
         finally:
             if server.poll() is None:
