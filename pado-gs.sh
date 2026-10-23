@@ -87,9 +87,11 @@ firewall_jump_exists() {
 firewall_rules_present() {
   firewall_jump_exists &&
     fw -C "$FIREWALL_CHAIN" -m comment --comment "$FIREWALL_MARK" \
-      -s "$PADO_OPERATOR_CIDR" -m conntrack --ctorigdst "$PADO_LOCAL_BIND_IP" \
+      -s "$PADO_OPERATOR_CIDR" -m conntrack --ctdir ORIGINAL \
+      --ctorigdst "$PADO_LOCAL_BIND_IP" \
       --ctorigdstport "$PORT" -j RETURN >/dev/null 2>&1 &&
-    fw -C "$FIREWALL_CHAIN" -m conntrack --ctorigdst "$PADO_LOCAL_BIND_IP" \
+    fw -C "$FIREWALL_CHAIN" -m conntrack --ctdir ORIGINAL \
+      --ctorigdst "$PADO_LOCAL_BIND_IP" \
       --ctorigdstport "$PORT" -j DROP >/dev/null 2>&1
 }
 
@@ -113,11 +115,12 @@ install_firewall() {
     fw -N "$FIREWALL_CHAIN"
   fi
   # Docker publishes ports through FORWARD; UFW INPUT alone cannot restrict
-  # them. Match the original host destination after Docker's DNAT.
+  # them. Match the original host destination after Docker's DNAT, but only
+  # in the request direction; the same original tuple exists on replies.
   fw -A "$FIREWALL_CHAIN" -m comment --comment "$FIREWALL_MARK" \
-    -s "$PADO_OPERATOR_CIDR" -m conntrack \
+    -s "$PADO_OPERATOR_CIDR" -m conntrack --ctdir ORIGINAL \
     --ctorigdst "$PADO_LOCAL_BIND_IP" --ctorigdstport "$PORT" -j RETURN
-  fw -A "$FIREWALL_CHAIN" -m conntrack \
+  fw -A "$FIREWALL_CHAIN" -m conntrack --ctdir ORIGINAL \
     --ctorigdst "$PADO_LOCAL_BIND_IP" --ctorigdstport "$PORT" -j DROP
   fw -A "$FIREWALL_CHAIN" -j RETURN
   fw -I DOCKER-USER 1 -m comment --comment "$FIREWALL_MARK" -j "$FIREWALL_CHAIN"

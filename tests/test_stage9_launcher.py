@@ -199,6 +199,9 @@ class LauncherLifecycleTests(unittest.TestCase):
         all_rules = " ".join(" ".join(rule) for rules in first_rules.values() for rule in rules)
         self.assertIn("192.168.45.1/32", all_rules)
         self.assertIn("8080", all_rules)
+        for rule in first_rules["PADO_GS_LOCAL"][:2]:
+            self.assertEqual(rule[rule.index("--ctdir") + 1], "ORIGINAL",
+                             "the 8080 filter must not drop reply packets")
 
         self.run_launcher("start")
         self.assertEqual(self.rules(), first_rules, "start added duplicate firewall rules")
