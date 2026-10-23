@@ -177,7 +177,7 @@ def main() -> int:
             created_networks.append(isolated)
             for network_name in created_networks:
                 actual = json.loads(run("docker", "network", "inspect",
-                                        network_name).stdout)[0]
+                                        network_name, quiet=True).stdout)[0]
                 if (actual.get("Internal") is not True or
                         actual.get("EnableIPv6") is not False or
                         actual.get("Options", {}).get(

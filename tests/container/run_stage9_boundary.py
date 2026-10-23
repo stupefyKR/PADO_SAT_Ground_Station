@@ -23,6 +23,8 @@ COMPOSE = ("docker", "compose", "-p", "pado-stage9-local", "-f",
 TCP_PROBE = """import socket,sys
 s=socket.socket()
 s.settimeout(2)
+if len(sys.argv)>3:
+    s.bind((sys.argv[3],0))
 result=s.connect_ex((sys.argv[1],int(sys.argv[2])))
 s.close()
 raise SystemExit(0 if result else 1)
@@ -74,8 +76,8 @@ def host_ip() -> str:
     return address
 
 
-def operator_link() -> tuple[str, str, str, str, str]:
-    """Choose a free RFC1918 /30 for a test PC outside Docker's bridges."""
+def operator_link() -> tuple[str, str, str, str, str, str]:
+    """Choose a free RFC1918 /29 for allowed and denied test PC addresses."""
     routes = json.loads(run("ip", "-4", "-j", "route", "show", "table", "all",
                             env=dict(os.environ), timeout=10))
     in_use = []
@@ -86,15 +88,15 @@ def operator_link() -> tuple[str, str, str, str, str]:
                 in_use.append(ipaddress.IPv4Network(destination, strict=False))
             except ValueError:
                 continue
-    for cidr in ("10.254.254.0/30", "172.30.251.0/30",
-                 "192.168.253.0/30"):
+    for cidr in ("10.254.254.0/29", "172.30.251.0/29",
+                 "192.168.253.0/29"):
         subnet = ipaddress.IPv4Network(cidr)
         if all(not subnet.overlaps(route) for route in in_use):
-            host, operator = tuple(subnet.hosts())
+            host, operator, denied = tuple(subnet.hosts())[:3]
             suffix = f"{os.getpid() % 1000000:06d}"
             return f"padoop{suffix}", f"padoh{suffix}", f"padon{suffix}", \
-                str(host), str(operator)
-    raise RuntimeError("no free RFC1918 test operator /30 is available")
+                str(host), str(operator), str(denied)
+    raise RuntimeError("no free RFC1918 test operator /29 is available")
 
 
 def drop_count(chain: str, marker: str, env: dict[str, str],
@@ -131,7 +133,7 @@ def main() -> int:
         raise RuntimeError("live DGS boundary test requires Linux Docker")
     bind = host_ip()
     env = dict(os.environ, PADO_LOCAL_BIND_IP=bind)
-    namespace, host_veth, peer_veth, link_host, operator_ip = operator_link()
+    namespace, host_veth, peer_veth, link_host, operator_ip, denied_ip = operator_link()
     namespace_created = False
     veth_created = False
     failure: BaseException | None = None
@@ -146,12 +148,14 @@ def main() -> int:
         veth_created = True
         run("sudo", "-n", "ip", "link", "set", peer_veth, "netns", namespace,
             env=env, timeout=10)
-        run("sudo", "-n", "ip", "addr", "add", f"{link_host}/30", "dev",
+        run("sudo", "-n", "ip", "addr", "add", f"{link_host}/29", "dev",
             host_veth, env=env, timeout=10)
         run("sudo", "-n", "ip", "link", "set", host_veth, "up", env=env,
             timeout=10)
         run("sudo", "-n", "ip", "netns", "exec", namespace, "ip", "addr", "add",
-            f"{operator_ip}/30", "dev", peer_veth, env=env, timeout=10)
+            f"{operator_ip}/29", "dev", peer_veth, env=env, timeout=10)
+        run("sudo", "-n", "ip", "netns", "exec", namespace, "ip", "addr", "add",
+            f"{denied_ip}/29", "dev", peer_veth, env=env, timeout=10)
         run("sudo", "-n", "ip", "netns", "exec", namespace, "ip", "link", "set",
             "lo", "up", env=env, timeout=10)
         run("sudo", "-n", "ip", "netns", "exec", namespace, "ip", "link", "set",
@@ -209,23 +213,19 @@ def main() -> int:
                       interface_column=5) <= before:
             raise RuntimeError("DGS outbound SYN did not hit the FORWARD deny rule")
 
-        # Another Docker bridge can route directly to the DGS container IP.
-        # That path must not skip the operator host-tuple rule.
+        # Use a second source IP from the same outside namespace. Docker
+        # bridge hairpin/userland-proxy paths can accept the TCP handshake
+        # before the gateway ACL closes it, so they are unsuitable here.
         target = direct_entry_ip(env)
-        image = run(*COMPOSE, "images", "-q", "dgs-ops-gateway", env=env).strip()
-        if not image:
-            raise RuntimeError("DGS gateway image was not found")
         before_operator = drop_count("PADO_GS_LOCAL", "ctorigdstport 8080", env)
-        run("docker", "run", "--rm", "--network", "bridge", "--cap-drop", "ALL",
-            "--security-opt", "no-new-privileges", image, "python3", "-c",
-            TCP_PROBE, bind, "8080", env=env, timeout=30)
+        run("sudo", "-n", "ip", "netns", "exec", namespace, "python3", "-c",
+            TCP_PROBE, bind, "8080", denied_ip, env=env, timeout=15)
         if drop_count("PADO_GS_LOCAL", "ctorigdstport 8080", env) <= before_operator:
             raise RuntimeError("non-operator SYN did not hit the published-port deny rule")
         before = drop_count("PADO_GS_LOCAL", "br-pado-local", env,
                             interface_column=6)
-        run("docker", "run", "--rm", "--network", "bridge", "--cap-drop", "ALL",
-            "--security-opt", "no-new-privileges", image, "python3", "-c",
-            TCP_PROBE, target, "8080", env=env, timeout=30)
+        run("sudo", "-n", "ip", "netns", "exec", namespace, "python3", "-c",
+            TCP_PROBE, target, "8080", operator_ip, env=env, timeout=15)
         if drop_count("PADO_GS_LOCAL", "br-pado-local", env,
                       interface_column=6) <= before:
             raise RuntimeError("direct-to-DGS SYN did not hit the ingress deny rule")
