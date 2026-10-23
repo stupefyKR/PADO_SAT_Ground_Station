@@ -1,6 +1,20 @@
 # Development only. The sole published port is bound to the VM loopback.
 # All certificates and the private CA are supplied outside Git.
 services:
+  dgs-ops-gateway:
+    build:
+      context: ../..
+      dockerfile: docker/stage9/Dockerfile
+    command: ["python3", "/app/deploy/stage9/dgs_ops_gateway.py", "--listen-port", "8443", "--upstream-port", "8443"]
+    depends_on:
+      portal: {condition: service_started}
+    ports: ["127.0.0.1:8443:8443"]
+    networks: [entry, dgs_portal]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/tmp"]
+    logging: {driver: journald}
   portal:
     build:
       context: ../..
@@ -32,8 +46,6 @@ services:
       - https://mps-api:8443
       - --orbit-view
       - /fds-view/orbit_view.json
-    ports:
-      - "127.0.0.1:8443:8443"
     volumes:
       - type: bind
         source: ${PADO_STAGE9_CERT_DIR:?set certificate directory}
@@ -44,7 +56,7 @@ services:
         source: ${PADO_STAGE9_FDS_VIEW_DIR:-../../out/fds-view}
         target: /fds-view
         read_only: true
-    networks: [entry, portal_ros, portal_mps]
+    networks: [dgs_portal, portal_ros, portal_mps]
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
@@ -150,6 +162,24 @@ volumes:
   mps_candidates:
   mps_core_socket:
 networks:
-  entry: {driver: bridge}
-  portal_ros: {driver: bridge, internal: true}
-  portal_mps: {driver: bridge, internal: true}
+  entry:
+    driver: bridge
+    enable_ipv6: false
+    driver_opts:
+      com.docker.network.bridge.name: br-pado-dev
+      com.docker.network.bridge.gateway_mode_ipv4: nat
+  dgs_portal:
+    driver: bridge
+    internal: true
+    enable_ipv6: false
+    driver_opts: {com.docker.network.bridge.gateway_mode_ipv4: isolated}
+  portal_ros:
+    driver: bridge
+    internal: true
+    enable_ipv6: false
+    driver_opts: {com.docker.network.bridge.gateway_mode_ipv4: isolated}
+  portal_mps:
+    driver: bridge
+    internal: true
+    enable_ipv6: false
+    driver_opts: {com.docker.network.bridge.gateway_mode_ipv4: isolated}

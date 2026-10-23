@@ -11,8 +11,9 @@ GitHub 원격 저장소는 비공개로 설정되어 있습니다(2026-10-21 확
 ## VMware 시험 웹 실행
 
 Windows 관제 PC(`192.168.45.1`)와 VMware Linux VM(`192.168.45.128`)의
-사설망 시험 환경에서는 저장소를 clone한 뒤 다음처럼 시작한다. Docker Engine,
-Compose 플러그인, `curl`이 필요하며, 첫 실행 때 웹 로그인 계정 비밀번호를 묻는다.
+사설망 시험 환경에서는 저장소를 clone한 뒤 다음처럼 시작한다. Docker Engine
+stable 28.0.0 이상, Compose v2 플러그인, `curl`이 필요하며, 첫 실행 때 웹
+로그인 계정 비밀번호를 묻는다.
 
 ```sh
 git clone https://github.com/stupefyKR/PADO_SAT_Ground_Station.git pado-gs
@@ -21,9 +22,11 @@ git switch feat/fds-core
 ./pado-gs.sh start
 ```
 
-Windows 브라우저에서 `http://192.168.45.128:8080/login`에 접속한다. VM 또는
-관제 PC 주소가 다르면 각각 `PADO_LOCAL_BIND_IP`와 `PADO_OPERATOR_CIDR`로
-지정한다. `./pado-gs.sh stop`은 데이터 볼륨을 보존하며,
+Windows 브라우저에서 `http://192.168.45.128:8080/login`에 접속한다. VM의
+8080은 Portal이 아니라 **DGS-OPS-Gateway**만 게시하며, 게이트웨이가 내부
+Portal의 고정 주소로 전달한다. Portal·ROS·MPS·FDS·시뮬레이터에는 직접 외부망
+경로를 주지 않는다. VM 또는 관제 PC 주소가 다르면 각각 `PADO_LOCAL_BIND_IP`와
+`PADO_OPERATOR_CIDR`로 지정한다. `./pado-gs.sh stop`은 데이터 볼륨을 보존하며,
 `./pado-gs.sh cleanup`은 삭제 확인 뒤 계정·시험 시퀀스·FDS 결과를 포함한 프로젝트
 볼륨과 로컬 이미지를 제거한다. 방화벽 접근 범위와 상세 절차는
 [단계 9 안내](deploy/stage9/README.md)를 참고한다. 이 스택은 실제 TC를
@@ -63,7 +66,7 @@ ROS의 별도 `SIM ONLY` 영역에서 단계별 AOS 기준 예약과 가상 위�
 
 ## 아키텍처
 
-이전 개발방향 4.1절의 VM 8대 구성은 [결정 #16](docs/DECISIONS.md)으로 대체했습니다. 목표 구조는 Linux VM 한 대에 Portal, ROS, MPS, FDS, DGS-Archive, DGS-GS, DGS-NET 컨테이너를 두는 것입니다. [단계 7 배포 기준선](deploy/stage7/README.md)의 Compose 파일은 네트워크 검증용이며 운용 앱 배포 파일은 아직 아닙니다. 실제 서버 적용 순서는 [서버 설정 매뉴얼](deploy/stage7/SERVER_SETUP.md)에 있습니다.
+현행 [개발방향](docs/PADO-SAT_지상국_개발방향.md)의 목표 운용 구조는 Linux VM 한 대에서 Portal, ROS, MPS, FDS, DGS-Archive, DGS-GS, DGS-NET을 역할별 컨테이너로 분리합니다([결정 #16·#40](docs/DECISIONS.md)). **모든 런타임 애플리케이션의 외부망 통신은 DGS만 수행**합니다. 로컬 웹 시험에는 DGS-OPS-Gateway가 관제 PC 접속을 Portal로 고정 전달하며, 비DGS 컨테이너의 외부 발신 경로를 차단하는 구조를 적용합니다. 현 로컬 Compose에는 실제 DGS-GS/NET/Archive 운용 서비스가 없고, 다른 출발지·재부팅 후 정책의 현장 실증은 배포 수락에 남아 있습니다. [단계 7 배포 기준선](deploy/stage7/README.md)의 Compose는 네트워크 검증용이며 운용 앱 배포 파일이 아닙니다. 실제 서버 적용 순서는 [서버 설정 매뉴얼](deploy/stage7/SERVER_SETUP.md)에 있습니다.
 
 단계 8의 로컬 백업·복원과 퍼징 절차는 [단계 8 시험 안내](deploy/stage8/README.md)에 정리했습니다. NAS 장비 연동은 현재 개발·배포 수락 범위에서 제외하고, 장비가 정해진 뒤 별도 과제로 추가합니다([결정 #19](docs/DECISIONS.md)). 운용 전 독립 백업·복원 방안은 별도로 검증해야 합니다.
 

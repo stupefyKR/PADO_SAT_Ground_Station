@@ -1,1019 +1,310 @@
-# PADO-SAT 지상국 개발 방향 (구현 아키텍처)
+# PADO-SAT 지상국 개발 방향
 
-> **2026-10-23 배포 구조 변경:** 사용자 결정에 따라 실제 운영은 Linux VM
-> **한 대**에 서브시스템별 Docker 컨테이너를 올린다. 이 문서의 다중 VM·VLAN·
-> VM별 nftables·전용 vm-mgmt 내용은 이전 설계안이며 현재 배포 지시로
-> 사용하지 않는다. 확정된 N2 데이터·연결 방향, 애플리케이션 보안 계약과
-> ROS/MPS 웹 UI를 마지막에 구현하는 순서는 유지한다. 단계 7의 개발
-> 기준선과 최종 배포 수락 항목의 구분은 [결정 #17·#18](DECISIONS.md) 및
-> [단일 VM 계획](../deploy/stage7/README.md)을 따른다.
+> 개정: 2026-10-24. 이 문서는 현재 합의한 **Linux VM 1대 + 서브시스템별 Docker 컨테이너** 구조와 구현 상태를 기준으로 한다. 초기의 VM 8대, VLAN, 별도 방화벽 장비, NAS를 전제로 한 구성·포트·예시 코드는 현행 배포 지시가 아니다. 원 설계의 위협과 요구는 [보안 계획서](PADO-SAT_지상국_보안설계_개발방향계획서.md), 변경 근거는 [결정 기록](DECISIONS.md)에 남긴다.
 
-> **2026-10-23 저장 장비 범위 변경:** 아래 NAS/NFS 경로·백업 장비 설명은
-> 원래의 설계안이며 현 개발·배포 수락 요구가 아니다. 서비스별 로컬 영속 경로와
-> 파일·매니페스트·SHA-256 교환 계약을 유지한다. NAS 연동은 장비 선정 후
-> 별도 후속 과제로 다룬다([결정 #19](DECISIONS.md)). 운용 데이터의 독립된
-> 백업·복원 방안은 NAS와 무관하게 배포 전에 정하고 검증한다.
-
-> 온프레미스 VM 기반 지상국 구현 구조 — 웹 운용 화면, 서브시스템 VM·컨테이너 구성, 방화벽·Docker 보안 설정
-
-| 항목 | 내용 |
+| 항목 | 기준 |
 |---|---|
-| 작성일 | 2026. 10. 21. |
-| 작성자 | 김경태 (경희대학교 PWNLAB) |
-| 기준 문서 | ① 초소형(큐브) 위성 경연대회 2차 제안서 — 지상국 시스템 (PADO-SAT) ② PADO-SAT 지상국 보안 설계 개발 방향 계획서 (이하 「보안 계획서」) |
-| 문서 성격 | 보안 계획서의 설계 개념을 실제 장비·VM·코드 구조로 옮기는 구현 방향서 |
+| 원본 요구 | [지상국 제안서](지상국.pdf)의 N2 chart, 제공된 PDR 자료, 보안 계획서 |
+| 현 개발 환경 | Windows 관제 PC → VMware Linux VM 1대 → Docker 컨테이너 |
+| 배포 원칙 | 모든 **애플리케이션의 외부 통신은 DGS만** 담당한다. 다른 서브시스템에는 외부망 경로를 주지 않는다. |
+| 현재 판정 | 단계 1–8 개발 기준선 완료, 단계 9 비운용 웹·가상 위성 연동 개발 중. 실제 위성 운용과 현장 배포는 미수락 |
 
----
+## 1. 범위와 변경된 전제
 
-## 1. 개요
+### 1.1 시스템 경계
 
-### 1.1 구축 방식: 온프레미스
+서버는 온프레미스 Linux VM 한 대다. 목표 운용 구조에서 ROS, MPS, FDS, Portal, DGS-GS, DGS-NET, DGS-Archive를 역할별 컨테이너로 분리한다. **현 단계 9 로컬 Compose에는 실제 DGS-GS/NET/Archive 운용 컨테이너가 없다.** 관제용 Windows PC는 같은 통제된 내부망에서 웹 포털로 접속한다. 현재 VMware 시험 주소는 관제 PC `192.168.45.1`, VM `192.168.45.128`이며 운용 고정값이 아니다. 물리 방화벽 장비·VLAN 스위치와 NAS 선정은 현재 개발의 전제 조건이 아니다. 호스트 입력 방화벽은 UFW, Docker 게시 포트 경계는 `DOCKER-USER` 규칙으로 다룬다.
 
-본 지상국은 **온프레미스(On-premise)** 방식으로 구축한다. 모든 서버·저장장치·운용 단말을 경희대 MOC 공간에 직접 설치하고 운영하며, 클라우드 서비스는 사용하지 않는다.
+N2의 데이터 생산자·소비자·형식은 유지한다. 다만 원래 제안한 **서브시스템별 VM 및 VLAN**은 같은 Linux VM 내 컨테이너·전용 Docker 네트워크·파일 교환 경계로 대체한다. Docker 컨테이너는 VM 또는 물리 호스트와 동등한 보안 경계가 아니므로, 단일 호스트 침해·Docker 관리자 권한 침해에 대한 잔여 위험은 운용 전 별도로 평가한다.
 
-외부와의 연결은 다음 두 가지뿐이다. 둘 다 **우리 장비가 외부 서비스와 통신하는 것**이지, 우리 시스템의 일부를 외부에 두는 것이 아니다.
+NAS·S-band payload 데이터 수신, 궤도 기동 기능은 현재 개발 범위에서 제외한다. NAS 없이도 운용 데이터의 독립된 백업과 실제 복원 시험은 운용 전 필수다. S-band 패스 예측은 계속 수행하지만 탑재체 원시데이터 수신은 구현하지 않는다.
 
-| 외부 연결 | 방식 | 담당 VM |
-|---|---|---|
-| 항우연·연세대 안테나 지상국 | IPsec 사이트 간 VPN | vm-dgs-gs |
-| Space-Track (TLE) | 인터넷 HTTPS 아웃바운드 | vm-dgs-net |
+### 1.2 현재 자료의 등급
 
-온프레미스이므로 **물리 보안, 전원, 백업, 패치, 장비 장애 대응도 모두 우리 책임**이다. 이 부분은 8장(로그·백업)과 10장(운영 관리)에서 다룬다.
-
-### 1.2 구현 원칙
-
-보안 계획서의 설계 원칙을 구현 수준으로 옮기면 다음과 같다.
-
-| 보안 계획서 원칙 | 구현 원칙 |
+| 구분 | 뜻 |
 |---|---|
-| 단일 접점 | 외부 회선은 DMZ의 두 VM(vm-dgs-gs, vm-dgs-net)에만 연결한다. 운용 VM은 외부 경로가 없다. |
-| 명령 경로 우선 | TC는 ros-core → ros-signer → tc-gate 순서로만 흐르며, 각 단계는 서로 다른 프로세스·컨테이너·VM에 둔다. |
-| 단순성 | 서비스 간 통신은 "실시간 스트림 1종 + 파일 교환 1종"만 쓴다. 모든 서비스는 같은 골격 코드를 쓴다. |
-| 계층 방어 | 방화벽 장비 → 하이퍼바이저 → VM nftables → 컨테이너 설정 → 애플리케이션 검증의 5계층으로 통제한다. |
-| 보안 경계 | **VM이 보안 경계**이고, 컨테이너는 배포 단위이자 보조 격리 수단이다. 컨테이너를 보안 경계로 간주하지 않는다. |
-| 기록과 복구 | 모든 서비스가 같은 형식의 로그를 남기고, 모든 데이터는 3-2-1 원칙으로 백업한다. |
+| 시험·시뮬레이션 | 가상 PADO-SAT TLE, 가상 위성 EPS/AOCS/GNSS TM, 초안 TC PDU와 ACK, 예시 안테나 좌표·고각·주파수 |
+| 개발 기준선 | 검증된 N2 파일·매니페스트, 파서, FDS 계산기, 제한된 ROS/MPS 웹/API, 컨테이너 격리 시험 |
+| 운용 수락 대기 | CS/CDHS 승인 TC/TM ICD, 실제 RF/CSP/AX100 및 항우연·연세대 연동, 실제 GNSS TM 매핑, 운용 키·승인·감사·백업·현장 검증 |
 
----
+시험 결과·웹 화면·ACK에는 비운용 출처를 표시한다. 시험 흐름을 실제 위성으로 송신하는 경로에 자동 연결하지 않는다.
 
-## 2. 물리 구성
+## 2. DGS 단일 외부 접점: 변경할 수 없는 통신 정책
 
-### 2.1 장비 구성
+### 2.1 정책의 정확한 의미
 
-| 장비 | 수량 | 역할 | 비고 |
+**운용 중 모든 애플리케이션의 외부망 송수신은 DGS 경계를 거친다.** 외부망은 항우연·연세대 지상국, Space-Track/인터넷, 향후 외부 SDC 연동 상대를 뜻한다. ROS·MPS·FDS·Portal·가상 위성은 인터넷 주소, 외부 기관 주소, 호스트의 외부망 경로에 직접 접속할 수 없어야 한다. 웹 페이지 역시 외부 CDN/API에 의존하지 않고 자산을 로컬로 제공한다.
+
+관제 PC에서 포털로 들어오는 **관리되는 내부망 접속**은 이 정책의 명시적인 진입 경로다. 호스트 SSH·이미지 설치·시각 동기화 등 관리 작업은 애플리케이션 데이터 경로와 분리해 출발지와 목적지를 따로 승인·기록한다. 이를 ROS/MPS/FDS의 외부 통신 우회로로 사용하지 않는다.
+
+| 경계 역할 | 허용할 외부 상대 | 내부로 전달하는 자료 | 현재 상태 |
 |---|---|---|---|
-| 관제용 PC | 2 | 웹 브라우저로 관제 화면·스케줄링 화면 접속 | 2인 승인(작성자 ≠ 승인자) 운용에 활용 |
-| 서버 (고성능 PC) | 1 | 하이퍼바이저, 모든 VM 실행 | |
-| NAS | 1 | DGS 아카이브 저장소, 백업 대상 | **운용 DB는 두지 않음** (2.3절) |
+| DGS-GS | 항우연·연세대 지상국의 승인된 연동 종단만. 일반 인터넷 금지 | 검증된 TM, 승인된 TC, 안테나/컨택 자료 | 실제 VPN·RF/ICD 연동 미구현; 합성 프레임 시험만 있음 |
+| DGS-NET | Space-Track 등 승인된 TLE·상태벡터 출처만. TC 경로 금지 | 검증된 N05 TLE 등 | 입력 검증·교환 시험은 있음; 실제 외부 조회 서비스 미연결 |
+| DGS-Archive | 승인된 SDC 교환 상대만(필요 시) | 매니페스트·해시 검증된 파일 | 내부 교환 시험 있음; 외부 SDC·NAS 미연결 |
+| DGS-OPS-Gateway | 관제 PC 내부망의 지정 포트 → Portal **고정 목적지**만 | 인증 전 HTTP 요청 전달. 범용 프록시·외부망 중계 금지 | 단계 9 로컬 시험의 웹 진입 경계 |
 
-### 2.2 추가 필요 장비 (권장)
+DGS의 각 역할을 하나의 범용 라우터·프록시로 합치지 않는다. DGS-NET은 DGS-GS/TC 회선에 닿을 수 없어야 한다. DGS-GS는 ROS/MPS/FDS로 신규 연결을 열지 않으며, 원시데이터 회수 등 데이터가 내부로 와야 할 때는 내부 수신자가 DGS의 제한된 보관 영역을 가져온다. DGS가 탈취돼도 내부 서비스에 대한 임의 연결이나 임의 파일 유형 전달을 허용하지 않는다.
 
-| 장비 | 필요 이유 | 대안 |
-|---|---|---|
-| **방화벽 장비** | VPN 종단, 인터넷·VPN·내부 VLAN 간 라우팅과 필터링. 외부 회선이 서버에 직접 닿지 않게 한다. | 하이퍼바이저 위 방화벽 VM (6.5절의 주의 사항 적용) |
-| **VLAN 지원 스위치** | 운용·서비스·DMZ·저장·관리망 분리 | 없으면 구역 분리가 불가능하므로 사실상 필수 |
-| UPS | 정전 시 패스 중 TC 송출 중단·DB 손상 방지 | |
-| 오프라인 백업 디스크 2개 | 3-2-1 백업의 오프라인 사본 (교대 보관) | |
-| 관리자 단말 | VM·하이퍼바이저 관리 전용 (관제 PC와 분리) | 서버 로컬 콘솔 |
+### 2.2 구현과 수락 조건
 
-### 2.3 DB를 NAS에 두지 않는 이유
+개발용 웹 진입 경로는 관제 PC → VM의 지정 사설 IP:8080 → DGS-OPS-Gateway → 내부 Portal이다. **호스트에 게시되는 앱 포트는 게이트웨이의 8080 하나뿐**이며 Portal, ROS/MPS API, FDS, 시뮬레이터는 공개 포트를 갖지 않는다. 게이트웨이만 비내부 `entry` 브리지와 내부 `dgs_portal` 브리지에 연결되고, Portal은 `dgs_portal`·`portal_ros`·`portal_mps` 내부망에만 놓인다. 나머지 애플리케이션 컨테이너는 `internal: true` 네트워크 또는 `network_mode: none`에 둔다. 게이트웨이는 Portal 한 목적지·한 포트로 원본 TCP 바이트만 전달하며 외부 목적지·임의 호스트명·일반 CONNECT 요청을 받지 않는다. 비내부 `entry`를 통한 게이트웨이의 신규 외부 발신 및 호스트 직접 접속은 호스트 정책에서도 거부한다.
 
-- NAS나 저장망에 문제가 생기면 **패스 도중 ROS가 멈춘다.**
-- PostgreSQL 데이터를 NFS 같은 네트워크 파일시스템 위에서 운영하면 잠금·쓰기 보장 문제로 데이터가 손상될 위험이 있다.
-- 제안서의 "각 서브시스템은 운용 데이터를 자체 저장한다"는 원칙과도 맞지 않는다.
+컨테이너 네트워크만으로 모든 위험을 막을 수는 없다. **현재 개발 자동 게이트**는 Docker Engine stable 28.0.0 이상을 요구하고 Compose의 외부망 연결·게시 포트 구조를 정적으로 검사한다. `start`는 프로젝트 네트워크를 재생성하고 실제 Docker 네트워크의 내부/격리/IPv6 설정을 확인한 뒤 `DOCKER-USER` 규칙 설치·확인을 실패 폐쇄로 수행한다. CI의 격리·거부 시험은 시험 컨테이너의 경계를 확인한다. 이것을 실제 VM의 모든 외부 발신·수신 경로를 실측한 결과로 해석하지 않는다.
 
-따라서 **운용 DB는 각 VM의 로컬 디스크**에 두고, NAS는 **아카이브 저장소(장기 보관)와 백업 사본**을 맡는다.
+**실제 VM 배포 수락**에서는 다음을 실행해 증적을 남긴다. 실패하면 운용 전환을 거부한다.
 
----
+1. ROS·MPS·FDS·Portal·시뮬레이터에서 외부 IP, 외부 DNS, 호스트 게이트웨이 및 DGS가 아닌 외부 서비스 접속이 거부되는지 확인한다. IPv4와 활성화된 IPv6를 모두 포함한다.
+2. DGS-OPS-Gateway의 게시 포트가 지정 사설 IP와 관제 PC 주소 범위에만 열리는지, 다른 출발지의 접속이 실제로 거부되는지 확인한다. UFW `INPUT`만 신뢰하지 않고 Docker `DOCKER-USER` 정책과 함께 검증한다.
+3. DGS-GS/NET/Archive가 각 승인 상대만 접속하고 서로 다른 외부 경로를 가로질러 사용할 수 없는지 확인한다. 인증된 상대·파일 유형·서비스 권한을 네트워크 허용 규칙과 독립적으로 검증한다.
+4. 네트워크 재시작·Docker 재시작·호스트 재부팅 뒤에도 위 정책이 유지되는지 확인한다. 포트·네트워크가 추가되면 N2 흐름표와 정책을 함께 검토한다.
 
-## 3. 네트워크 구성
+내부 브리지의 DNS도 외부 통신 경계에 포함한다. 과거 Moby에는 `internal` 네트워크의 DNS 요청을 호스트를 통해 외부로 전달할 수 있었던 [공식 보안 권고](https://github.com/moby/moby/security/advisories/GHSA-mq39-4gv4-mvpx)가 있다. 배포 시 해당 문제가 수정된 Docker Engine을 확인하고, 비DGS 컨테이너의 외부 이름 조회가 실제로 실패하는지 시험한다.
 
-### 3.1 VLAN 구성
+실제 DGS-GS/NET의 외부 인터페이스·상대 주소·VPN/인증 정보가 미정이므로 **운용 외부 연결은 열지 않는다**. 현 로컬 HTTP는 관제 PC↔VM의 폐쇄 시험망을 위한 사용자 선택이며, 전송 구간 암호화가 없는 상태다. 운용 전에는 이 연결의 위협과 인증 정보 보호를 별도 수락한다.
 
-보안 계획서의 구역(Z0~Z4)을 VLAN으로 구현한다. **VLAN 사이의 통신은 모두 방화벽 장비를 거쳐 라우팅**되도록 하여, 구역 간 정책을 한 곳에서 통제한다.
+## 3. 논리 구성과 연결 방향
 
-| VLAN | 이름 | 보안 계획서 구역 | 대역 (예시) | 구성원 |
-|---|---|---|---|---|
-| 10 | OPS | Z2 (운용 단말) | 10.10.10.0/24 | 관제 PC-1(.11), 관제 PC-2(.12) |
-| 20 | SVC | Z2 (운용 서비스) | 10.10.20.0/24 | portal(.5), ros(.10), mps(.11), fds(.12), dgs-archive(.13) |
-| 30 | DMZ-GS | Z1 | 10.10.30.0/24 | dgs-gs(.10) |
-| 31 | DMZ-NET | Z1 | 10.10.31.0/24 | dgs-net(.10) |
-| 40 | STOR | Z4 | 10.10.40.0/24 | NAS(.5), dgs-archive(.13), mgmt(.20) |
-| 50 | MGMT | Z4 | 10.10.50.0/24 | 하이퍼바이저(.2), mgmt(.20), 관리자 단말(.100) |
-| 60 | SDC | Z3 | 10.10.60.0/24 또는 학내망 | 탑재체팀 장비 |
-| - | WAN | Z0 | - | 인터넷, 항우연·연세대 VPN |
+### 3.1 단일 VM 구성도
 
-※ 주소는 예시이며 구축 시 학교 정보처와 협의하여 확정한다.
+```text
+관제 PC(통제된 내부망)
+    │  VM 사설 IP:8080, 출발지 제한
+    ▼
+[DGS-OPS-Gateway] ── 고정 내부 경로 ──► [Portal / 로그인·API 프록시]
+                                            ├── 전용 내부망 ──► [ROS API] ── Unix socket ── [ROS C 읽기]
+                                            └── 전용 내부망 ──► [MPS API] ── Unix socket ── [MPS C 읽기]
 
-### 3.2 구성도
+[FDS Java/Orekit] ── 검증된 파일·매니페스트 ──► MPS/Portal 읽기 경계
+[가상 위성] ── 전용 내부망 TCP 9200 ──► [시험 지상 수신기] ── 시험 TM/N11 ──► ROS/FDS
+[ROS 시험 예약] ── Unix socket ──► [시험 지상 수신기] ── 내부 TCP ──► [가상 위성]
 
-```
-                 인터넷 / 항우연·연세대 (IPsec VPN)
-                               │
-                     ┌─────────┴─────────┐
-                     │    방화벽 장비      │  VPN 종단, VLAN 간 라우팅·필터링, NTP 상위 동기
-                     └─┬───┬───┬───┬───┬─┘
-          VLAN 10 OPS  │   │   │   │   │  VLAN 60 SDC
-     [관제PC-1][관제PC-2]   │   │   │   └──[탑재체팀 장비]
-                           │   │   │
-            VLAN 20 SVC ───┘   │   └─── VLAN 30 DMZ-GS / 31 DMZ-NET
-                               │
-                     VLAN 50 MGMT (관리자 단말만)
-
- ┌──────────────────────────── 서버 (하이퍼바이저) ─────────────────────────────┐
- │  [VLAN 20] vm-portal  vm-ros  vm-mps  vm-fds  vm-dgs-archive                │
- │  [VLAN 30] vm-dgs-gs          [VLAN 31] vm-dgs-net                          │
- │  [VLAN 40/50] vm-mgmt (로그 수집, 레지스트리, 업데이트 저장소, NTP)            │
- │  하이퍼바이저 관리 인터페이스: VLAN 50에만 존재                                │
- └─────────────────────────────────────────────────────────────────────────────┘
-                     [NAS] VLAN 40 (아카이브 저장소, 백업)
+운용 목표: [DGS-NET] ↔ 승인된 TLE 출처, [DGS-GS] ↔ 승인된 안테나 지상국,
+          [DGS-Archive] ↔ 승인된 SDC 교환 상대. 나머지는 외부망 경로 없음.
 ```
 
-### 3.3 연결 시작 방향 원칙
+같은 VM의 볼륨·내부 브리지도 명시적인 연결이다. 데이터 파일을 공유한다고 해서 서브시스템 간 임의 읽기/쓰기 권한을 주지 않는다. 각 서비스가 접근할 수 있는 볼륨, 소켓, 파일 유형과 방향을 최소화한다. 현재 합성 시험은 로컬 Docker 볼륨을 사용하고, 실제 외부 N2 경계는 검증된 SFTP 파일·매니페스트와 상호 인증된 스트림 계약을 유지한다.
 
-**신뢰도가 낮은 구역에서 높은 구역으로 연결을 시작할 수 없게 한다.** 데이터가 안쪽으로 들어와야 하는 경우에도 안쪽에서 연결을 열어 가져온다.
+### 3.2 연결 시작 방향
 
-| 데이터 방향 | 연결을 시작하는 쪽 | 예 |
-|---|---|---|
-| DMZ → 운용 (TM 수신) | 운용 (ros-core가 dgs-gs에 접속) | ros-core → dgs-gs:7001 |
-| DMZ → 운용 (TLE 수신) | 운용 (fds가 dgs-net에서 가져옴) | fds → dgs-net:2222 (SFTP 다운로드) |
-| 운용 → DMZ (TC 송출) | 운용 | 위와 같은 연결 사용 |
-| SDC → 운용 (Mission Request) | SDC → dgs-archive 교환 영역 | 운용 VM 중 SDC가 닿는 곳은 dgs-archive뿐 |
-
-이 원칙에 따라 **DMZ VM의 nftables에는 VLAN 20으로 나가는 새 연결 규칙이 하나도 없다.** DMZ VM이 탈취되어도 운용 VM으로 먼저 연결을 열 수 없다.
-
----
-
-## 4. VM 구성
-
-### 4.1 VM 목록
-
-| VM | VLAN | 컨테이너 | 로컬 DB | vCPU / RAM (예시) |
-|---|---|---|---|---|
-| vm-portal | 20 | nginx, portal-auth, portal-db | 계정·세션 | 2 / 2 GB |
-| vm-ros | 20 | ros-core, ros-api, ros-signer, ros-db | TM 이력, TC·승인 기록 | 4 / 8 GB |
-| vm-mps | 20 | mps-core, mps-api, mps-db | 계획, 시퀀스, 임무 요청, 반입 승인 | 2 / 4 GB |
-| vm-fds | 20 | fds-core | 궤도 산출물 (파일) | 4 / 8 GB |
-| vm-dgs-archive | 20, 40 | archive, catalog, integrity, sftp-exchange, archive-db | 카탈로그 | 2 / 4 GB |
-| vm-dgs-gs | 30 | kari-adapter, tm-validator, tc-gate, sftp-in | **없음 (무저장)** | 2 / 2 GB |
-| vm-dgs-net | 31 | spacetrack-adapter, sv-receiver, sftp-out | **없음 (무저장)** | 1 / 1 GB |
-| vm-mgmt | 40, 50 | log-collector, registry, update-mirror, ntp | 로그 | 2 / 4 GB |
-
-※ vm-dgs-archive와 vm-mgmt만 두 VLAN에 걸친다. 두 VM 모두 IP 포워딩을 끄고(`net.ipv4.ip_forward=0`), 구역 간 중계 역할을 하지 않는다.
-
-### 4.2 VM별 역할
-
-**vm-portal** — 관제 PC가 접속하는 유일한 진입점. TLS 종단, 정적 웹 파일 제공, 로그인·세션·재인증, 인증된 요청만 ros-api·mps-api로 전달.
-
-**vm-ros** — TM 수신·파싱·Limit 감시, TC 검증·승인 상태 관리·시퀀스 실행, HMAC 서명.
-
-```
- portal ──HTTPS(mTLS)──► ros-api ──unix socket──► ros-core ──unix socket──► ros-signer
-                         (웹 API,                  (TM 처리, TC 검증·         (HMAC 키 보유,
-                          WebSocket TM)             시퀀스 실행)                네트워크 없음)
-                                                        │
-                                                        └──TLS──► vm-dgs-gs:7001
-```
-
-- ros-api와 ros-core를 나누는 이유: 웹 계층에 문제가 생겨도 패스 중 TM 수신과 TC 실행은 계속된다.
-- ros-signer를 나누는 이유: HMAC 키를 공격 표면이 넓은 부분(TM 파싱, 웹)과 분리한다.
-
-**vm-mps** — 명령 목록, 패스 목록, 시퀀스 편집, 충돌 분석, 승인, TC 시퀀스 파일 출력. 탑재체 Uplink 파일 반입 승인도 이 화면에서 처리한다.
-
-**vm-fds** — 궤도 산출. 웹 화면 없음. Orekit(Java) 사용으로 **C 예외 서비스**다(11.3절).
-
-**vm-dgs-archive** — 이관 파일 보관(NAS), 카탈로그, 무결성 검사, SDC 교환 영역(SFTP).
-
-**vm-dgs-gs** — 항우연·연세대 프레임 송수신, TM 입력 검증, TC 게이트. **인터넷 경로 없음.**
-
-**vm-dgs-net** — Space-Track TLE 조회, 발사체 State Vector 수신. **TC 경로와 무관.**
-
-**vm-mgmt** — 로그 수집, 내부 컨테이너 레지스트리, OS 업데이트 저장소, 내부 NTP.
-
----
-
-## 5. 컨테이너(Docker) 구성과 보안 설정
-
-### 5.1 Docker를 쓰는 이유와 위치
-
-| 역할 | 내용 |
+| 자료 | 시작하는 쪽 | 이유 |
 |---|---|
-| 배포 일관성 | 개발·시험·운용 환경이 같은 이미지를 쓴다. |
-| 롤백 | 문제가 생기면 이전 이미지 다이제스트로 즉시 되돌린다. |
-| 불변 배포 | 운용 중 컨테이너 안 파일을 고치지 않고, 이미지를 새로 만들어 교체한다. |
-| 언어 혼용 | FDS(Java)와 나머지(C)를 같은 방식으로 배포한다. |
-| 보조 격리 | 프로세스별 권한·파일시스템·능력(capability) 제한 |
+| TM 수신 | ROS → DGS-GS의 승인된 스트림 | 외부 경계에서 내부로 신규 연결을 시작하지 않음 |
+| TLE 수신(N05) | FDS → DGS-NET의 읽기 전용 SFTP | DGS-NET이 FDS에 직접 연결하지 않음 |
+| TC 송출 | 승인된 ROS → DGS-GS | DGS-GS의 TC 게이트를 반드시 통과 |
+| CREST·SIREN 원시데이터 회수(기존 설계 F19) | DGS-Archive → DGS-GS의 읽기 전용 계정 | S-band 수신이 구현될 때만 사용. 현 개발에는 원시데이터 수신 없음 |
+| 관제 화면 | 관제 PC → DGS-OPS-Gateway → Portal | 정해진 내부망 웹 진입점 하나만 게시 |
 
-**Docker는 VM 안에서만 쓰고, 보안 경계는 VM이다.** 컨테이너는 호스트 커널을 공유하므로 컨테이너 탈출 취약점에 대비해 "한 VM = 한 서브시스템" 원칙을 유지한다.
+기존 “모든 파일은 송신자가 수신자에게 push” 원칙에서 N05 pull과 F19 회수는 명시적 예외다. TLE 수신처는 ROS가 아니라 FDS다([결정 #3](DECISIONS.md)). 신규 연결 방향과 실제 데이터 방향을 혼동하지 않는다.
 
-### 5.2 네트워크 방식: host 네트워크 + nftables 단일 정책
+## 4. 서브시스템 책임
 
-Docker의 기본 bridge 네트워크는 포트를 공개할 때 **iptables 규칙을 직접 추가하여 호스트 방화벽 규칙을 우회**한다. 이는 흔한 설정 실수의 원인이다. 본 지상국은 VM마다 한 서브시스템만 돌리므로 다음 방식으로 단순화한다.
-
-| 컨테이너 유형 | 네트워크 모드 | 이유 |
+| 구성요소 | 책임 | 현재 연결·제한 |
 |---|---|---|
-| 네트워크가 필요한 서비스 | `network_mode: host` | VM의 nftables가 유일한 네트워크 정책이 된다. 규칙이 한 곳에만 있다. |
-| ros-signer | `network_mode: none` | 네트워크 자체가 없음. unix socket으로만 통신 |
-| DB | `network_mode: host`, **unix socket 또는 127.0.0.1에만 바인드** | 외부에서 DB 포트가 보이지 않음 |
+| Portal | 로그인, 세션·CSRF, 내부 API 중계, ORBIT/ROS/MPS 화면 | Python 웹 서비스. 로컬 시험은 HTTP와 내부 토큰, 별도 개발 구성은 mTLS. 직접 외부망 접근 금지 |
+| ROS | TM 검증·센서/한계/자세 표시, TC 초안·예약, 최종 운용 TC 제어 | 가상 위성 시험 TM·읽기 전용 초안 TC/ACK 연결. 실제 RF·승인·서명 경로와 분리 |
+| MPS | FDS PASS 조회, PASS별 명령 후보·인자·AOS 기준 오프셋 편집, ROS 시험 전달 | 연세대 UHF PASS만 시험 TC 구성. 충돌 판정은 현재 후보 흐름과 분리 |
+| FDS | TLE/SGP4 또는 GNSS 상태 수치 전파, 최대 72시간 궤도·PASS·도플러·궤도력 계산 | Java 17/Orekit 오프라인 계산기. 기동 입력 없음. 실제 GNSS TM ICD·정밀도 검증 전 비운용 |
+| DGS-GS | 외부 안테나 연동, TM 입력 검증, 최종 TC 게이트 | 합성 프레임/게이트 시험 기준선만. 실제 지상국 연동 미구현 |
+| DGS-NET | Space-Track TLE 등 외부 자료 수집·검증 | N05 파일 경계 시험. 실제 외부 계정·상주 조회 미구현 |
+| DGS-Archive | 검증된 교환·보관·SDC 전달 경계 | 내부 파일 교환 시험. NAS·payload S-band 수신 미구현 |
+| 가상 위성·시험 수신기 | TM→ROS/FDS 및 제한된 TC/ACK 왕복 검증 | 전용 내부 Docker망만 사용. 운용 위성·RF 장비가 아님 |
 
-각 서비스는 **특정 인터페이스 IP에만 바인드**한다(예: ros-api는 `10.10.20.10:8443`에만). `0.0.0.0` 바인드는 금지한다.
+## 5. 컨테이너·호스트 보안
 
-Docker 데몬은 bridge를 쓰지 않으므로 iptables 조작을 끈다.
+### 5.1 현재 배포 방식
 
-```json
-// /etc/docker/daemon.json (모든 VM 공통)
-{
-  "iptables": false,
-  "ip-forward": false,
-  "bridge": "none",
-  "icc": false,
-  "no-new-privileges": true,
-  "live-restore": true,
-  "log-driver": "journald",
-  "userland-proxy": false,
-  "registry-mirrors": [],
-  "insecure-registries": []
-}
-```
+`deploy/stage9/compose.local.yaml`은 Windows 관제 PC와 VMware VM의 **비운용 시험**에 사용한다. `./pado-gs.sh start`는 사설 바인드 주소와 관제 PC CIDR 및 Compose 토폴로지를 검사하고, `DOCKER-USER`에 허용 출발지·8080 포트와 게이트웨이의 신규 외부 발신 거부 규칙을 건 뒤 Compose를 올린다. 정책을 설치할 수 없으면 기동하지 않는다. `stop`은 이 프로젝트의 컨테이너와 해당 규칙을 내리고 데이터 볼륨을 남긴다. `cleanup`은 확인 후 볼륨까지 제거한다. 컨테이너 및 볼륨 동작은 [단계 9 실행 안내](../deploy/stage9/README.md)에 둔다.
 
-※ 다른 bridge 방식이 필요해지면 `DOCKER-USER` 체인에 정책을 두는 방식으로 전환하며, 그 경우에도 공개 포트는 특정 IP에만 바인드한다.
+컨테이너는 가능한 범위에서 비루트 UID, 읽기 전용 루트 파일시스템, `cap_drop: [ALL]`, `no-new-privileges`, 제한된 임시 쓰기 공간, 전용 볼륨, `journald` 로그를 쓴다. 초기 볼륨 소유권 설정 컨테이너처럼 별도 권한이 필요한 예외는 한시적으로 분리해 기록한다. Docker socket은 앱 컨테이너에 마운트하지 않는다. 단계 7의 Compose는 네트워크 **probe**이며 실제 운용 서비스 배포 파일이 아니다.
 
-### 5.3 컨테이너 보안 설정 기준
+### 5.2 운용 수락에서 추가할 것
 
-모든 컨테이너에 다음을 기본 적용한다.
+실제 VM에서는 Docker Engine stable 28.0.0 이상 및 보안 업데이트 상태, UFW의 기본 입력 거부·관리 PC SSH 허용, Docker 포트 게시, `DOCKER-USER` 접근·출력 제한, 외부 DNS 거부, 서비스별 네트워크/볼륨 권한, 재부팅 후 규칙 유지, journald 보존, 시각 동기, 비밀키 배치를 함께 확인한다. 외부 DGS 상대 주소·인증 정보가 정해지기 전에는 외부 포트·VPN·SFTP 계정을 열지 않는다. 별도 VLAN·물리 방화벽·다중 VM이 없어도 **DGS-only 외부 통신**과 기본 거부가 충족돼야 한다. 충족하지 못하면 단일 VM 운용 배포를 수락하지 않는다.
 
-| 설정 | 값 | 효과 |
-|---|---|---|
-| 실행 사용자 | `user: "<uid>:<gid>"` (서비스별 고유 비루트 UID) | 컨테이너 안 root 금지 |
-| 루트 파일시스템 | `read_only: true` | 실행 중 바이너리·설정 변조 방지 |
-| 임시 쓰기 공간 | `tmpfs: /tmp` (크기 제한) | 쓰기는 지정된 곳만 |
-| 능력 | `cap_drop: [ALL]` (필요한 것만 개별 추가) | 커널 권한 최소화 |
-| 권한 상승 | `security_opt: [no-new-privileges:true]` | setuid 등 상승 차단 |
-| seccomp | Docker 기본 프로필 유지 (`unconfined` 금지) | 위험 시스템 호출 차단 |
-| 특권 모드 | `privileged` 금지 | |
-| Docker 소켓 | **어떤 컨테이너에도 마운트 금지** | 소켓 접근 = 호스트 root |
-| 자원 제한 | `mem_limit`, `pids_limit`, `cpus` | 한 서비스의 폭주가 VM 전체를 멈추지 않게 |
-| 재시작 | `restart: unless-stopped` | 장애 시 자동 복구 |
-| 이미지 지정 | **다이제스트(`@sha256:...`)로 고정**, `latest` 금지 | 의도하지 않은 이미지 교체 방지 |
-| 상태 확인 | `healthcheck` | ros-api가 ros-core 상태를 화면에 표시 |
-| 로그 | `journald` → vm-mgmt 전송 | 8장 |
+## 6. 통신 허용표와 차단 기준
 
-※ `userns-remap`은 host 네트워크 모드와 함께 쓸 수 없으므로, 대신 서비스별 비루트 UID를 명시하는 방식으로 같은 효과를 얻는다.
+### 6.1 판정 방식
 
-### 5.4 compose 예시: vm-ros
+`interfaces/n2_chart.json`은 데이터 흐름의 기준이다. 네트워크 접근은 별도의 최소 허용 목록으로 관리한다. N2 화살표가 있다는 이유만으로 인터넷 라우트나 포트를 자동 개방하지 않는다. `tools/check_flows.py`와 컨테이너 네트워크 시험은 연결 쌍을 검사하지만 **전체 호스트의 외부 발신 차단과 실제 DGS 상대 제한을 증명하는 것은 아니다**. 이를 현장 수락 시험에 추가한다.
 
-```yaml
-# deploy/vm/ros/compose.yml
-x-hardening: &hardening
-  read_only: true
-  cap_drop: [ALL]
-  security_opt: ["no-new-privileges:true"]
-  restart: unless-stopped
-  logging: { driver: journald }
+### 6.2 흐름 허용표
 
-services:
-  ros-db:
-    <<: *hardening
-    image: registry.gs.local/pado/postgres@sha256:<digest>
-    user: "1100:1100"
-    network_mode: host               # 127.0.0.1에만 바인드 (설정 파일에서 지정)
-    volumes:
-      - /srv/ros/db:/var/lib/postgresql/data
-      - /run/ros-db:/var/run/postgresql
-    tmpfs: ["/tmp:size=64m"]
-    mem_limit: 2g
-    pids_limit: 200
-
-  ros-core:
-    <<: *hardening
-    image: registry.gs.local/pado/ros-core@sha256:<digest>
-    user: "1101:1101"
-    network_mode: host               # dgs-gs로 나가는 연결 (nftables가 통제)
-    volumes:
-      - /srv/ros/exchange:/exchange   # 파일 교환 inbox/outbox
-      - /run/ros-ipc:/ipc             # api·signer와의 unix socket
-      - /run/ros-db:/db
-      - /etc/pado/interfaces:/interfaces:ro   # 명령 DB, TM 정의
-      - /etc/pado/ros/core.json:/config.json:ro
-    tmpfs: ["/tmp:size=64m"]
-    mem_limit: 2g
-    pids_limit: 256
-    depends_on: [ros-db, ros-signer]
-
-  ros-signer:
-    <<: *hardening
-    image: registry.gs.local/pado/ros-signer@sha256:<digest>
-    user: "1102:1102"
-    network_mode: none               # 네트워크 없음
-    volumes:
-      - /run/ros-ipc:/ipc
-      - /etc/pado/keys/hmac.key:/keys/hmac.key:ro   # 호스트에서 소유자 1102, 권한 0400
-    mem_limit: 128m
-    pids_limit: 32
-
-  ros-api:
-    <<: *hardening
-    image: registry.gs.local/pado/ros-api@sha256:<digest>
-    user: "1103:1103"
-    network_mode: host               # 10.10.20.10:8443에만 바인드
-    volumes:
-      - /run/ros-ipc:/ipc
-      - /run/ros-db:/db
-      - /etc/pado/tls/ros-api:/tls:ro
-      - /etc/pado/ros/api.json:/config.json:ro
-    tmpfs: ["/tmp:size=32m"]
-    mem_limit: 512m
-    pids_limit: 128
-```
-
-- `/run/ros-ipc`의 소켓 파일 권한으로 "ros-api → ros-core", "ros-core → ros-signer" 방향만 허용한다(그룹 권한으로 제어). **ros-api는 signer 소켓에 접근할 수 없다.**
-- HMAC 키 파일은 이미지·환경 변수·저장소에 절대 넣지 않는다.
-
-### 5.5 이미지 관리
-
-| 단계 | 내용 |
-|---|---|
-| 빌드 | 개발 PC 또는 빌드 전용 환경에서 다단계 빌드. 실행 이미지에는 바이너리와 필요한 라이브러리만 포함(최소 베이스 이미지) |
-| 점검 | 취약점 스캔(오프라인 DB 사용 가능 도구), SBOM 생성, 결과를 이미지 버전과 함께 보관 |
-| 반입 | 점검 통과 이미지만 vm-mgmt 내부 레지스트리에 등록 |
-| 배포 | 각 VM은 내부 레지스트리에서만 가져옴. compose 파일에 다이제스트 기록 |
-| 기록 | 어느 날 어느 다이제스트를 배포했는지 배포 로그에 남김 |
-
-운용 VM은 인터넷에 나갈 수 없으므로 **Docker Hub에서 직접 이미지를 받는 경로는 존재하지 않는다.**
-
----
-
-## 6. 방화벽 설계
-
-### 6.1 5계층 통제
-
-| 계층 | 위치 | 통제 내용 | 막는 것 |
+| 로컬 정책 ID | 연결 시작 → 목적 | 자료·현재 구현 | 운용 개방 조건 |
 |---|---|---|---|
-| L1 | 방화벽 장비 | VPN 종단, VLAN 간 라우팅 필터, 인터넷 아웃바운드 제한 | 구역 간 비인가 통신, 외부 침투 |
-| L2 | 하이퍼바이저 | VM NIC별 VLAN 고정, MAC·IP 스푸핑 방지, VM 단위 방화벽 | VM이 다른 VLAN·주소로 위장 |
-| L3 | VM nftables | 입력·**출력 모두 기본 차단**, 흐름표 기준 허용 | 같은 VLAN 내 측면 이동, 탈취 VM의 외부 유출 |
-| L4 | 컨테이너 | 비루트·읽기 전용·능력 제거, signer 네트워크 없음 | 서비스 탈취 후 VM 내 확산 |
-| L5 | 애플리케이션 | tc-gate, tm-validator, 매니페스트 검증, 인증·인가 | 허용된 경로 안에서의 악성 데이터·명령 |
+| L01 | 관제 PC → DGS-OPS-Gateway:8080 | 내부망 웹 접속, `DOCKER-USER` 출발지 제한 | 실제 다른 출발지 거부·재부팅 유지 확인 |
+| L02 | DGS-OPS-Gateway → Portal | 고정 내부 포털 연결 | 다른 내부/외부 목적지로 프록시 불가 |
+| L03 | Portal → ROS API / MPS API | 전용 내부 Docker망, 내부 토큰 또는 개발 mTLS | 포털 인증·역할·CSRF와 API 직접 접근 거부 |
+| L04 | 가상 위성 ↔ 시험 수신기 | Docker 내부 TCP 9200, 시험 TM·TC/ACK | 외부 게시 금지, 비운용 표시 유지 |
+| L05 | ROS → DGS-GS | 장래 TM/TC 상호 인증 스트림 | 실제 ICD·TC 승인·게이트·상대 인증 완성 전 차단 |
+| L06 | DGS-GS ↔ 항우연·연세대 | 승인된 외부 지상국 연동 | 상대별 VPN/프로토콜·주소·포트 확정 전 차단 |
+| L07 | FDS → DGS-NET | N05 검증 TLE의 읽기 전용 회수 | 실제 SFTP 계정·호스트키·서버 설정 후 개방 |
+| L08 | DGS-NET → Space-Track | TLE 조회용 승인된 외부 HTTPS | 출처 계정·주소·로그·DGS-GS 분리 확인 후 개방 |
+| L09 | ROS → FDS, FDS → MPS/Archive, MPS → ROS | N2 내부 검증 파일·매니페스트 | 목적지·자료 유형별 최소 계정·볼륨 권한 |
+| L10 | SDC ↔ DGS-Archive 교환 영역 | Mission Request/결과·승인된 파일 | 외부 상대/형식·접근 권한 확정 전 차단 |
+| L11 | DGS-Archive → DGS-GS | 기존 설계 F19의 CREST·SIREN 원시데이터 읽기 전용 회수 | **현재 S-band payload 수신 제외**. 장래 용량·보관시간·확인 후 삭제 확정 |
+| LX | 그 밖의 모든 서비스·출발지·목적지 | 없음 | 차단·기록. 포털·ROS·MPS·FDS의 직접 외부망 경로 금지 |
 
-같은 VLAN 20 안의 VM끼리는 방화벽 장비를 거치지 않으므로, **L2·L3가 VLAN 내부 통제를 맡는다.**
+원본 N2와 이 문서의 참조 관계는 다음과 같다. `F` 번호는 원본의 자료 흐름,
+`N` 번호는 `interfaces/n2_chart.json`의 항목, `L` 번호는 위 로컬 네트워크
+정책을 뜻한다. **F/N 표기만으로 포트나 외부 연결을 개방하지 않는다.**
 
-### 6.2 흐름 허용표 (포트 포함)
-
-보안 계획서 7.4절 흐름 허용표를 구현 수준으로 구체화한 것이다. 포트 번호는 제안값이며 구축 시 확정한다.
-
-| ID | 출발 → 목적 | 포트 | 내용 | 통제 계층 |
-|---|---|---|---|---|
-| F01 | 관제 PC → vm-portal | 443/tcp | 웹 운용 화면 | L1, L3 |
-| F02 | vm-portal → vm-ros | 8443/tcp (mTLS) | ros-api | L2, L3 |
-| F03 | vm-portal → vm-mps | 8443/tcp (mTLS) | mps-api | L2, L3 |
-| F04 | vm-ros → vm-dgs-gs | 7001/tcp (TLS) | TM 스트림(↓), TC 프레임(↑). ros-core가 연결 시작 | L1, L3 |
-| F05 | 항우연·연세대 ↔ vm-dgs-gs | VPN 내부, ICD 확정 포트 | 프레임 스트림, 운용 파일 | L1, L3 |
-| F06 | vm-fds → vm-dgs-gs | 2222/tcp (SFTP) | Antenna Pointing File, 패스 요청 업로드 | L1, L3 |
-| F07 | vm-fds → vm-dgs-net | 2222/tcp (SFTP) | 검증된 TLE·State Vector 다운로드 | L1, L3 |
-| F08 | vm-dgs-net → 인터넷 | 443/tcp | Space-Track 조회 | L1, L3 |
-| F09 | 발사체 제공자 → vm-dgs-net | 협의 | State Vector 수신 (LEOP 한시) | L1, L3 |
-| F10 | VLAN 20 내부 서브시스템 간 | 2222/tcp (SFTP) | N2 chart 내부 파일 흐름 (6.3절) | L2, L3 |
-| F11 | vm-ros·mps·fds → vm-dgs-archive | 2222/tcp (SFTP) | Backup File 이관 | L2, L3 |
-| F12 | SDC → vm-dgs-archive | 2222/tcp (SFTP) | 교환 영역 접근 | L1, L3 |
-| F13 | vm-dgs-archive → NAS | 2049/tcp (NFSv4) | 아카이브 저장 | L1, L3 |
-| F14 | 전 VM → vm-mgmt | 6514/tcp (syslog TLS) | 로그 전송 | L1, L3 |
-| F15 | 전 VM → vm-mgmt | 123/udp | NTP | L1, L3 |
-| F16 | 전 VM → vm-mgmt | 5000/tcp, 3142/tcp | 이미지 레지스트리, OS 업데이트 | L1, L3 |
-| F17 | 전 VM → NAS | 협의 (rsync/SMB 쓰기 전용) | 백업 전송 | L1, L3 |
-| F18 | 관리자 단말 → 전 VM, 하이퍼바이저 | 22/tcp, 하이퍼바이저 관리 포트 | 시스템 관리 | L1 (VLAN 50에서만) |
-| F19 | vm-dgs-archive → vm-dgs-gs | 2222/tcp (SFTP, 읽기 전용) | CREST·SIREN Payload Raw Data 회수. 연결은 archive가 시작하고 데이터는 DGS-GS → archive 방향 | L1, L3 |
-| F99 | 그 외 전부 | - | **차단 및 기록** | 전 계층 |
-
-### 6.3 VLAN 20 내부 파일 흐름 (F10 상세)
-
-N2 chart의 내부 화살표 하나 = SFTP 계정 하나 = 수신 측 inbox 디렉터리 하나로 대응시킨다. **송신 측이 수신 측에 업로드(push)** 한다.
-
-| 송신 → 수신 | 데이터 | 수신 측 SFTP 계정·디렉터리 |
-|---|---|---|
-| ros → fds | GNSS File | `fds:/inbox/from_ros` |
-| ros → mps | ACK, Bus SOH File | `mps:/inbox/from_ros` |
-| mps → ros | Mission Schedule File, TC 시퀀스 파일 | `ros:/inbox/from_mps` |
-| fds → mps | Contact Schedule, Orbital Event File | `mps:/inbox/from_fds` |
-| ros → dgs-archive | S/C Attitude, Bus SOH (SDC 제공용) | `archive:/exchange/to_sdc` |
-| fds → dgs-archive | Orbit Ephemeris, Pass Information (SDC 제공용) | `archive:/exchange/to_sdc` |
-| dgs-archive → mps | 승인 대기 Mission Request, Uplink 파일 | `mps:/inbox/from_archive` |
-| mps → ros | 반입 승인된 Uplink 파일 | `ros:/inbox/from_mps` |
-
-- SFTP 서버는 관리용 SSH(22)와 **별도 프로세스·별도 포트(2222)**로 띄우고, 각 계정은 자기 inbox에만 chroot되며 셸 접근이 없다(`ForceCommand internal-sftp`).
-- 각 계정은 **SSH 키 인증만** 허용하고, 키는 송신 서비스 컨테이너에만 마운트한다.
-- 계정·디렉터리 목록은 `interfaces/n2_chart.json`에서 생성하며, 여기에 없는 흐름은 계정이 없으므로 불가능하다.
-- F19는 DMZ에서 운용 VLAN으로 새 연결을 열 수 없으므로 이 절의 push 원칙에 대한 **명시적 예외**다. DGS-GS는 별도 읽기 전용 SFTP 계정으로 CREST·SIREN 원시데이터와 매니페스트를 제공하고, DGS-Archive가 접속해 회수·해시 및 유형 검증·수신 확인을 수행한다. DGS-GS는 용량과 보관시간을 제한한 임시 영역에서 확인 후 삭제한다. 제한값은 원시데이터 규모와 수신 주기 확인 후 정한다(TBD(ICD)). SDC는 계속 DGS-Archive 교환 영역만 접근한다.
-- 원본 N2 표의 DGS→ROS `TLE` 표기와 같은 문서의 FDS 수신 설명이 상충한다. TLE는 DGS-NET에서 검증한 뒤 FDS로 전달하는 경로를 기준으로 삼고, ROS로 직접 전달하는 TLE 경로는 만들지 않는다(결정 기록 #3).
-
-### 6.4 VM nftables 예시
-
-모든 VM은 같은 골격을 쓴다. **입력과 출력 모두 기본 차단**이며, 흐름표의 해당 행만 허용한다.
-
-#### vm-ros
-
-```nft
-#!/usr/sbin/nft -f
-flush ruleset
-
-define PORTAL  = 10.10.20.5
-define MPS     = 10.10.20.11
-define FDS     = 10.10.20.12
-define ARCHIVE = 10.10.20.13
-define DGS_GS  = 10.10.30.10
-define MGMT    = 10.10.40.20
-define ADMIN   = 10.10.50.100
-
-table inet filter {
-  chain input {
-    type filter hook input priority 0; policy drop;
-    ct state established,related accept
-    ct state invalid drop
-    iif lo accept
-
-    ip saddr $PORTAL tcp dport 8443 accept          # F02 ros-api
-    ip saddr $MPS    tcp dport 2222 accept          # F10 mps → ros inbox
-    ip saddr $ADMIN  tcp dport 22   accept          # F18 관리 (방화벽 장비에서도 VLAN 50만 허용)
-
-    limit rate 10/second log prefix "nft-in-drop " level warn
-  }
-
-  chain output {
-    type filter hook output priority 0; policy drop;
-    ct state established,related accept
-    oif lo accept
-
-    ip daddr $DGS_GS tcp dport 7001 accept          # F04 TM/TC 스트림 (ros-core가 시작)
-    ip daddr { $MPS, $FDS, $ARCHIVE } tcp dport 2222 accept   # F10, F11
-    ip daddr $MGMT tcp dport { 6514, 5000, 3142 } accept      # F14, F16
-    ip daddr $MGMT udp dport 123 accept                        # F15
-
-    limit rate 10/second log prefix "nft-out-drop " level warn
-  }
-
-  chain forward {
-    type filter hook forward priority 0; policy drop;
-  }
-}
-```
-
-#### vm-dgs-gs (DMZ)
-
-```nft
-define ROS      = 10.10.20.10
-define FDS      = 10.10.20.12
-define ARCHIVE  = 10.10.20.13
-define KARI     = <항우연 상대 주소>
-define YONSEI   = <연세대 상대 주소>
-define MGMT     = 10.10.40.20
-define ADMIN    = 10.10.50.100
-
-table inet filter {
-  chain input {
-    type filter hook input priority 0; policy drop;
-    ct state established,related accept
-    ct state invalid drop
-    iif lo accept
-
-    ip saddr $ROS tcp dport 7001 accept                       # F04
-    ip saddr $FDS tcp dport 2222 accept                       # F06
-    ip saddr $ARCHIVE tcp dport 2222 accept                   # F19 원시데이터 회수 연결
-    ip saddr { $KARI, $YONSEI } tcp dport <ICD 포트> accept   # F05
-    ip saddr $ADMIN tcp dport 22 accept                       # F18
-
-    limit rate 10/second log prefix "nft-in-drop " level warn
-  }
-
-  chain output {
-    type filter hook output priority 0; policy drop;
-    ct state established,related accept
-    oif lo accept
-
-    ip daddr { $KARI, $YONSEI } tcp dport <ICD 포트> accept   # F05 (프레임·파일 송신 방향이 우리 쪽 시작일 경우)
-    ip daddr $MGMT tcp dport { 6514, 5000, 3142 } accept      # F14, F16
-    ip daddr $MGMT udp dport 123 accept                        # F15
-    # VLAN 20(운용)으로 새 연결을 여는 규칙은 존재하지 않음
-
-    limit rate 10/second log prefix "nft-out-drop " level warn
-  }
-
-  chain forward {
-    type filter hook forward priority 0; policy drop;
-  }
-}
-```
-
-#### 규칙 관리
-
-- 규칙 파일은 `deploy/vm/<vm>/nftables.conf`로 저장소에서 버전 관리한다.
-- `tools/check_flows`가 `n2_chart.json`·흐름 허용표와 각 VM 규칙 파일을 대조해 **표에 없는 허용 규칙**과 **규칙 없는 흐름**을 보고한다.
-- 차단 로그(`nft-in-drop`, `nft-out-drop`)는 vm-mgmt로 수집되며, **운용 VM의 출력 차단 로그는 탈취 징후**로 보고 즉시 확인한다.
-
-### 6.5 방화벽 장비 정책
-
-| 출발 \ 목적 | OPS(10) | SVC(20) | DMZ-GS(30) | DMZ-NET(31) | STOR(40) | MGMT(50) | SDC(60) | WAN |
-|---|---|---|---|---|---|---|---|---|
-| OPS(10) | - | portal:443만 | ✕ | ✕ | ✕ | ✕ | ✕ | ✕ |
-| SVC(20) | ✕ | (L2·L3) | 7001 (ros), 2222 (fds·archive) | 2222 (fds만) | NAS 백업 | mgmt 서비스 포트 | ✕ | ✕ |
-| DMZ-GS(30) | ✕ | **✕ (새 연결 없음)** | - | ✕ | NAS 백업 | mgmt 서비스 포트 | ✕ | VPN만 |
-| DMZ-NET(31) | ✕ | **✕ (새 연결 없음)** | ✕ | - | ✕ | mgmt 서비스 포트 | ✕ | 443 (+발사체 한시) |
-| STOR(40) | ✕ | ✕ | ✕ | ✕ | - | ✕ | ✕ | ✕ |
-| MGMT(50) | ✕ | 22 | 22 | 22 | 관리 | - | ✕ | 업데이트 저장소만 (제한) |
-| SDC(60) | ✕ | archive:2222만 | ✕ | ✕ | ✕ | ✕ | - | (학내 정책) |
-| WAN | ✕ | ✕ | VPN 상대→ICD 포트 | 발사체 한시 | ✕ | ✕ | ✕ | - |
-
-추가 설정:
-
-- **VPN**: 인증서 기반 상호 인증, 상대 주소 고정, 터널 안에서도 vm-dgs-gs의 ICD 포트로만 전달.
-- **DMZ-NET 아웃바운드**: 443만 허용. 가능하면 DNS 응답 기반 주소 목록이나 명시적 프록시로 Space-Track 도메인에 한정한다.
-- **관리 경로**: SSH와 하이퍼바이저 관리 포트는 **VLAN 50 출발만** 허용한다. 관제 PC(VLAN 10)에서는 어떤 VM에도 SSH가 열려 있지 않다.
-- **방화벽 장비를 VM으로 대신하는 경우**: 외부 회선 NIC를 해당 VM에 직접 할당(패스스루)하고 하이퍼바이저 자체에는 외부 회선 주소를 주지 않는다. 하이퍼바이저가 탈취되면 방화벽도 함께 무력화되므로, 예산이 확보되면 물리 장비로 옮긴다.
-
-### 6.6 하이퍼바이저 설정
-
-- 하이퍼바이저 관리 인터페이스(웹 관리 화면, SSH)는 **VLAN 50 브리지에만** 둔다.
-- 각 VM NIC는 정해진 VLAN 태그로 고정하고, VM 내부에서 VLAN을 바꿀 수 없게 한다.
-- VM 단위 방화벽 기능이 있으면 nftables와 같은 허용 규칙을 한 번 더 적용하고, MAC·IP 위장 방지를 켠다.
-- DMZ VM(vm-dgs-gs, vm-dgs-net)은 가능하면 **별도 물리 NIC**로 방화벽 장비에 연결한다.
-- 하이퍼바이저 관리자 계정은 개인 계정 + MFA, 운용 계정과 분리한다.
-- VM 스냅샷은 업데이트 전 롤백 용도로만 쓰고, 백업 대용으로 쓰지 않는다(백업은 8장).
-
-### 6.7 관제 PC 설정
-
-- 운용 전용 장비로 지정하고 인터넷·이메일·개인 용도 사용을 금지한다.
-- 브라우저만 운용에 사용하며, 내부 CA 인증서를 신뢰 목록에 등록한다.
-- 이동식 저장장치 사용을 차단하거나 승인제로 운영한다.
-- 화면 잠금(유휴 5분 내외), 운영체제 자동 로그인 금지.
-
----
-
-## 7. 웹 운용 화면
-
-### 7.1 진입 구조
-
-```
- 관제 PC 브라우저
-      │ HTTPS 443
-      ▼
- vm-portal: nginx ── auth_request ──► portal-auth (로그인·세션·역할 확인)
-      │ /ops/*, /mps/*, /login/*  → 정적 파일 (HTML/JS)
-      │ /api/ros/*                → vm-ros:8443 (mTLS)
-      │ /api/mps/*                → vm-mps:8443 (mTLS)
-      │ /ws/ros                   → vm-ros:8443 WebSocket (실시간 TM)
-```
-
-- 관제 PC는 **vm-portal 하나만** 볼 수 있다. ros-api·mps-api는 portal에서 온 요청(방화벽 + mTLS 클라이언트 인증서)만 받는다.
-- portal-auth가 확인한 사용자·역할을 nginx가 헤더로 붙여 전달하고, 백엔드는 이 헤더로 권한을 판단한다. 따라서 **portal을 거치지 않은 요청이 백엔드에 닿을 수 없어야** 한다(F02·F03 규칙과 mTLS).
-
-### 7.2 관제 화면 (ROS)
-
-| 화면 | 내용 | 통신 | 필요 역할 |
+| 원본 참조 | N2 항목 | 자료 경로 | 외부 경계·현재 판정 |
 |---|---|---|---|
-| 대시보드 | 링크 상태, 패스 카운트다운(AOS/LOS), 주요 SOH, Limit 경보, 서비스 상태 | WebSocket | 전 운용 역할 |
-| TM 상세 | 파라미터별 값·그래프·이력, INVALID TM 표시 | REST + WebSocket | 전 운용 역할 |
-| TC 콘솔 | 명령 DB에서 선택 → 파라미터 입력 → 자동 검증 결과 → (위험도별) 승인 요청 → 송출 → ACK | REST | 운용자 이상 |
-| 시퀀스 실행 | MPS 시퀀스 파일 로드·재검증·단계 실행, 진행 상태, 미완료 TC | REST + WebSocket | 운용자 이상 |
-| 승인함 | 위험 TC 승인·반려 (재인증) | REST | 운용 책임자 |
-| 비상 명령 | 사전 승인된 비상 명령 세트 송출, 사유 입력 필수 | REST | 운용자 이상 |
-| 이벤트 로그 | 송출·ACK·경보·검증 실패·게이트 차단 기록 | REST | 전 운용 역할 |
+| F04 | N06–N07 | DGS-GS ↔ ROS TM/TC | DGS-GS 경유, 실제 외부 RF 연동 차단 |
+| F05 | N01–N02 | 항우연·연세대 안테나 ↔ DGS-GS | 외부 상대는 DGS-GS만, ICD 미정으로 차단 |
+| F06 | N08 | FDS → DGS-GS 예측 자료 | 내부 파일 검증 경계 |
+| F07 | N05 | DGS-NET → FDS TLE | FDS의 인증 SFTP 회수, 실제 외부 조회 미연결 |
+| F08 | N03 | Space-Track → DGS-NET TLE | 외부 조회는 DGS-NET만, 현 단계 미연결 |
+| F09 | N04 | Launch provider → DGS-NET 상태벡터 | ICD 미정으로 차단 |
+| F10 | N10–N15, N18 | ROS·MPS·FDS·Archive 내부 파일 | 검증된 자료 유형·수신처만 |
+| F11 | N19–N21 | ROS·MPS·FDS → DGS-Archive 보관 | 내부 검증 파일만, NAS 미연결 |
+| F12 | N16–N17 | SDC ↔ DGS-Archive | 외부 상대는 DGS-Archive만, 현 단계 미연결 |
+| F19 | N09 | DGS-GS → DGS-Archive 원시데이터 | Archive가 DGS-GS에서 회수하는 설계 자리, 현재 제외 |
 
-### 7.3 미션 스케줄링 화면 (MPS)
+`L` 번호는 이 문서의 로컬 네트워크 정책 식별자이며 `interfaces/n2_chart.json`의 N2 ID와 별개다. 이전 개발방향 문서의 `F19`는 원본 N2의 DGS→payload 원시데이터 요구를 보존하기 위한 설계 자리였으며 지금 방화벽을 열라는 지시가 아니다. 초기 문서의 443/8443/2222/7001, NAS 2049, VLAN 번호와 장비 IP는 현행 확정 포트가 아니다. 현재 실제 게시 포트는 로컬 시험의 8080뿐이다.
 
-| 화면 | 내용 | 필요 역할 |
+### 6.3 N2 파일 흐름
+
+| 생산자 → 소비자 | 자료 | 현재 단계 |
 |---|---|---|
-| 명령 목록 | 명령 DB 조회 (파라미터 범위, 위험도, 소요 시간, 사용 자원, 사전 조건) | 전 운용 역할 |
-| 패스 목록 | FDS Contact Schedule 기반 패스 일정 | 전 운용 역할 |
-| 시퀀스 편집 | 패스 선택 → 명령을 시간 순서로 배치 → 파라미터 입력 | 임무계획 담당 |
-| 충돌 분석 | 규칙 검사 결과를 단계별로 표시 | 임무계획 담당 |
-| 승인·출력 | 충돌 없음 확인 → 승인(재인증) → TC 시퀀스 파일 생성 → ROS 전달 | 운용 책임자 |
-| 임무 요청 | 탑재체팀 Mission Request 조회·반영·반려 | 임무계획 담당 |
-| 업링크 파일 반입 | 해시 대조 결과 확인, 버전·용도 확인, FlatSat 시험 여부 기록, 승인 | 운용 책임자 |
+| DGS-NET → FDS | N05 TLE | 인증 SFTP pull·해시·크기·유형·불변 스냅샷 시험. 실제 외부 조회 미연결 |
+| ROS → FDS | N11 GNSS 상태 | 가상 TM에서 시험 N11 게시·FDS 재검증. 실제 OEM719A/OBC TM 매핑 미정 |
+| FDS → MPS | N13 Contact Schedule | 파일·매니페스트 검증, 로컬 게시·웹 PASS 조회 |
+| FDS → DGS-Archive | N15 Ephemeris/Pass Information | 파일 쌍 출고함·인증 SFTP 송신기 시험, 실제 상대 수락 ACK 미정 |
+| ROS → MPS / MPS → ROS | ACK·SOH / 시퀀스 | MPS 시험 시퀀스 → ROS `SIM ONLY` 예약·가상 ACK. 운용 승인·송출과 분리 |
+| DGS-Archive ↔ SDC | Mission Request·자료 | 검증·반입 시험 경계. 실제 외부 교환 미연결 |
 
-#### 충돌 분석 규칙
+모든 실제 파일 교환은 본문을 임시 이름으로 전송하고 매니페스트를 마지막에 원자적으로 공개한다. 수신자는 상대 신원·허용 경로·자료 유형·크기·SHA-256·스키마를 검사하며 실패 파일은 격리한다. SFTP 전송 완료 영수증은 수신 애플리케이션의 수락 ACK와 구별한다.
 
-명령 DB의 명령별 속성(소요 시간, 사용 자원, 사전 조건, 상태 변화)을 이용한 **표 기반 규칙**으로만 구성하며, 규칙 하나 = 함수 하나로 구현한다.
+## 7. 웹 화면과 인증
 
-1. 모든 명령이 패스 시간창(AOS~LOS, 앞뒤 여유 시간 제외) 안에 있는가
-2. 명령끼리 실행 시간이 겹치지 않는가
-3. 같은 자원(송신기, 특정 탑재체 등)을 동시에 쓰지 않는가
-4. 사전 조건이 맞는가 (앞 명령의 상태 변화를 순서대로 적용하여 확인)
-5. 업링크 데이터량이 (패스 시간 × 전송률) 안에 들어가는가
-6. 패스당 명령 수 상한을 넘지 않는가
+### 7.1 공통 웹 진입
 
-#### TC 시퀀스 파일
+Windows 관제 PC는 현재 `http://<VM 사설 IP>:8080/login`의 단일 포털에 접속한다. 모든 화면 상단에 UTC와 KST(UTC+9) 시계를 표시한다. 계정은 Argon2id 비밀번호, 세션 만료, 로그인 실패 잠금, 상태 변경 요청의 CSRF 검사로 보호한다. `lead` 역할은 TOTP가 필수다. 읽기 권한과 비운용 초안 저장 권한은 분리하되, 현재 웹 역할이 실제 TC 송출 승인을 제공한다는 뜻은 아니다. 운영 TC의 세부 역할·재인증·2인 승인 증적은 별도로 연결해야 한다.
 
-```json
-{
-  "type": "TC_SEQUENCE",
-  "pass_id": "P-20261120-01",
-  "cmd_db_version": "a3f9...",
-  "created_by": "lee.planner",
-  "approved_by": "kim.lead",
-  "approved_at": "2026-11-19T09:12:00Z",
-  "steps": [
-    {"seq": 1, "t_offset_s": 30, "cmd": "PL_MODE_SET", "params": {"mode": 2}, "risk": "caution"},
-    {"seq": 2, "t_offset_s": 45, "cmd": "TM_DUMP_REQ", "params": {"start": 0, "count": 100}, "risk": "normal"}
-  ]
-}
-```
+### 7.2 ROS
 
-ROS는 MPS를 신뢰하지 않고 **자기 명령 DB로 다시 검증**한다. `cmd_db_version`이 ROS의 명령 DB 해시와 다르면 거부한다. 명령 DB는 `interfaces/command_db/` 하나를 두 VM에 같이 배포한다.
+ROS 화면은 `현황·경보 / TM·자세 / TC 준비·예약`으로 구성한다. 가상 위성에서 5초 간격으로 받은 시험 EPS 전압·온도 등은 설정된 시험 한계와 함께 표시하고, 선택 센서의 5분·30분·1시간 추세 및 한계 초과 이력을 보여준다. 현재 수신기의 그래프용 원본 표본은 최근 UTC 60분·PDU 계열별 최대 721개만 메모리에 보관한다. 표본이 오래됐거나 조회가 실패하면 정상으로 판정하지 않고 자료 없음/판정 불가로 표시한다. 자세는 시험 쿼터니안을 사각 기둥으로 표시하며 향후 CAD 모델 교체 경계를 둔다.
 
-### 7.4 계정 인증
+MPS에서 전달된 **저장된 미래 연세대 UHF PASS**의 읽기 전용 시험 시퀀스는 ROS의 별도 `SIM ONLY` 영역에서 AOS 기준 예약할 수 있다. 송신·응답 상태와 명령 ID/순번을 가상 위성의 `COMMAND_RESULT` TM으로 확인한다. 기존 파일 반입의 `DRAFT_ONLY` 예약은 자동 실행되지 않는다. 실제 TC 승인·서명·DGS-GS 송출에는 연결하지 않는다. 화면 구조의 상세 기준은 [단계 9 UI](STAGE9_UI.md)를 따른다.
 
-| 항목 | 구현 |
-|---|---|
-| 비밀번호 저장 | Argon2id (libsodium) |
-| 세션 | 무작위 토큰, 쿠키 `HttpOnly; Secure; SameSite=Strict`, 유휴 30분·최대 8시간 |
-| 다중 인증 | TOTP (운용 책임자·관리자 필수, 운용자는 단계적 적용) |
-| 재인증 | 위험 TC 승인·송출, 시퀀스 승인, 업링크 파일 반입 승인 시 비밀번호 재입력 |
-| 로그인 보호 | nginx 요청 속도 제한, 연속 실패 시 계정 일시 잠금 |
-| CSRF | SameSite=Strict + 상태 변경 요청에 CSRF 토큰 |
-| 응답 헤더 | `Content-Security-Policy: default-src 'self'`, `X-Frame-Options: DENY`, `Strict-Transport-Security`, `X-Content-Type-Options: nosniff` |
-| 역할 | 운용자 / 운용 책임자 / 임무계획 담당 / 보안 감사자 (보안 계획서 7.5절) |
-| 관리자 | 시스템 관리자는 웹 운용 계정을 갖지 않거나, 갖더라도 TC·승인 권한 없음 |
+### 7.3 MPS
 
-### 7.5 내부 인증서
+MPS는 한 화면에서 `PASS 선택 → 시험 TC 후보 구성 → 계획 검토` 순서로 작업한다. FDS N13의 연세대 UHF·대전 항우연 S-band 두 패스와 ground view·polar plot을 조회한다. TC 초안은 연세대 UHF PASS에서만 이름·순서·인자·AOS 기준 실행 오프셋을 저장한다. 일정 해시·PASS 시간창·리비전을 재검증하고, 같은 미래 접촉인지 제한적으로 이어받는다. 대전 S-band는 패스 조회 전용이다. 실제 자원/모드 충돌 판정·승인·시퀀스 운용 출력은 위성개발팀 정책 확정 후 연결한다.
 
-- vm-mgmt(또는 오프라인 장비)에 내부 CA를 두고 portal, ros-api, mps-api, dgs-gs 스트림, syslog용 인증서를 발급한다.
-- CA 개인키는 오프라인 보관하며, 인증서 유효기간은 1년 이내로 하고 만료 전 갱신을 정기 점검 항목에 넣는다.
+### 7.4 ORBIT
 
----
+FDS가 만든 `orbit_view.json`을 인증된 포털에서 읽는다. 3D 지구와 2D ground track을 동시에 보여주고, NASA Blue Marble 로컬 텍스처, 주야간, 현재 위치·향후 3주기 선, 두 지상국의 PASS polar plot을 표시한다. 브라우저는 TLE를 다시 전파하지 않고 게시된 FDS 60초 표본을 표시용으로 보간한다. 시간 재생 기능은 없다. 결과가 만료되거나 자료가 없으면 현재 위치를 숨긴다. 기본 입력은 고도 약 500 km·LTAN 약 06시의 **가상 PADO-SAT SSO TLE**이며 사용자 제공 ISS 고정 TLE는 별도 과거 시험 자료다.
 
-## 8. 로그·백업 구현
+## 8. 로그·백업
 
-보안 계획서 8장을 구현 수준으로 옮긴다.
+### 8.1 감사 기록
 
-### 8.1 로그 경로
+컨테이너 로그는 개발 배포에서 `journald`를 사용한다. 매니페스트·파서·송신/거부 시험의 이벤트는 확인할 수 있지만, 로그인부터 승인·서명·TC 게이트·실제 ACK까지를 한 건으로 재구성할 **운용용 구조화·변경 방지 감사 기록**은 아직 완성되지 않았다. 운용 전에는 UTC 시각·행위자·역할·대상·명령/자료 해시·판정·상대 식별자·상관 ID를 한 흐름으로 남기고, 보존 기간·접근 권한·별도 보관·변조 탐지를 검증한다.
 
-```
- 각 서비스 (libgs log: 한 줄 JSON)
-      │ stdout
-      ▼
- 컨테이너 → journald (각 VM)
-      │ syslog over TLS (6514)
-      ▼
- vm-mgmt log-collector ── 일 단위 파일 + 해시 기록 (추가 전용)
-      │
-      ├─► NAS (백업 사본)
-      └─► 오프라인 디스크 (주 1회)
-```
+### 8.2 백업
 
-- nftables 차단 로그, SSH 접속 로그, 하이퍼바이저 감사 로그도 같은 경로로 모은다.
-- 모든 VM은 vm-mgmt NTP에 동기화하며, 방화벽 장비가 상위 시각원과 동기화한다(향후 GPS 시각원으로 대체 가능).
-- 로그 형식·수집 대상·보관 기간·점검 주기는 보안 계획서 8.2절을 따른다.
+단계 8 도구는 선택된 일반 파일의 SHA-256 스냅샷을 만들고 별도 해시로 검증·복원한다. 실행 중 DB의 일관된 덤프, 암호화, 불변 저장, 독립 매체, 전체 서버 복구는 제공하지 않는다. NAS 선정은 필요하지 않지만 **독립 백업 매체·키 분리·복구 시나리오와 실제 복원 시험**은 운용 전에 완료해야 한다. HMAC 비밀키는 일반 데이터 스냅샷에 넣지 않는다. [단계 8 안내](../deploy/stage8/README.md) 참조.
 
-### 8.2 백업 경로
+## 9. 서브시스템 간 전송과 TC 경계
 
-| 대상 | 방법 | 주기 |
-|---|---|---|
-| VM 로컬 DB (ros, mps, portal, archive) | DB 덤프 → NAS 백업 공유 폴더로 전송 | 일 1회 + 패스 후(ros, mps) |
-| 설정·compose·nftables·명령 DB | 저장소(Git)가 원본, NAS에 사본 | 변경 시 |
-| 컨테이너 이미지 | 내부 레지스트리 + NAS 사본 | 배포 시 |
-| 아카이브 데이터 | NAS 원본 → 오프라인 디스크 | 주 1회 |
-| 로그 | vm-mgmt → NAS → 오프라인 디스크 | 일 1회 / 주 1회 |
-| HMAC 키 | **네트워크 백업 금지.** 암호화 매체 2개 봉인 보관 | 변경 시 |
+### 9.1 전송 계약
 
-- 각 VM의 백업 전송 계정은 NAS에 **쓰기만 가능하고 삭제·덮어쓰기는 불가능**하게 설정한다.
-- NAS는 백업 폴더에 **불변(삭제 잠금) 스냅샷**을 설정해, 운용 VM이 탈취되어도 과거 백업을 지울 수 없게 한다.
-- 오프라인 디스크 2개를 주 단위로 교대하여 MOC 외부에 보관한다.
-- 복구 시험은 보안 계획서 8.3절의 주기를 따르며, **"서버 전체 상실 → 새 하드웨어에 VM 재구성 → FlatSat 대상 TC 송출"** 시나리오를 발사 전 최소 1회 수행한다.
-
----
-
-## 9. 서브시스템 간 통신
-
-### 9.1 두 가지 방식만 사용
-
-| 방식 | 적용 구간 | 구현 |
-|---|---|---|
-| 실시간 스트림 | ros-core ↔ dgs-gs (TM 프레임, TC 프레임) | TCP + TLS(상호 인증), 길이 접두 프레이밍. 메시지 브로커 미사용 |
-| 파일 교환 | 그 외 모든 인터페이스 | 데이터 파일 + 매니페스트(JSON), SFTP 업로드 |
-| (VM 내부) | ros-api ↔ ros-core ↔ ros-signer | unix socket + 길이 접두 JSON 메시지 |
+실제 외부 연동용 공통 계약은 길이 제한 TCP/TLS 상호 인증 스트림, 호스트키 고정·키 인증 SFTP 파일/매니페스트, 같은 서비스 경계 안의 Unix socket이다. 개발용 Compose는 그중 일부를 네트워크 없는 C 읽기 서비스, 제한된 내부 HTTP API, 검증된 공유 볼륨으로 연결했다. 이 시험 내부 경로가 운용 N2/SFTP 계약을 자동으로 대체하지 않는다. 모든 애플리케이션 전송은 2장의 DGS 외부망 정책을 따라야 한다.
 
 ### 9.2 매니페스트
 
-```json
-{
-  "file": "mission_schedule_20261120_v3.json",
-  "type": "MISSION_SCHEDULE",
-  "from": "mps",
-  "to": "ros",
-  "version": 3,
-  "created": "2026-11-20T01:00:00Z",
-  "sha256": "9f2c..."
-}
-```
+파일 본문과 JSON 매니페스트의 파일명, `type`, `from`, `to`, 버전, UTC 생성 시각, SHA-256을 함께 검사한다. `.partial` 또는 매니페스트가 아직 없는 파일은 처리하지 않는다. 현재 N05/N11 입력은 검증된 불변 스냅샷과 원자적 현재 포인터를 사용하며, 손상된 최신 GNSS 입력은 조용히 TLE로 대체하지 않고 계산을 중단한다. N13/N15 출고함도 실행별 파일 쌍으로 원자 공개한다. 파일 교환의 수신 수락은 송신 성공과 별도 상태로 기록한다.
 
-- 송신 측: 임시 이름으로 업로드 → 완료 후 이름 변경(원자적 공개). 매니페스트를 마지막에 올린다.
-- 수신 측: 매니페스트 확인 → 해시 대조 → 유형이 `n2_chart.json`에서 허용된 것인지 확인 → 스키마 검증 → 처리. 실패 시 `rejected/`로 옮기고 로그를 남긴다.
+### 9.3 TC 시험과 운용 목표
 
-### 9.3 TC 경로와 보안 통제
+현재 웹 왕복은 `MPS 저장 시험 시퀀스 → Portal/MPS 재검증 → ROS SIM ONLY 예약 → 비공개 Unix socket → 시험 수신기 → 내부 TCP → 가상 위성 → COMMAND_RESULT TM → ROS 상태`다. 초안 중 **읽기 전용 허용 명령**만 보내며 실제 RF·CSP·AX100 프레임, 위성 인증·2인 승인·운용 DGS TC 게이트와 연결되지 않는다. 시간이 지났거나 결과가 모호한 명령은 자동 재전송하지 않는다.
 
-```
-[MPS 화면] 시퀀스 편집 → 충돌 분석 → 승인(재인증)
-     │ TC 시퀀스 파일 (SFTP, 매니페스트·해시)
-     ▼
-[vm-ros: ros-core] 명령 DB 재검증 (명령·범위·스케줄·시간창·상태)
-     │                      ▲
-     │            [관제 화면] 위험 TC 승인 (작성자 ≠ 승인자, 재인증)
-     ▼
-[vm-ros: ros-signer] 승인 상태 확인 → HMAC 부착 (네트워크 없음, 키는 여기만)
-     │ unix socket
-     ▼
-[vm-ros: ros-core] ── TLS 7001 ──► [vm-dgs-gs: tc-gate] SCID·형식·시간창·속도 제한
-                                        │
-                                        ▼
-                                  [kari-adapter] ── VPN ──► 항우연 → 위성 (HMAC 검증)
-```
+장래 운용 TC는 `MPS 계획·검토 → ROS 명령 DB/시간창/상태 재검증 → 위험도별 작성자와 다른 승인자·재인증 → 네트워크 없는 signer → DGS-GS tc-gate → 승인된 지상국 → 위성 ACK`의 순서를 강제한다. 단계 5 C 시험은 합성 자료로 승인/게이트 거부를 검증했지만, 비행 ICD·키·실제 서비스·웹 권한과의 완전한 결합을 증명하지 않는다. CS/CDHS의 실제 패킷·인증·ACK와 golden vector, FlatSat 및 상대 지상국 시험 뒤에만 운용 전환한다.
 
-| 단계 | 보안 계획서 항목 | 구현 위치 |
-|---|---|---|
-| 계획·충돌 분석·승인 | 5.1절 1~4단계 | mps-core, MPS 화면 |
-| 자동 검증 5항목 | 5.1절 3단계 | ros-core `tc_validate.c` |
-| 위험도별 승인 | 5.2절 | ros-core `tc_manager.c`, 관제 화면 승인함 |
-| HMAC 부착 | 4장 | ros-signer |
-| 송출 TC 게이트 | 5.5절 (2) | dgs-gs `tc_gate.c` |
-| 위성 측 인증 | 4장 | 트랜시버 HMAC |
+## 10. 운영과 배포
 
-ROS VM이 탈취되어도 vm-dgs-gs의 게이트가 남고, vm-dgs-gs가 탈취되어도 HMAC 키는 vm-ros의 signer에만 있다.
+운용 중 이미지·패키지를 외부 레지스트리에서 개별 앱 컨테이너가 받지 않는다. 저장소 clone, 빌드, 이미지/OS 업데이트는 통제된 배포·관리 절차에서 준비한다. 운용 서버가 즉석 인터넷 빌드에 의존하지 않도록 승인된 이미지와 검증된 의존성을 반입한다. 앱 런타임이 패키지 설치·CDN·공개 DNS 조회를 요구하면 설계를 수정해야 한다. 비밀키·SFTP 개인키·내부 토큰은 이미지·Git 저장소에 넣지 않는다. 현장 배포에서 주소·계정·호스트키·권한과 로그/백업 정책을 기록한다.
 
----
+`pado-gs.sh`는 개발용 `start`, `stop`, `status`, `cleanup` 인터페이스다. `cleanup`은 볼륨의 계정·시험 자료를 제거하므로 확인 절차가 있다. 이 스크립트의 성공 메시지나 CI 통과만으로 **실제 VM의 외부망 차단, 다른 관제 PC 접속 거부, 복구 가능성, 실제 위성 송신 안전성**을 수락하지 않는다. 현장 절차는 [서버 설정 매뉴얼](../deploy/stage7/SERVER_SETUP.md)에 기록하고, 개발 완료 뒤 실제 VM에서 실행한다.
 
-## 10. 운영 관리
-
-| 항목 | 방법 |
-|---|---|
-| OS 업데이트 | vm-mgmt 업데이트 저장소를 통해 월 1회 (패스 없는 시간대), 업데이트 전 VM 스냅샷 |
-| 이미지 업데이트 | 5.5절 절차, 다이제스트 기록, 문제 시 이전 다이제스트로 롤백 |
-| 방화벽 규칙 변경 | 저장소에서 변경 → `check_flows` 대조 → 운용 책임자 승인 → 적용 → 변경 로그 |
-| 서비스 상태 | 컨테이너 healthcheck → 관제 화면 대시보드에 표시 |
-| 패스 전 점검 | 보안 계획서 5.3절 Go/No-Go에 "전 서비스 정상, 로그 수집 정상, 시각 동기 정상" 포함 |
-| 권한 재검토 | 학기 시작 시 전체 계정·SFTP 키·인증서 점검 |
-
----
-
-## 11. 소스 구조
+## 11. 기술과 저장소 구조
 
 ### 11.1 기술 선택
 
-| 용도 | 선택 | 이유 |
-|---|---|---|
-| 백엔드 언어 | C | 팀 결정 |
-| HTTP·WebSocket 서버 | CivetWeb | 소스 내장 가능, WebSocket 지원, MIT 라이선스 |
-| JSON | cJSON | 파일 2개, 단순 |
-| DB 클라이언트 | libpq | PostgreSQL 공식 C 클라이언트 |
-| TLS·HMAC·SHA-256 | OpenSSL | 표준 |
-| 비밀번호 해시 | libsodium | Argon2id |
-| 외부 HTTPS | libcurl | Space-Track 조회 |
-| SFTP 클라이언트 | libssh | 파일 교환 송신 |
-| 빌드 | CMake | 서비스별 실행파일 + 공통 정적 라이브러리 |
-| 웹 | 순수 JavaScript (ES 모듈), 빌드 도구 없음 | 운용망 인터넷 불가, 유지보수 단순 |
-| 웹 그래프 | 경량 그래프 라이브러리를 저장소에 파일로 포함 | CDN 사용 불가 |
-| FDS | Java + Orekit (예외) | 11.3절 |
+| 용도 | 현재 선택·상태 |
+|---|---|
+| 공통·ROS/MPS/DGS 핵심 시험 | C11, CMake, OpenSSL, libssh, cJSON. 엄격한 크기/유형/상대 검증 |
+| FDS | Java 17, Maven, Orekit 13.1.9. 런타임 오프라인 계산 |
+| 현재 웹/API | Python 웹 서비스와 정적 JavaScript/CSS, SQLite 시험 계정·초안. C 읽기 서비스는 Unix socket으로 API에 연결 |
+| 컨테이너 | Docker Compose, 전용 내부 브리지·네트워크 없음 모드, 파일/소켓 볼륨, `DOCKER-USER` 게시 포트 제한 |
+| 시험 | CTest, Python 단위·통합 시험, GCC/Clang ASan+UBSan, 퍼징, Linux CI 및 일회용 컨테이너 네트워크 시험 |
 
-### 11.2 저장소 구조
+초기 문서의 nginx/CivetWeb 중심 포털, 모든 서비스 PostgreSQL, 8개 VM의 `network_mode: host` 및 Docker `iptables:false`, vm-mgmt 내부 레지스트리·전용 VLAN은 **현재 구현물이 아니다**. 새 외부 연동 구성에 이를 그대로 복사하지 않는다.
 
-```
-pado-gs/
-├── CMakeLists.txt
-├── interfaces/                          # 모든 서비스의 기준 (ICD)
-│   ├── n2_chart.json                    # 흐름 정의 → SFTP 계정, 허용 유형, 방화벽 대조 기준
-│   ├── command_db/commands.json         # 명령: 코드, 파라미터 범위, 위험도, 소요시간, 자원, 사전조건, 상태변화
-│   ├── tm_db/telemetry.json             # TM 파라미터 정의, Limit
-│   ├── schemas/                         # tc_sequence, mission_schedule, gnss, antenna_pointing ...
-│   └── frames/                          # TM/TC 프레임 규격
-│
-├── libgs/                               # C 공통 라이브러리
-│   ├── include/gs/
-│   │   ├── log.h          # 한 줄 JSON 로그
-│   │   ├── config.h       # JSON 설정 읽기
-│   │   ├── manifest.h     # 매니페스트 생성·검증, sha256
-│   │   ├── exchange.h     # inbox 감시, 원자적 쓰기, rejected 처리, SFTP 업로드
-│   │   ├── ipc.h          # unix socket + 길이 접두 메시지
-│   │   ├── framing.h      # TCP+TLS 길이 접두 스트림
-│   │   ├── db.h           # libpq 래퍼
-│   │   ├── http.h         # CivetWeb 래퍼, 사용자·역할 헤더 추출, JSON 응답
-│   │   ├── cmddb.h        # 명령 DB 로드·조회·버전 해시
-│   │   └── timeutil.h     # UTC
-│   └── src/
-│
-├── third_party/                         # civetweb, cjson (소스 포함, 버전 기록)
-│
-├── services/
-│   ├── portal-auth/
-│   │   ├── main.c          # auth_request 응답, 로그인·로그아웃 API
-│   │   ├── users.c         # 계정, Argon2id
-│   │   ├── session.c       # 세션 생성·만료
-│   │   ├── totp.c          # TOTP
-│   │   ├── reauth.c        # 재인증 토큰
-│   │   └── lockout.c       # 연속 실패 잠금
-│   ├── ros/
-│   │   ├── core/
-│   │   │   ├── main.c              # 이벤트 루프 (TM 스트림, IPC, 타이머, inbox)
-│   │   │   ├── tm_receiver.c       # dgs-gs 스트림 수신
-│   │   │   ├── tm_parser.c         # 프레임 → 패킷 → 파라미터
-│   │   │   ├── limit_monitor.c     # Limit 검사, 경보
-│   │   │   ├── distributor.c       # GNSS·SOH·Attitude·ACK 파일 → 각 서브시스템
-│   │   │   ├── tc_validate.c       # 자동 검증 5항목
-│   │   │   ├── tc_manager.c        # TC 상태 (작성→검증→승인→송출→ACK)
-│   │   │   ├── sequence_runner.c   # 시퀀스 파일 재검증·단계 실행
-│   │   │   ├── emergency.c         # 비상 명령 세트
-│   │   │   └── tc_sender.c         # signer 호출 → dgs-gs 송출
-│   │   ├── signer/
-│   │   │   ├── main.c              # unix socket 대기
-│   │   │   └── hmac_sign.c         # 승인 확인, HMAC 계산·부착, 순번 관리
-│   │   └── api/
-│   │       ├── main.c
-│   │       ├── routes_tm.c
-│   │       ├── routes_tc.c
-│   │       ├── routes_seq.c
-│   │       ├── routes_approval.c
-│   │       └── ws_stream.c
-│   ├── mps/
-│   │   ├── core/
-│   │   │   ├── main.c
-│   │   │   ├── inputs.c            # Mission Request, Contact Schedule, ACK·SOH 수신
-│   │   │   ├── plan_store.c        # 계획·시퀀스 저장, 버전·이력
-│   │   │   ├── conflict.c          # 충돌 규칙 6개 (규칙 하나 = 함수 하나)
-│   │   │   ├── uplink_intake.c     # 업링크 파일 해시 대조·반입 승인 상태
-│   │   │   └── sequence_export.c   # 승인 시퀀스 → 파일 + 매니페스트 → ROS
-│   │   └── api/
-│   │       ├── main.c
-│   │       ├── routes_cmd.c
-│   │       ├── routes_pass.c
-│   │       ├── routes_seq.c
-│   │       ├── routes_request.c
-│   │       └── routes_uplink.c
-│   ├── fds/                        # Java + Orekit (예외)
-│   ├── dgs-gs/
-│   │   ├── main.c
-│   │   ├── kari_adapter.c          # 항우연 쪽 프레임 송수신 (협의 후 교체 대상)
-│   │   ├── tm_validator.c          # 길이·동기·CRC·SCID, 실패 프레임 격리
-│   │   └── tc_gate.c               # SCID·형식·시간창·속도 제한
-│   ├── dgs-net/
-│   │   ├── main.c
-│   │   ├── spacetrack.c
-│   │   ├── tle_validate.c
-│   │   └── sv_receiver.c
-│   └── dgs-archive/
-│       ├── main.c
-│       ├── archive.c
-│       ├── catalog.c
-│       └── integrity.c
-│
-├── web/
-│   ├── lib/                        # 그래프 라이브러리 등 (로컬 파일)
-│   ├── common/
-│   │   ├── api.js                  # fetch 래퍼 (CSRF, 오류, 401 → 로그인)
-│   │   ├── ws.js                   # WebSocket 연결·재연결
-│   │   ├── auth.js                 # 로그인 상태, 재인증 팝업
-│   │   ├── ui.js                   # 표, 경보 배지, 확인 대화상자
-│   │   └── style.css
-│   ├── login/  index.html, login.js
-│   ├── ops/                        # 관제 화면
-│   │   ├── index.html
-│   │   ├── dashboard.js
-│   │   ├── tm_view.js
-│   │   ├── tc_console.js
-│   │   ├── sequence_run.js
-│   │   ├── approvals.js
-│   │   ├── emergency.js
-│   │   └── events.js
-│   └── mps/                        # 미션 스케줄링 화면
-│       ├── index.html
-│       ├── commands.js
-│       ├── passes.js
-│       ├── sequence_editor.js
-│       ├── conflict_view.js
-│       ├── requests.js
-│       ├── uplink_intake.js
-│       └── export.js
-│
-├── docker/                          # 서비스별 Dockerfile (다단계 빌드)
-│
-├── deploy/
-│   ├── docker/daemon.json           # 5.2절 공통 데몬 설정
-│   ├── nginx/portal.conf            # TLS, 정적 파일, 프록시, auth_request, 보안 헤더, 속도 제한
-│   ├── vm/<vm이름>/
-│   │   ├── compose.yml
-│   │   ├── nftables.conf
-│   │   ├── sftp/                    # 계정·chroot 설정 (n2_chart.json에서 생성)
-│   │   └── config/                  # 서비스 설정 JSON
-│   ├── firewall/                    # 방화벽 장비 정책 (6.5절)
-│   └── hypervisor/                  # VM 목록, VLAN·NIC 할당
-│
-├── sim/
-│   ├── fake_kari.c                  # 항우연 쪽 프레임 송수신 흉내
-│   └── fake_sat.c                   # TC 수신·HMAC 검증·ACK·TM 생성
-│
-├── tests/                           # 단위 시험, TM 파서·TLE 검증 퍼징
-└── tools/
-    ├── check_flows                  # n2_chart ↔ nftables ↔ SFTP 계정 대조
-    ├── log_check                    # 패스 후·주간 로그 점검
-    ├── pass_report                  # 패스 보고서 생성
-    └── restore/                     # 백업 복구 절차 스크립트
-```
+### 11.2 주요 경로
 
-### 11.3 FDS 예외
+| 경로 | 내용 |
+|---|---|
+| `interfaces/` | N2 흐름, 비운용 명령/TM DB, 초안 TC/TM 응용 PDU, 스키마·프레임 계약 |
+| `libgs/`, `services/` | 공통 C 계약, ROS/MPS/DGS 시험 경계, 웹/API와 시뮬레이터 |
+| `services/fds/` | Orekit 궤도 계산·시험 |
+| `web/` | ORBIT·ROS·MPS·로그인 화면과 로컬 자산 |
+| `deploy/stage7/`, `deploy/stage8/`, `deploy/stage9/` | 격리 probe, 스냅샷·퍼징, 로컬 웹 Compose와 배포 설명 |
+| `tools/`, `tests/` | N2·비밀정보 검사, FDS 입력/게시, 통합·거부·보안 시험 |
+| `docs/TC_TM/` | PDR 기반 응용 패킷 초안·그림·운용 전 검토표 |
 
-제안서의 FDS 주 궤도원은 Orekit(Java) 기반 HPOP이다. 고정밀 궤도 전파기를 C로 새로 구현하는 것은 과제 범위를 넘으므로, FDS는 Java 컨테이너로 구성한다. FDS는 파일 교환으로만 다른 서브시스템과 통신하므로, 매니페스트 규칙만 지키면 전체 구조에 영향이 없다. 매니페스트 생성·검증은 Java에서 같은 규칙으로 구현한다.
+### 11.3 FDS 예외와 계산 계약
 
-### 11.4 서비스 골격
+FDS는 C가 아닌 Java/Orekit 예외 서비스다. N05의 유효한 TLE는 SGP4로, N11의 유효한 GNSS ITRF/ECEF 위치·속도는 GCRF 변환 후 지구 중력장·태양/달 중력의 **예비 수치 전파**로 계산한다. 계획 시작 시각 기준 GNSS가 72시간 미만이면 우선 사용하고 없거나 오래됐으면 유효한 TLE로 돌아간다. 손상 입력은 실패한다. 이를 정밀도 검증된 HPOP로 호칭하지 않는다. 기동/추력 입력은 없으며 `maneuver_model=NONE`을 기록한다.
 
-모든 C 서비스는 같은 형태의 `main.c`를 쓰고, 서비스마다 다른 것은 처리 함수뿐이다.
+두 지상국은 연세대 이과대학 UHF와 대전 항우연 S-band 각 1기다. 최대 72시간을 계산해 N13 Contact Schedule, N15 Orbit Ephemeris와 Pass Information, 내부 `orbit_view.json`을 낸다. 궤도력은 기본 60초, 패스 프로파일은 10초 간격이다. 실측 안테나 좌표·지평선/최소 고각은 실제 컨택 검증에, 할당 주파수는 Hz 도플러 확정에 필요하다. 현재 값은 시험용이며 예비 질량·링크 버짓은 이 계산의 선행 조건이 아니다. 실제 OEM719A→OBC→TM 바이트/품질 계약과 예측 정밀도 목표·참조 궤도는 미정이다. [FDS 안내](../services/fds/README.md)를 따른다.
 
-```c
-int main(int argc, char **argv) {
-    gs_config_t cfg;
-    if (argc < 2 || gs_config_load(argv[1], &cfg) != 0) return 1;
-    gs_log_init(cfg.service_name, cfg.zone);
+### 11.4 C 서비스 골격
 
-    gs_item_t item;
-    while (gs_exchange_next(&cfg.inbox, &item) == 0) {        /* 매니페스트 도착 대기 */
-        if (gs_manifest_verify(&item, cfg.allowed_types) != 0) {
-            gs_exchange_reject(&item);                        /* 해시·유형·스키마 실패 */
-            continue;
-        }
-        if (process_item(&item, &cfg) != 0)                   /* 서비스별로 이 함수만 다름 */
-            gs_log_event("process_failed", &item);
-        gs_exchange_done(&item);
-    }
-    return 0;
-}
-```
+C 서비스는 입력 길이·자료 유형·버전·상대·해시를 확인하고, 파서 실패를 격리·기록한다. Unix socket과 프레임 길이 제한을 공통 라이브러리로 사용한다. 같은 VM에 있다는 이유로 다른 서비스의 소켓·볼륨에 접근을 허용하지 않는다. 서비스 간 전송 방향과 DGS 외부망 불변 조건을 인터페이스 계약으로 검사한다.
 
 ### 11.5 C 보안 코딩 규칙
 
-외부 입력을 처음 받는 코드(tm_validator, tm_parser, tle_validate, sv_receiver, 웹 API JSON 처리, 매니페스트 검증)는 특히 다음을 지킨다.
+Linux GCC/Clang은 엄격한 경고, 스택 보호, FORTIFY, PIE/RELRO를 사용하고 Clang ASan+UBSan과 파서 퍼징을 CI에서 실행한다. Windows MSVC는 가능한 대응 옵션과 AddressSanitizer를 적용한다. TM·TLE·매니페스트·명령 입력에서 길이를 먼저 확인하고, 경계 밖 읽기·정수 오버플로·경로 탈출·유형 혼동을 거부한다. 실제 ICD가 정해지면 현재 합성 TM과 별도의 운용 파서 퍼징 대상을 추가한다.
 
-| 항목 | 규칙 |
-|---|---|
-| 컴파일 옵션 | `-Wall -Wextra -Werror -fstack-protector-strong -D_FORTIFY_SOURCE=2 -fPIE -pie -Wl,-z,relro,-z,now` |
-| 시험 빌드 | `-fsanitize=address,undefined` |
-| 파서 작성 | 길이를 먼저 확인하고 고정 크기 구조체로 복사. 가변 길이 할당 최소화 |
-| 문자열 | `strcpy`/`sprintf` 금지, 길이 지정 함수만 사용 |
-| 퍼징 | TM 파서, TLE 검증, 매니페스트 검증을 퍼징 시험 대상에 포함 |
-| 정적 분석 | CI에서 정적 분석 도구 실행, 경고 0 유지 |
-| 의존성 | `third_party/`의 버전을 기록하고 보안 패치를 월 1회 확인 |
+## 12. 개발 단계와 완료 판정
 
----
-
-## 12. 개발 순서
-
-| 단계 | 내용 | 완료 기준 |
+| 단계 | 개발 기준선 | 운용 전 남은 판정 |
 |---|---|---|
-| 1 | `interfaces/`(명령 DB, TM 정의, 스키마, n2_chart)와 `libgs/` | 매니페스트·로그·교환 단위 시험 통과 |
-| 2 | VM 간 통신 기반: ROS↔DGS-GS 실시간 스트림, N2 파일·매니페스트 교환, VM 내부 Unix socket의 공통 구현과 개발용 격리 네트워크 연결 | 확정된 흐름의 송수신·거부 통합 시험 통과. 미정 ICD 경로는 열지 않음 |
-| 3 | `sim/fake_kari` → `dgs-gs` → `ros-core` TM 수신 | 시험 프레임이 ROS에 기록되고 잘못된 프레임은 거부됨. 실제 TM 해석은 ICD 확정 후 검증 |
-| 4 | MPS 핵심 기능: 명령·패스 목록, 시퀀스 편집·충돌 분석·출력, ROS 연동 | 확정된 규칙의 단위·통합 시험 통과. 미확정 TC 운용 값은 사용하지 않음 |
-| 5 | TC 경로: 검증 → 승인 → signer → tc-gate → `fake_sat` ACK | 위험 TC 2인 승인, 게이트 차단 시험 통과. 실제 명령·프레임 시험은 ICD 확정 후 수행 |
-| 6 | FDS, DGS-NET, DGS-Archive, SDC 교환 영역 | 확정된 N2 흐름의 서비스 간 교환 시험 통과. 외부 ICD 의존 흐름은 별도 판정 |
-| 7 | 단일 Linux VM 배포 기반: Docker 서브시스템 분리·호스트 UFW·로그·시간 동기 | `check_flows` 통과, 컨테이너 간 격리·로그 수집·호스트 방화벽 확인. N2 연결 시작 방향은 실제 서비스 경계에서 확인 |
-| 8 | 백업·복구, 파서 퍼징, 핵심 서비스 보안 시험 | 복구 시나리오와 핵심 서비스 시험 통과 |
-| 9 | `portal-auth` + nginx + ROS·MPS 웹 UI 통합 | 관제용 PC가 vm-portal에 로그인해 ROS·MPS 기능을 사용하고, VM API에 직접 접속하지 않으며, 전체 경로 시험 통과 |
+| 1 | N2·인터페이스·공통 C 라이브러리 완료 | 비행 명령/TM 값 확정 후 운용 DB 승인 |
+| 2–3 | mTLS/SFTP/Unix socket과 합성 TM 수신·거부 시험 완료 | 실제 DGS-GS·안테나 프레임 및 TM ICD 통합 |
+| 4–5 | MPS 초안·합성 충돌/승인, C TC 검증→signer→게이트→가상 ACK 시험 완료 | 실제 명령·충돌·2인 승인·키·RF 경로 통합 |
+| 6 | FDS·N2 검증 파일 경계와 DGS 교환 시험 완료 | 실제 Space-Track·N05/N11 상대/서버와 수신 수락 ACK |
+| 7 | 단일 VM Docker·호스트 정책 **개발 probe** 완료 | DGS-only 외부망 차단과 현장 UFW/DOCKER-USER·재부팅 실증 |
+| 8 | 선택 파일 스냅샷 복원·파서 퍼징 완료 | 독립 백업·운용 DB/키·전체 복원 및 FlatSat 시험 |
+| 9 | 웹 인증, ORBIT, ROS TM/자세, MPS PASS/초안, 가상 위성 TM↔시험 TC/ACK 개발 중 | 운용 서비스·ICD·승인·감사·실제 PC/VM 통합 및 보안 수락 |
 
-단계 4는 작은 검증 단위로 나누어 진행한다. 4-1부터 순서대로 완료 판정하며, 각 단계의 미정 외부 입력은 승인된 형식이 나오기 전까지 운용 데이터로 수용하지 않는다.
+“완료”는 각 행의 **개발 기준선** 판정이지 실제 위성 운용 승인이나 현장 배포 완료가 아니다. 현 로컬 스택은 관제 화면의 데이터·상태·왕복 동작을 개발자가 계속 확인하기 위한 비운용 환경이다. CI 결과와 세부 이력은 [진행 기록](PROGRESS.md)을 따른다.
 
-| 세부 단계 | 범위 | 완료 기준 |
+## 13. 보안 계획서 대응과 필수 수락
+
+| 요구 | 현재 증거 | 운용 전 통과해야 할 조건 |
 |---|---|---|
-| 4-1 | MPS 입력·카탈로그 기준선: 현재 비운용 명령 DB의 엄격한 판독, 내부 패스 목록 모델 | 미확정 명령의 운용 사용을 거부하고, 패스 시간창·식별자·목록 경계 시험 통과. FDS 파일 수신 형식은 미정으로 유지 |
-| 4-2 | 시퀀스 초안 편집·계획 버전과 이력 | 패스와 명령 DB 버전에 결합된 초안 갱신·동시 수정 거부 시험 통과 |
-| 4-3 | 시간창·중첩·자원·사전 조건·데이터량·명령 수 충돌 분석 | 규칙별 통과·위반 시험 통과. 명령 속성은 확정된 ICD가 없으면 시험 전용 계약만 사용 |
-| 4-4 | 계획 확정·승인, TC 시퀀스/매니페스트 출력과 ROS 연동 | 승인되지 않은 초안 출력 차단, ROS 독립 재검증 경로 시험 통과 |
-| 4-5 | Mission Request 반영·반려와 업링크 파일 반입 승인 | 출처·해시·버전·FlatSat 기록·권한 검사와 거부 시험 통과 |
+| DGS 단일 외부 접점 | 단계 7 격리 probe, 단계 9 내부 API·게이트웨이 구조 | **비DGS 컨테이너의 외부 IP/DNS/호스트 경유 차단**과 DGS별 상대 한정, 실제 VM에서 거부 시험·재부팅 반복 |
+| 명령 경로 우선·위험 TC 승인 | 단계 5 C 합성 시험, 단계 9 분리된 시험 TC | CS/CDHS 승인 ICD·Golden Vector, 역할·재인증·2인 승인→signer→DGS TC 게이트→FlatSat 결과 |
+| TM 무결성·파일 검증 | 프레임·매니페스트·SFTP 거부 시험, 초안 PDU 파서 | 실제 수신 프레임·원시 TM 품질/보정/한계와 변조·재전송 거부 |
+| 기록과 복구 | journald, 로컬 선택 파일 스냅샷 | TC 전 과정의 구조화 감사 기록·변경 방지 보존, 독립 백업과 실제 복원 |
+| 최소 권한·계정 | 포털 Argon2id/TOTP/CSRF, 전용 내부 API | 실제 SFTP/외부 상대 인증서·호스트키, 서비스·파일·볼륨 권한 현장 확인 |
 
-단계 2~6의 개발용 통신 계약은 단일 Linux 서버에서 서브시스템별 VM을 실행하는 최종 구조를 기준으로 한다. 단계 2에서는 VMware Linux VM 한 대의 Docker 내부 네트워크를 개발용 시험 환경으로 사용한다. 물리 방화벽·VLAN 스위치와 서버 사양이 미정이므로 실제 장비 설정은 단계 7에서 확정한다. 개발용 컨테이너·가상 네트워크 시험은 단계 7의 실제 VM 배포·격리 검증을 대체하지 않는다. ROS·MPS 웹 UI는 각 서브시스템의 핵심 기능 구현 후 단계 9에서 구성한다.
-
----
-
-## 13. 보안 계획서 대응표
-
-| 보안 계획서 항목 | 본 문서 구현 위치 |
-|---|---|
-| 3장 연동 모델 (VPN, 프레임 단위) | 6.2절 F05, 6.5절, `kari_adapter.c` |
-| 4장 HMAC·키 관리 | 4.2절 ros-signer, 5.4절 키 마운트, 8.2절 키 백업 |
-| 5.1절 TC 8단계 절차 | 7.2·7.3절 화면, 9.3절 |
-| 5.2절 위험도 분류 | `command_db/commands.json`, `tc_manager.c` |
-| 5.4절 비상 운용 | 관제 화면 비상 명령, `emergency.c` |
-| 5.5절 (1) 네트워크 방화벽 | 6장 전체 |
-| 5.5절 (2) 송출 TC 게이트 | `tc_gate.c` |
-| 5.5절 (3) TM 입력 검증 | `tm_validator.c` |
-| 6.3절 지상국 내부 반입 검증 | MPS 업링크 파일 반입 화면, `uplink_intake.c` |
-| 7.1절 DGS-GS / DGS-NET 분리 | vm-dgs-gs, vm-dgs-net (별도 VM, 별도 VLAN) |
-| 7.2절 구역 구성 | 3.1절 VLAN |
-| 7.4절 흐름 허용표 | 6.2·6.3절, `n2_chart.json` |
-| 7.5절 계정·권한 | 7.4절 |
-| 8장 로그·백업 | 8장 |
-
----
+**DGS-only 검증 실패는 다른 기능의 성공으로 상쇄할 수 없다.** 필요 정책을 적용할 수 없는 네트워크 구성이나 포트 추가는 기동/운용 전환을 중지하고 설계를 다시 검토한다.
 
 ## 14. 미결 사항
 
-| 항목 | 확인 대상 | 영향 |
+| 항목 | 필요한 결정·자료 | 현 영향 |
 |---|---|---|
-| 방화벽 장비·VLAN 스위치 확보 여부 | 연구실 예산 | 6.5절 (VM 대체 시 위험 증가) |
-| 항우연 연동 포트·프로토콜 | 항우연 | F05, `kari_adapter.c` |
-| 학교망 고정 주소·VPN 허용 | 정보처 | 3.1절, 6.5절 |
-| 서버 사양 (VM 8개 수용) | 장비 사양서 | 4.1절 |
-| NAS 불변 스냅샷 기능 지원 여부 | NAS 사양서 | 8.2절 |
-| SDC 연결 위치 (전용 VLAN / 학내망) | 탑재체팀 | VLAN 60 |
-| 하이퍼바이저 종류 | 연구실 결정 | 6.6절 세부 설정 |
+| TC/TM 비행 규격 | CS/CDHS 승인 ID·필드·인증·ACK·센서 보정/한계, golden vector | 초안 패킷·웹 TC는 시험 전용 |
+| GNSS TM | OEM719A→OBC 다운링크의 시각·프레임·위치·속도·품질 실제 배치 | FDS는 정규화 시험 N11만 사용 |
+| 외부 DGS 연동 | 항우연·연세대 프로토콜/상대 주소/인증·VPN, Space-Track 계정, SDC 경계 | 모든 운용 외부 연결 차단 유지 |
+| 컨택·도플러 검증 | 두 안테나 측량 좌표·고각/지평선 마스크, 실제 RF 주파수 | PASS 시각·Hz 도플러는 시험 산출물 |
+| 궤도 정확도 | 목표 오차·참조 궤도 및 필요 시 항력·SRP 물리 파라미터 | GNSS 수치 전파는 예비 모델 |
+| 로그·백업·현장 | 감사 보존/변조 방지, 독립 백업 매체/복원, 실제 VM 거부·재부팅 시험 | 운용 수락 불가 |
+| Payload 원시데이터·NAS | 장비와 수신·보관 계약이 필요할 때 별도 승인 | 현 개발에서 제외. F19 포트·계정 개방 금지 |
+
+위 미결 자료가 없어도 비운용 화면·시뮬레이션 개발은 진행한다. 하지만 실제 위성 TC, 실제 컨택 판단 또는 외부 기관 연결은 이 문서의 수락 조건을 충족한 뒤에만 연다.

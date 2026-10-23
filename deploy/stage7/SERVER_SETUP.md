@@ -31,7 +31,7 @@ timedatectl status
 sudo ufw status verbose
 ```
 
-Git 작업은 별도 운영 계정으로 수행하고 배포 커밋 SHA를 기록한다. 이미 Docker를 설치한 서버라면 재설치하지 않는다. 새 Ubuntu 서버의 설치 절차와 지원 배포판은 [Docker 공식 설치 문서](https://docs.docker.com/engine/install/ubuntu/)를 확인하고, Compose 플러그인이 없을 때는 [공식 Compose 설치 문서](https://docs.docker.com/compose/install/linux/)를 따른다. 설치 후 `docker info`와 `docker compose version`이 성공해야 한다. Docker 소켓·`docker` 그룹 접근은 호스트 관리자 수준으로 제한하고 Docker 원격 API의 TCP 노출은 만들지 않는다.
+Git 작업은 별도 운영 계정으로 수행하고 배포 커밋 SHA를 기록한다. 이미 Docker를 설치한 서버라면 재설치하지 않는다. 새 Ubuntu 서버의 설치 절차와 지원 배포판은 [Docker 공식 설치 문서](https://docs.docker.com/engine/install/ubuntu/)를 확인하고, Compose 플러그인이 없을 때는 [공식 Compose 설치 문서](https://docs.docker.com/compose/install/linux/)를 따른다. 설치 후 `docker info`와 `docker compose version`이 성공해야 한다. 단계 7·9의 내부 브리지 격리와 DNS 보호를 위해 Docker Engine 안정판 28.0.0 이상을 요구한다. Docker 소켓·`docker` 그룹 접근은 호스트 관리자 수준으로 제한하고 Docker 원격 API의 TCP 노출은 만들지 않는다.
 
 ## 2. 호스트 UFW와 SSH
 

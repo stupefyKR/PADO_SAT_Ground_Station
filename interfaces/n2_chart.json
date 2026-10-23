@@ -8,6 +8,14 @@
   },
   "rules": {
     "unlisted_flow": "deny",
+    "external_access": "dgs_only",
+    "external_peer_map": {
+      "ground-antenna": "dgs-gs",
+      "space-track": "dgs-net",
+      "launch-provider": "dgs-net",
+      "sdc": "dgs-archive"
+    },
+    "dgs_gs_to_dgs_net": "deny",
     "dmz_to_operations_new_connection": "deny",
     "sdc_reachable_service": "dgs-archive",
     "unknown_external_icd": "TBD(ICD)"

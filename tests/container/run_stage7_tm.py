@@ -99,7 +99,14 @@ def main() -> int:
             (root / role / "tls").mkdir(parents=True)
             (root / role / "data").mkdir()
         try:
-            run("docker", "network", "create", "--internal", network)
+            run("docker", "network", "create", "--internal", "--opt",
+                "com.docker.network.bridge.gateway_mode_ipv4=isolated", network)
+            actual = json.loads(run("docker", "network", "inspect", network).stdout)[0]
+            if (actual.get("Internal") is not True or
+                    actual.get("EnableIPv6") is not False or
+                    actual.get("Options", {}).get(
+                        "com.docker.network.bridge.gateway_mode_ipv4") != "isolated"):
+                raise RuntimeError("stage 7 TM test bridge is not isolated")
             user = f"{os.getuid()}:{os.getgid()}"
             for role, name in (("dgs", dgs), ("ros", ros)):
                 start_container(name, network, root / role / "tls",

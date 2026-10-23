@@ -12,6 +12,22 @@ services:
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     restart: "no"
+  dgs-ops-gateway:
+    build:
+      context: ../..
+      dockerfile: docker/stage9/Dockerfile
+    command: ["python3", "/app/deploy/stage9/dgs_ops_gateway.py", "--listen-port", "8080", "--upstream-port", "8080"]
+    environment:
+      PADO_GATEWAY_OPERATOR_CIDR: ${PADO_OPERATOR_CIDR:-192.168.45.1/32}
+    depends_on:
+      portal: {condition: service_started}
+    ports: ["${PADO_LOCAL_BIND_IP:-192.168.45.128}:8080:8080"]
+    networks: [entry, dgs_portal]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/tmp"]
+    logging: {driver: journald}
   portal:
     build:
       context: ../..
@@ -19,12 +35,11 @@ services:
     command: ["python3", "-m", "services.webapp.main", "portal", "--transport", "http", "--internal-token-file", "/internal/token", "--bind", "0.0.0.0", "--port", "8080", "--db", "/state/accounts.db", "--ros-url", "http://ros-api:8081", "--mps-url", "http://mps-api:8081", "--orbit-view", "/fds-view/orbit_view.json"]
     depends_on:
       init-token: {condition: service_completed_successfully}
-    ports: ["${PADO_LOCAL_BIND_IP:-192.168.45.128}:8080:8080"]
     volumes:
       - internal_token:/internal:ro
       - portal_state:/state
       - fds_view:/fds-view:ro
-    networks: [entry, portal_ros, portal_mps]
+    networks: [dgs_portal, portal_ros, portal_mps]
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
@@ -189,7 +204,29 @@ volumes:
   sim_n11_inbox:
   sim_tc_socket:
 networks:
-  entry: {driver: bridge}
-  portal_ros: {driver: bridge, internal: true}
-  portal_mps: {driver: bridge, internal: true}
-  sim_tm: {driver: bridge, internal: true}
+  entry:
+    driver: bridge
+    enable_ipv6: false
+    driver_opts:
+      com.docker.network.bridge.name: br-pado-local
+      com.docker.network.bridge.gateway_mode_ipv4: nat
+  dgs_portal:
+    driver: bridge
+    internal: true
+    enable_ipv6: false
+    driver_opts: {com.docker.network.bridge.gateway_mode_ipv4: isolated}
+  portal_ros:
+    driver: bridge
+    internal: true
+    enable_ipv6: false
+    driver_opts: {com.docker.network.bridge.gateway_mode_ipv4: isolated}
+  portal_mps:
+    driver: bridge
+    internal: true
+    enable_ipv6: false
+    driver_opts: {com.docker.network.bridge.gateway_mode_ipv4: isolated}
+  sim_tm:
+    driver: bridge
+    internal: true
+    enable_ipv6: false
+    driver_opts: {com.docker.network.bridge.gateway_mode_ipv4: isolated}

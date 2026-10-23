@@ -48,6 +48,18 @@ jobs:
           bash -n pado-gs.sh
           python3 -m unittest discover -s tests -p 'test_*.py' -v
           python3 tools/check_secrets.py --staged
+      - name: Require patched Docker for isolated bridges
+        run: |
+          python3 - <<'PY'
+          import re
+          import subprocess
+          version = subprocess.check_output(
+              ['docker', 'info', '--format', '{{.ServerVersion}}'], text=True).strip()
+          match = re.fullmatch(r'(\d+)\.(\d+)\.(\d+)(?:\+[A-Za-z0-9.-]+)?', version)
+          if not match or tuple(map(int, match.groups()[:3])) < (28, 0, 0):
+              raise SystemExit(f'Docker Engine 28.0.0+ required: {version}')
+          print(f'Docker Engine {version}: isolated bridge support available')
+          PY
       - name: Test isolated container network
         run: |
           python3 tools/check_flows.py check
@@ -75,7 +87,7 @@ jobs:
 
   fds-orbit-tests:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - name: Check out exact commit
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -211,3 +223,5 @@ jobs:
           finally:
               store.close()
           PY
+      - name: Verify live DGS-only operator and outbound boundary
+        run: python3 tests/container/run_stage9_boundary.py

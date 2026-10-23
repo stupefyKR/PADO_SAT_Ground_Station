@@ -167,10 +167,22 @@ def main() -> int:
         for directory in (tls, server_dir, client_dir):
             directory.mkdir()
         try:
-            run("docker", "network", "create", "--internal", network, quiet=True)
+            run("docker", "network", "create", "--internal", "--opt",
+                "com.docker.network.bridge.gateway_mode_ipv4=isolated",
+                network, quiet=True)
             created_networks.append(network)
-            run("docker", "network", "create", "--internal", isolated, quiet=True)
+            run("docker", "network", "create", "--internal", "--opt",
+                "com.docker.network.bridge.gateway_mode_ipv4=isolated",
+                isolated, quiet=True)
             created_networks.append(isolated)
+            for network_name in created_networks:
+                actual = json.loads(run("docker", "network", "inspect",
+                                        network_name).stdout)[0]
+                if (actual.get("Internal") is not True or
+                        actual.get("EnableIPv6") is not False or
+                        actual.get("Options", {}).get(
+                            "com.docker.network.bridge.gateway_mode_ipv4") != "isolated"):
+                    raise RuntimeError(f"test bridge is not isolated: {network_name}")
             for name, directory in ((server, server_dir), (client, client_dir)):
                 run("docker", "run", "-d", "--network", network, "--name", name,
                     "--mount", f"type=bind,source={tls},target=/tls,readonly",

@@ -7,6 +7,7 @@ host firewall rule. A successful probe does not establish connection direction.
 import argparse
 import json
 import pathlib
+import re
 import subprocess
 import time
 import uuid
@@ -36,6 +37,13 @@ def run(*args):
                           capture_output=True, timeout=30)
 
 
+def require_patched_engine():
+    version = run("docker", "info", "--format", "{{.ServerVersion}}").stdout.strip()
+    match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)(?:\+[A-Za-z0-9.-]+)?", version)
+    if not match or tuple(map(int, match.groups()[:3])) < (28, 0, 0):
+        raise RuntimeError("Docker Engine stable 28.0.0+ is required for isolated probe bridges")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--build", action="store_true")
@@ -43,6 +51,7 @@ def main():
     plan = json.loads(PLAN.read_text(encoding="utf-8"))
     if plan["publications"] or plan["scope"] != "single-linux-vm-disposable-docker-probes":
         raise RuntimeError("stage 7 probe plan must have no published ports")
+    require_patched_engine()
     if args.build:
         run("docker", "build", "-t", IMAGE, "-f",
             str(ROOT / "tests/container/Dockerfile"), str(ROOT))
@@ -55,8 +64,15 @@ def main():
     try:
         for item in plan["probe_networks"]:
             name = f"pado-s7-{suffix}-{item['name']}"
-            run("docker", "network", "create", "--internal", name)
+            run("docker", "network", "create", "--driver", "bridge", "--internal",
+                "--opt", "com.docker.network.bridge.gateway_mode_ipv4=isolated", name)
             nets[item["name"]] = name
+            actual = json.loads(run("docker", "network", "inspect", name).stdout)[0]
+            if (actual.get("Driver") != "bridge" or actual.get("Internal") is not True or
+                    actual.get("EnableIPv6") is not False or
+                    actual.get("Options", {}).get(
+                        "com.docker.network.bridge.gateway_mode_ipv4") != "isolated"):
+                raise RuntimeError(f"probe bridge is not isolated: {name}")
         for role in members:
             attached = [nets[net["name"]] for net in plan["probe_networks"]
                         if role in net["members"]]

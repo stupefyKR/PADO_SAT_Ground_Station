@@ -22,7 +22,9 @@ sudo python3 tools/stage7_host_audit.py --admin-ip 192.168.45.1
 ```
 
 `flow-plan.json`은 N2 chart의 **연결 시작 방향**을 기록한다. 내부 컨테이너
-쌍마다 별도 `internal: true` 브리지를 만들고, 공개 포트는 만들지 않는다.
+쌍마다 별도 `internal: true`·`gateway_mode_ipv4: isolated` 브리지를 만들고,
+IPv6와 공개 포트를 끈다. 이 격리 모드와 내부 DNS 수정이 포함된 안정판
+Docker Engine 28.0.0 이상에서만 연결 시험을 실행한다.
 Docker 시험은 서로 연결된 쌍의 도달성과 연결되지 않은 쌍의 거부, journald
 로그 수신을 확인한다. 브리지는 같은 쌍의 **역방향 신규 연결을 막지 못하므로**
 실제 서비스는 정해진 인터페이스에만 바인딩하고 상대 신원·역할을 검증해야 한다.

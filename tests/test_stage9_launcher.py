@@ -41,18 +41,26 @@ if name == "ip":
 if name == "docker":
     if os.environ.get("PADO_LAUNCHER_TEST_DOCKER_FAIL") == "up" and "up" in args:
         sys.exit(42)
-    if "account-status" in args:
+    if (os.environ.get("PADO_LAUNCHER_TEST_PORTAL_FAIL") == "1" and
+            "exec" in args and "portal" in args and "urlopen" in " ".join(args)):
+        sys.exit(7)
+    if args[:2] == ["network", "inspect"]:
+        print(Path(os.environ["PADO_LAUNCHER_TEST_NETWORK_JSON"]).read_text(encoding="utf-8"))
+    elif "account-status" in args:
         print(os.environ.get("PADO_LAUNCHER_TEST_ACCOUNT_STATUS", "configured"))
     elif args == ["info", "--format", "{{.ServerVersion}}"]:
-        print("28.0.0")
+        print(os.environ.get("PADO_LAUNCHER_TEST_DOCKER_VERSION", "28.0.0"))
     elif "--services" in args:
-        services = ["portal", "ros-api", "mps-api", "ros-core-read",
+        services = ["dgs-ops-gateway", "portal", "ros-api", "mps-api", "ros-core-read",
                     "mps-core-read", "fds-synthetic-demo", "sim-ground", "sim-satellite"]
         if os.environ.get("PADO_LAUNCHER_TEST_SERVICES_INCOMPLETE") == "1":
             services.remove("mps-core-read")
         print("\n".join(services))
+    elif "config" in args and "--format" in args:
+        print(Path(os.environ["PADO_LAUNCHER_TEST_COMPOSE_JSON"]).read_text(encoding="utf-8"))
     elif "ps" in args:
-        print("portal running 192.168.45.128:8080->8080/tcp")
+        print("dgs-ops-gateway running 192.168.45.128:8080->8080/tcp")
+        print("portal running")
     sys.exit(0)
 
 if name == "iptables":
@@ -146,19 +154,95 @@ class LauncherLifecycleTests(unittest.TestCase):
         self.log_path = base / "commands.jsonl"
         self.log_path.touch()
         self.rules_path = base / "iptables.json"
-        self.rules_path.write_text('{"DOCKER-USER": []}', encoding="utf-8")
+        self.rules_path.write_text('{"DOCKER-USER": [], "INPUT": []}', encoding="utf-8")
+        self.compose_json_path = base / "compose.json"
+        self.compose_policy = {
+            "networks": {
+                "entry": {"driver": "bridge", "enable_ipv6": False,
+                          "driver_opts": {"com.docker.network.bridge.name":
+                                          "br-pado-local",
+                                          "com.docker.network.bridge.gateway_mode_ipv4":
+                                          "nat"}},
+                "dgs_portal": {"driver": "bridge", "internal": True,
+                               "enable_ipv6": False,
+                               "driver_opts": {
+                                   "com.docker.network.bridge.gateway_mode_ipv4":
+                                       "isolated"}},
+                "portal_ros": {"driver": "bridge", "internal": True,
+                               "enable_ipv6": False,
+                               "driver_opts": {
+                                   "com.docker.network.bridge.gateway_mode_ipv4":
+                                       "isolated"}},
+                "portal_mps": {"driver": "bridge", "internal": True,
+                               "enable_ipv6": False,
+                               "driver_opts": {
+                                   "com.docker.network.bridge.gateway_mode_ipv4":
+                                       "isolated"}},
+            },
+            "services": {
+                "dgs-ops-gateway": {
+                    "networks": {"entry": None, "dgs_portal": None},
+                    "ports": [{"host_ip": "192.168.45.128", "published": "8080",
+                               "target": 8080, "protocol": "tcp"}],
+                    "read_only": True, "cap_drop": ["ALL"],
+                    "security_opt": ["no-new-privileges:true"],
+                    "environment": {"PADO_GATEWAY_OPERATOR_CIDR":
+                                    "192.168.45.1/32"},
+                    "command": ["python3", "/app/deploy/stage9/dgs_ops_gateway.py",
+                                "--listen-port", "8080", "--upstream-port", "8080"],
+                },
+                "portal": {"networks": {"dgs_portal": None,
+                                        "portal_ros": None, "portal_mps": None},
+                           "command": ["python3", "portal", "--ros-url",
+                                       "http://ros-api:8081", "--mps-url",
+                                       "http://mps-api:8081"]},
+                "ros-api": {"networks": {"portal_ros": None}},
+                "mps-api": {"networks": {"portal_mps": None}},
+            },
+        }
+        for service in self.compose_policy["services"].values():
+            service.setdefault("cap_drop", ["ALL"])
+            service.setdefault("security_opt", ["no-new-privileges:true"])
+        self.compose_json_path.write_text(json.dumps(self.compose_policy), encoding="utf-8")
+        self.network_json_path = base / "networks.json"
+        members = {
+            "entry": ("dgs-ops-gateway",),
+            "dgs_portal": ("dgs-ops-gateway", "portal"),
+            "portal_ros": ("portal", "ros-api"),
+            "portal_mps": ("portal", "mps-api"),
+            "sim_tm": ("sim-ground", "sim-satellite"),
+        }
+        self.networks = []
+        for name in ("entry", "dgs_portal", "portal_ros", "portal_mps", "sim_tm"):
+            external = name == "entry"
+            self.networks.append({
+                "Name": f"pado-stage9-local_{name}", "Driver": "bridge",
+                "Internal": not external, "EnableIPv6": False,
+                "Options": {"com.docker.network.bridge.name": "br-pado-local",
+                            "com.docker.network.bridge.gateway_mode_ipv4": "nat"}
+                if external else {
+                    "com.docker.network.bridge.gateway_mode_ipv4": "isolated"},
+                "Containers": {str(index): {
+                    "Name": f"pado-stage9-local-{service}-1"}
+                    for index, service in enumerate(members[name])},
+            })
+        self.network_json_path.write_text(json.dumps(self.networks), encoding="utf-8")
         self.fixture_root = base / "checkout"
         (self.fixture_root / "deploy" / "stage9").mkdir(parents=True)
         (self.fixture_root / "out").mkdir()
         shutil.copyfile(LAUNCHER, self.fixture_root / "pado-gs.sh")
         shutil.copyfile(ROOT / "deploy" / "stage9" / "compose.local.yaml",
                         self.fixture_root / "deploy" / "stage9" / "compose.local.yaml")
+        shutil.copyfile(ROOT / "deploy" / "stage9" / "check_compose_policy.py",
+                        self.fixture_root / "deploy" / "stage9" / "check_compose_policy.py")
         self.sentinel = self.fixture_root / "out" / "existing-output.txt"
         self.sentinel.write_text("keep repo output", encoding="utf-8")
         self.env = dict(os.environ,
                         PATH=str(bin_dir) + os.pathsep + os.environ["PATH"],
                         PADO_LAUNCHER_TEST_LOG=str(self.log_path),
                         PADO_LAUNCHER_TEST_IPTABLES=str(self.rules_path),
+                        PADO_LAUNCHER_TEST_COMPOSE_JSON=str(self.compose_json_path),
+                        PADO_LAUNCHER_TEST_NETWORK_JSON=str(self.network_json_path),
                         PADO_LOCAL_BIND_IP="192.168.45.128",
                         PADO_OPERATOR_CIDR="192.168.45.1/32")
 
@@ -190,7 +274,9 @@ class LauncherLifecycleTests(unittest.TestCase):
                             for call in docker_calls), docker_calls)
         self.assertTrue(any("--status" in call and "--services" in call
                             for call in docker_calls), docker_calls)
-        self.assertTrue(any(call[0] == "curl" for call in first_calls), first_calls)
+        self.assertTrue(any(call[0] == "docker" and "exec" in call and
+                            "portal" in call and "urlopen" in " ".join(call)
+                            for call in first_calls), first_calls)
         self.assertTrue(all("compose.local.yaml" in " ".join(call)
                             for call in docker_calls if "compose" in call and
                             "version" not in call), docker_calls)
@@ -202,6 +288,19 @@ class LauncherLifecycleTests(unittest.TestCase):
         for rule in first_rules["PADO_GS_LOCAL"][:2]:
             self.assertEqual(rule[rule.index("--ctdir") + 1], "ORIGINAL",
                              "the 8080 filter must not drop reply packets")
+        direct_route = first_rules["PADO_GS_LOCAL"][2]
+        self.assertEqual(direct_route, ["-o", "br-pado-local", "-j", "DROP"])
+        egress = first_rules["PADO_GS_LOCAL"][3]
+        self.assertEqual(egress[egress.index("-i") + 1], "br-pado-local")
+        self.assertEqual(egress[egress.index("--ctstate") + 1],
+                         "ESTABLISHED,RELATED")
+        self.assertIn("!", egress)
+        self.assertEqual(egress[-2:], ["-j", "DROP"])
+        host_egress = first_rules["INPUT"]
+        self.assertEqual(len(host_egress), 1)
+        self.assertIn("br-pado-local", host_egress[0])
+        self.assertIn("pado-gs-local-host", host_egress[0])
+        self.assertEqual(host_egress[0][-2:], ["-j", "DROP"])
 
         self.run_launcher("start")
         self.assertEqual(self.rules(), first_rules, "start added duplicate firewall rules")
@@ -212,14 +311,17 @@ class LauncherLifecycleTests(unittest.TestCase):
         self.assertNotIn("PADO_GS_LOCAL", self.rules())
         self.assertFalse(any("PADO_GS_LOCAL" in " ".join(rule)
                              for rule in self.rules()["DOCKER-USER"]))
+        self.assertEqual(self.rules()["INPUT"], [])
         forbidden = [call for call in self.calls() if call[0] == "ufw" and
                      any(arg in ("disable", "reset", "default") for arg in call[1:])]
         self.assertEqual(forbidden, [])
 
     def test_cleanup_removes_only_project_containers_images_and_volumes(self):
         self.run_launcher("start")
+        before_cleanup = len(self.calls())
         self.run_launcher("cleanup", "--yes")
-        docker_calls = [call[1:] for call in self.calls() if call[0] == "docker"]
+        docker_calls = [call[1:] for call in self.calls()[before_cleanup:]
+                        if call[0] == "docker"]
         down_calls = [call for call in docker_calls if "down" in call]
         self.assertEqual(len(down_calls), 1, docker_calls)
         self.assertIn("--volumes", down_calls[0])
@@ -248,17 +350,20 @@ class LauncherLifecycleTests(unittest.TestCase):
         self.assertGreaterEqual(sum("stop" in call for call in docker_calls), 2, docker_calls)
         self.assertNotIn("PADO_GS_LOCAL", self.rules())
         self.assertEqual(self.rules()["DOCKER-USER"], [])
+        self.assertEqual(self.rules()["INPUT"], [])
 
-    def test_http_probe_failure_stops_and_removes_firewall(self):
-        self.env["PADO_LAUNCHER_TEST_CURL_FAIL"] = "1"
+    def test_portal_probe_failure_stops_and_removes_firewall(self):
+        self.env["PADO_LAUNCHER_TEST_PORTAL_FAIL"] = "1"
         result = self.invoke("start")
         self.assertNotEqual(result.returncode, 0)
         calls = self.calls()
         docker_calls = [call for call in calls if call[0] == "docker"]
-        self.assertTrue(any(call[0] == "curl" for call in calls), calls)
+        self.assertTrue(any(call[0] == "docker" and "exec" in call and
+                            "portal" in call for call in calls), calls)
         self.assertGreaterEqual(sum("stop" in call for call in docker_calls), 2, docker_calls)
         self.assertNotIn("PADO_GS_LOCAL", self.rules())
         self.assertEqual(self.rules()["DOCKER-USER"], [])
+        self.assertEqual(self.rules()["INPUT"], [])
 
     def test_incomplete_service_set_stops_and_removes_firewall(self):
         self.env["PADO_LAUNCHER_TEST_SERVICES_INCOMPLETE"] = "1"
@@ -268,7 +373,8 @@ class LauncherLifecycleTests(unittest.TestCase):
         docker_calls = [call for call in calls if call[0] == "docker"]
         self.assertTrue(any("--services" in call for call in docker_calls), docker_calls)
         self.assertGreaterEqual(sum("stop" in call for call in docker_calls), 2, docker_calls)
-        self.assertFalse(any(call[0] == "curl" for call in calls), calls)
+        self.assertFalse(any(call[0] == "docker" and "exec" in call and
+                             "portal" in call for call in calls), calls)
         self.assertNotIn("PADO_GS_LOCAL", self.rules())
 
     def test_empty_account_refuses_noninteractive_start(self):
@@ -303,7 +409,8 @@ class LauncherLifecycleTests(unittest.TestCase):
         self.assertTrue(any("up" in call for call in docker_calls), docker_calls)
 
     def test_foreign_chain_is_never_overwritten(self):
-        original = {"DOCKER-USER": [], "PADO_GS_LOCAL": [["-j", "ACCEPT"]]}
+        original = {"DOCKER-USER": [], "INPUT": [],
+                    "PADO_GS_LOCAL": [["-j", "ACCEPT"]]}
         self.rules_path.write_text(json.dumps(original), encoding="utf-8")
         result = self.invoke("start")
         self.assertNotEqual(result.returncode, 0)
@@ -312,23 +419,98 @@ class LauncherLifecycleTests(unittest.TestCase):
         self.assertFalse(any("up" in call for call in self.calls() if call[0] == "docker"))
 
     def test_marked_interrupted_setup_can_be_recovered(self):
-        interrupted = {"DOCKER-USER": [],
+        interrupted = {"DOCKER-USER": [], "INPUT": [],
                        "PADO_GS_LOCAL": [["-m", "comment", "--comment",
                                           "pado-gs-local-http", "-j", "RETURN"]]}
         self.rules_path.write_text(json.dumps(interrupted), encoding="utf-8")
         self.run_launcher("start")
         self.assertEqual(len(self.rules()["DOCKER-USER"]), 1)
-        self.assertEqual(len(self.rules()["PADO_GS_LOCAL"]), 3)
+        self.assertEqual(len(self.rules()["PADO_GS_LOCAL"]), 5)
         self.run_launcher("stop")
         self.assertNotIn("PADO_GS_LOCAL", self.rules())
 
     def test_cleanup_requires_confirmation(self):
         self.run_launcher("start")
+        before_cleanup = len(self.calls())
         result = self.invoke("cleanup", input_text="DELETE\n")
         self.assertNotEqual(result.returncode, 0)
-        self.assertFalse(any("down" in call for call in self.calls() if call[0] == "docker"))
+        self.assertFalse(any("down" in call for call in self.calls()[before_cleanup:]
+                             if call[0] == "docker"))
         self.assertIn("PADO_GS_LOCAL", self.rules())
         self.assertEqual(self.sentinel.read_text(encoding="utf-8"), "keep repo output")
+
+    def test_unapproved_non_dgs_port_refuses_to_start_before_publish(self):
+        self.compose_policy["services"]["ros-api"]["ports"] = [
+            {"host_ip": "192.168.45.128", "published": "8081", "target": 8081}]
+        self.compose_json_path.write_text(json.dumps(self.compose_policy), encoding="utf-8")
+        result = self.invoke("start")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("DGS-only", result.stderr)
+        self.assertFalse(any("up" in call for call in self.calls() if call[0] == "docker"))
+        self.assertNotIn("PADO_GS_LOCAL", self.rules())
+
+    def test_gateway_acl_mismatch_refuses_to_start_before_publish(self):
+        self.compose_policy["services"]["dgs-ops-gateway"]["environment"][
+            "PADO_GATEWAY_OPERATOR_CIDR"] = "192.168.45.0/24"
+        self.compose_json_path.write_text(json.dumps(self.compose_policy), encoding="utf-8")
+        result = self.invoke("start")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("DGS-only", result.stderr)
+        self.assertFalse(any("up" in call for call in self.calls()
+                             if call[0] == "docker"))
+        self.assertNotIn("PADO_GS_LOCAL", self.rules())
+
+    def test_docker_27_refuses_before_changing_stack_or_firewall(self):
+        self.env["PADO_LAUNCHER_TEST_DOCKER_VERSION"] = "27.5.1"
+        result = self.invoke("start")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("28", result.stderr)
+        self.assertFalse(any("stop" in call or "up" in call
+                             for call in self.calls() if call[0] == "docker"))
+        self.assertEqual(self.rules(), {"DOCKER-USER": [], "INPUT": []})
+
+    def test_documentation_address_cannot_be_used_as_lan_bind(self):
+        self.env["PADO_LOCAL_BIND_IP"] = "192.0.2.1"
+        result = self.invoke("start")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Invalid LAN", result.stderr)
+        self.assertFalse(any("up" in call for call in self.calls() if call[0] == "docker"))
+        self.assertNotIn("PADO_GS_LOCAL", self.rules())
+
+    def test_unisolated_live_docker_network_refuses_before_port_publish(self):
+        for network in self.networks:
+            if network["Name"].endswith("_portal_ros"):
+                network["Internal"] = False
+        self.network_json_path.write_text(json.dumps(self.networks), encoding="utf-8")
+        result = self.invoke("start")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("network", result.stderr.lower())
+        self.assertFalse(any("up" in call for call in self.calls() if call[0] == "docker"))
+        self.assertNotIn("PADO_GS_LOCAL", self.rules())
+        self.assertEqual(self.rules()["INPUT"], [])
+
+    def test_status_fails_when_outbound_host_rule_is_missing(self):
+        self.run_launcher("start")
+        rules = self.rules()
+        rules["INPUT"] = []
+        self.rules_path.write_text(json.dumps(rules), encoding="utf-8")
+        status = self.invoke("status")
+        self.assertNotEqual(status.returncode, 0)
+        self.assertIn("rule", status.stdout.lower() + status.stderr.lower())
+
+    def test_status_fails_if_an_earlier_accept_bypasses_policy(self):
+        for chain in ("DOCKER-USER", "PADO_GS_LOCAL"):
+            with self.subTest(chain=chain):
+                self.run_launcher("start")
+                rules = self.rules()
+                rules[chain].insert(0, ["-j", "ACCEPT"])
+                self.rules_path.write_text(json.dumps(rules), encoding="utf-8")
+                status = self.invoke("status")
+                self.assertNotEqual(status.returncode, 0)
+                self.assertIn("rule", status.stdout.lower() + status.stderr.lower())
+                # Reset only the synthetic foreign rule before the next case.
+                rules[chain].pop(0)
+                self.rules_path.write_text(json.dumps(rules), encoding="utf-8")
 
 
 if __name__ == "__main__":

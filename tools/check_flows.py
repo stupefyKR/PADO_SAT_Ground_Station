@@ -15,7 +15,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 N2_PATH = ROOT / "interfaces" / "n2_chart.json"
 ROLES = ("portal", "ros", "mps", "fds", "dgs-archive", "dgs-gs", "dgs-net")
-EXTERNAL = ("sdc", "space-track")
+EXTERNAL_PEER = {
+    "ground-antenna": "dgs-gs",
+    "space-track": "dgs-net",
+    "launch-provider": "dgs-net",
+    "sdc": "dgs-archive",
+}
+EXTERNAL = tuple(EXTERNAL_PEER)
 DMZ = {"dgs-gs", "dgs-net"}
 OPERATIONS = {"portal", "ros", "mps", "fds", "dgs-archive"}
 PROBE_IMAGE = "pado-stage2-test:local"
@@ -23,10 +29,26 @@ TRANSPORT_PORTS = {"HTTPS": 443, "SFTP_PUSH": 2222,
                    "SFTP_PULL": 2222, "TLS_STREAM": 7001}
 
 
+def require_dgs_external_peer(source: str, destination: str, edge_id: str) -> None:
+    """No external data or connection path may bypass its designated DGS role."""
+    if {source, destination} == {"dgs-gs", "dgs-net"}:
+        raise ValueError(f"DGS-GS and DGS-NET must be separated: {edge_id}")
+    for external, dgs in EXTERNAL_PEER.items():
+        if ((source == external and destination != dgs) or
+                (destination == external and source != dgs)):
+            raise ValueError(f"external endpoint bypasses DGS: {edge_id}")
+
+
 def approved_connections(n2_path: Path = N2_PATH) -> list[dict]:
     chart = json.loads(n2_path.read_text(encoding="utf-8"))
     if chart["rules"]["unlisted_flow"] != "deny":
         raise ValueError("N2 must default to deny")
+    if chart["rules"].get("external_access") != "dgs_only":
+        raise ValueError("N2 external access must be DGS-only")
+    if chart["rules"].get("external_peer_map") != EXTERNAL_PEER:
+        raise ValueError("N2 external peer mapping differs from enforced DGS policy")
+    if chart["rules"].get("dgs_gs_to_dgs_net") != "deny":
+        raise ValueError("N2 must separate DGS-GS from DGS-NET")
     ids: set[str] = set()
     connections = []
     for edge in chart["approved_flows"]:
@@ -34,6 +56,11 @@ def approved_connections(n2_path: Path = N2_PATH) -> list[dict]:
         if edge_id in ids:
             raise ValueError(f"duplicate N2 ID: {edge_id}")
         ids.add(edge_id)
+        data_source = edge["data_from"]
+        data_destination = edge["data_to"]
+        if data_source not in ROLES + EXTERNAL or data_destination not in ROLES + EXTERNAL:
+            raise ValueError(f"unknown data endpoint: {edge_id}")
+        require_dgs_external_peer(data_source, data_destination, edge_id)
         source = edge["connection_from"]
         destination = edge["connection_to"]
         port = edge["port"]
@@ -51,6 +78,7 @@ def approved_connections(n2_path: Path = N2_PATH) -> list[dict]:
             raise ValueError(f"DMZ initiated connection: {edge_id}")
         if source == "sdc" and destination != "dgs-archive":
             raise ValueError(f"SDC reaches another subsystem: {edge_id}")
+        require_dgs_external_peer(source, destination, edge_id)
         connections.append({"id": edge_id, "reference": edge["reference"],
                             "source": source, "destination": destination,
                             "port": port, "transport": edge["transport"]})
@@ -94,7 +122,10 @@ def compose_text(pairs: list[tuple[str, str]]) -> str:
         lines += [f"      - {name}" for name in member]
     lines.append("networks:")
     for pair in pairs:
-        lines += [f"  {network_name(pair)}:", "    driver: bridge", "    internal: true"]
+        lines += [f"  {network_name(pair)}:", "    driver: bridge",
+                  "    internal: true", "    enable_ipv6: false",
+                  "    driver_opts:",
+                  "      com.docker.network.bridge.gateway_mode_ipv4: isolated"]
     return "\n".join(lines) + "\n"
 
 

@@ -98,36 +98,72 @@ networks:
   pair_dgs_archive__dgs_gs:
     driver: bridge
     internal: true
+    enable_ipv6: false
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
   pair_dgs_archive__fds:
     driver: bridge
     internal: true
+    enable_ipv6: false
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
   pair_dgs_archive__mps:
     driver: bridge
     internal: true
+    enable_ipv6: false
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
   pair_dgs_archive__ros:
     driver: bridge
     internal: true
+    enable_ipv6: false
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
   pair_dgs_gs__fds:
     driver: bridge
     internal: true
+    enable_ipv6: false
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
   pair_dgs_gs__ros:
     driver: bridge
     internal: true
+    enable_ipv6: false
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
   pair_dgs_net__fds:
     driver: bridge
     internal: true
+    enable_ipv6: false
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
   pair_fds__mps:
     driver: bridge
     internal: true
+    enable_ipv6: false
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
   pair_fds__ros:
     driver: bridge
     internal: true
+    enable_ipv6: false
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
   pair_mps__portal:
     driver: bridge
     internal: true
+    enable_ipv6: false
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
   pair_mps__ros:
     driver: bridge
     internal: true
+    enable_ipv6: false
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
   pair_portal__ros:
     driver: bridge
     internal: true
+    enable_ipv6: false
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
