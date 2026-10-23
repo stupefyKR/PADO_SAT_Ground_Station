@@ -26,6 +26,7 @@
 공식 Orekit 물리 자료를 로컬 디렉터리에 준비해야 한다. 이 코어는 실행 중 인터넷에 접속하지 않는다. Maven 빌드는 인터넷 가능한 개발/CI 환경에서 의존성을 받아 로컬 캐시를 사용한다.
 
 ```sh
+mkdir -p out
 mvn -f services/fds/pom.xml test-compile
 mvn -f services/fds/pom.xml exec:java \
   -Dexec.mainClass=kr.ac.khu.padosat.fds.FdsMain \
