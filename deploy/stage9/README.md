@@ -12,6 +12,13 @@ ROS는 `SIM_ONLY`와 TC 송출 차단 상태, MPS는 현재 비운용 명령 DB�
 기능은 버튼이나 입력 경로로 활성화되지 않는다. 현재 API는 읽기 전용 C
 서비스에만 연결되며 이 기준선을 단계 9 전체 완료로 판정하지 않는다.
 
+`/orbit`은 FDS가 오프라인으로 만든 `orbit_view.json`을 세션 인증 뒤 읽어
+3D 지구, 주야간, 2D 지상궤적, 향후 3주기 궤적과 두 지상국의 PASS 구간을
+표시한다. 지도에서는 TLE나 GNSS 상태를 다시 전파하지 않는다. 지구 텍스처는
+로컬 NASA Blue Marble이며 출처는 `web/assets/README.md`에 있다. FDS 실행·
+산출물 게시 자동화는 아직 없으므로 파일이 없거나 낡으면 현재 위치로
+표시하지 않는다. 로컬 결과 선택은 브라우저 안에서만 읽고 업로드하지 않는다.
+
 ## 9-1: 비운용 C 코어 읽기 연결
 
 `gs_stage9_core_probe`는 기존 `gs_mps_command_catalog_parse`와
@@ -64,6 +71,13 @@ UTC 수신 시각, 보정 값, 단위, 품질, 하한·상한, 경보 등급 및
 루프백 `127.0.0.1:8443`에 게시한다. 관제 PC 공개는 모든 앱 개발 뒤 서버
 배포 수락에서 UFW·Docker 포트 정책과 별도 출발지 거부를 확인한 후 적용한다.
 이 파일은 운영용 Compose가 아니다.
+
+포털은 `PADO_STAGE9_FDS_VIEW_DIR`(기본 `out/fds-view`)을 **읽기 전용**으로
+마운트한다. FDS 실행 디렉터리의 `orbit_view.json`을 직접 수정하거나 부분
+복사하지 말고 `python3 tools/publish_fds_view.py RUN_DIR out/fds-view`로
+검증·원자적 게시한다. 파일이 없으면 `/api/fds/orbit`은 503을 반환하며
+화면은 빈 지구와 데이터 미연결 상태를 표시한다. 개발 Compose 자체에는
+FDS 계산 컨테이너나 N05 TLE 수집기가 포함되지 않는다.
 
 인증서와 계정 DB는 저장소에 넣지 않는다. 개발용 인증서 디렉터리는
 `PADO_STAGE9_CERT_DIR`에 **절대 경로**로 지정한다. 필요한 파일은 `ca.crt`,

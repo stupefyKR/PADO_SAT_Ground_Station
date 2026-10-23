@@ -185,6 +185,34 @@ class WebBoundaryTests(unittest.TestCase):
         with self.assertRaises((URLError, ConnectionError, ssl.SSLError)):
             urlopen(req, context=self.context, timeout=3)
 
+    def test_orbit_view_is_session_gated_and_read_only(self):
+        status, _, _ = self.request("/api/fds/orbit")
+        self.assertEqual(status, 401)
+        status, _, body = self.request("/orbit")
+        self.assertEqual(status, 200)  # unauthenticated request redirects to /login
+        self.assertIn(b"login", body.lower())
+        status, headers, _ = self.request("/api/login", method="POST", body={
+            "username": "planner01", "password": "valid-password-123"})
+        self.assertEqual(status, 200)
+        auth = {"Cookie": headers["Set-Cookie"].split(";", 1)[0]}
+        source = self.folder / "orbit_view.json"
+        source.write_text('{"schema":"fds.orbit-view.v1"}', encoding="utf-8")
+        self.portal.orbit_view = source
+        try:
+            status, headers, body = self.request("/api/fds/orbit", headers=auth)
+            self.assertEqual(status, 200)
+            self.assertEqual(json.loads(body)["schema"], "fds.orbit-view.v1")
+            self.assertEqual(headers["Cache-Control"], "no-store")
+            status, _, body = self.request("/orbit", headers=auth)
+            self.assertEqual(status, 200)
+            self.assertIn(b"orbit-earth", body)
+            source.unlink()
+            status, _, _ = self.request("/api/fds/orbit", headers=auth)
+            self.assertEqual(status, 503)
+        finally:
+            self.portal.orbit_view = None
+            source.unlink(missing_ok=True)
+
     def test_validated_ros_record_reaches_portal_and_corruption_fails_closed(self):
         status, headers, _ = self.request("/api/login", method="POST", body={
             "username": "planner01", "password": "valid-password-123"})

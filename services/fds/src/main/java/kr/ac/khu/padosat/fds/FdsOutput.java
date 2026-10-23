@@ -43,6 +43,8 @@ public final class FdsOutput {
             writeSchedule(staging.resolve("contact_schedule.csv"), config, orbit, start, end);
             writeProfile(staging.resolve("pass_information.csv"), config, orbit, start, end);
             writeEphemeris(staging.resolve("orbit_ephemeris.csv"), config, orbit, start, end);
+            OrbitViewWriter.write(staging.resolve("orbit_view.json"), config, source, inputPath,
+                    orbit, start, end);
             writeMetadata(staging.resolve("run.properties"), config, source, inputPath);
             manifest(staging, "contact_schedule.csv", "CONTACT_SCHEDULE", "mps");
             manifest(staging, "pass_information.csv", "PASS_INFORMATION", "dgs-archive");

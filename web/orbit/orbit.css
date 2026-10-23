@@ -1,0 +1,35 @@
+.orbit-content{padding:16px clamp(16px,2vw,30px) 36px;max-width:1900px}
+.orbit-notice{display:flex;gap:13px;align-items:center;margin-bottom:13px;padding:10px 13px;border:1px solid #6b623e;background:#292719;color:#e5ddc3;font-size:.76rem;line-height:1.5}
+.orbit-notice strong{color:#f4d489;font:800 .67rem Arial,sans-serif;letter-spacing:.12em}
+.orbit-layout{display:grid;grid-template-columns:minmax(480px,1fr) 310px;gap:12px;align-items:start}
+.orbit-stage,.orbit-card{border:1px solid #2a4656;background:#10202e;min-width:0}
+.orbit-stage-head{min-height:63px;padding:11px 15px;display:flex;align-items:center;justify-content:space-between;gap:14px;border-bottom:1px solid #2a4656}
+.orbit-stage-head h2,.orbit-card-head h2{font-size:.98rem;margin:3px 0 0;color:#edf5f7}
+.orbit-view-switch{display:flex;border:1px solid #436273;flex:none}
+.orbit-view-switch button{padding:8px 10px;color:#a5c0cc;background:#142d3c;border:0;font-size:.73rem}
+.orbit-view-switch button+button{border-left:1px solid #436273}
+.orbit-view-switch button[aria-pressed=true]{background:#286574;color:#f2fcff}
+.orbit-canvas-wrap{position:relative;overflow:hidden;height:clamp(430px,63vh,780px);background:#020913 radial-gradient(circle at 50% 45%,#0d2639 0,#030c17 62%,#010710 100%);touch-action:none}
+.orbit-canvas-wrap canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+#orbit-overlay{pointer-events:none}
+.orbit-map-badge{position:absolute;top:14px;left:14px;display:grid;gap:3px;padding:8px 11px;background:#061522dc;border:1px solid #2f5968;color:#e1f1f4;font:700 .77rem Consolas,monospace}
+.orbit-map-badge strong{color:#70d5db;font:800 .62rem Arial,sans-serif;letter-spacing:.12em}
+.orbit-map-legend{position:absolute;left:14px;bottom:12px;display:flex;flex-wrap:wrap;gap:12px;padding:7px 9px;background:#071421df;border:1px solid #2c4b59;color:#c3d5df;font-size:.68rem}
+.orbit-key{display:inline-block;width:13px;height:3px;margin:0 5px 2px 0;vertical-align:middle;background:#70c9db}
+.orbit-key.yonsei{background:#e1b165}.orbit-key.kari{background:#95d2a9}
+.orbit-map-tools{position:absolute;top:14px;right:14px;display:flex;gap:4px}
+.orbit-map-tools button,.orbit-playback button,.orbit-load-actions button,.orbit-file-button{border:1px solid #477184;background:#143548;color:#d6edf2;padding:7px 9px;font-size:.7rem}
+.orbit-map-tools button:hover,.orbit-playback button:hover,.orbit-load-actions button:hover,.orbit-file-button:hover{background:#245269}
+.orbit-playback{display:flex;align-items:center;gap:8px;padding:11px 13px;border-top:1px solid #2a4656;color:#8faeba;font:700 .72rem Consolas,monospace}
+.orbit-playback input[type=range]{flex:1;min-width:60px;accent-color:#68cbd5}
+.orbit-playback select{color:#d6edf2;background:#143548;border:1px solid #477184;padding:7px 5px}
+.orbit-playback span{min-width:127px;text-align:right}
+.orbit-map-credit{padding:0 13px;margin:0 0 12px;color:#7693a2;font-size:.66rem;line-height:1.5}
+.orbit-map-credit a{text-decoration:underline;text-underline-offset:2px}
+.orbit-side{display:grid;gap:12px}.orbit-card-head{padding:12px 14px;border-bottom:1px solid #2a4656}.orbit-readouts{margin:0;padding:4px 14px}.orbit-readouts>div{display:flex;justify-content:space-between;gap:9px;align-items:baseline;padding:10px 0;border-bottom:1px solid #274253;font-size:.72rem}.orbit-readouts>div:last-child{border:0}.orbit-readouts dt{color:#8eabb9}.orbit-readouts dd{margin:0;color:#ecf5f7;text-align:right;font:700 .74rem Consolas,"Malgun Gothic",sans-serif}
+.orbit-station{padding:12px 14px;border-bottom:1px solid #294354}.orbit-station:last-child{border-bottom:0}.orbit-station-title{display:flex;align-items:center;justify-content:space-between;gap:9px}.orbit-station-title strong{font-size:.81rem;color:#e8f5f7}.orbit-station-title em{font:700 .63rem Arial,sans-serif;font-style:normal;padding:4px 6px;border:1px solid #446675;color:#a8c2cb}.orbit-station-title em.contact{border-color:#6ab99a;color:#a5f1c3;background:#153d31}.orbit-station-title em.no-contact{border-color:#745f43;color:#e5c19a}.orbit-station p{margin:7px 0 0;color:#91adba;font-size:.7rem;line-height:1.5}.orbit-station small{display:block;color:#6f96a5;font-size:.65rem;margin-top:5px}
+.orbit-passes{max-height:265px;overflow:auto}.orbit-pass{display:grid;grid-template-columns:1fr auto;gap:4px;padding:10px 14px;border-bottom:1px solid #294354;font-size:.7rem}.orbit-pass strong{color:#d5ebef}.orbit-pass span{color:#92aab7;text-align:right}.orbit-pass small{grid-column:1/-1;color:#6f94a4}.orbit-empty{padding:12px 14px;color:#8aa6b5;font-size:.71rem;line-height:1.6}
+.orbit-load{padding-bottom:13px}.orbit-load p{margin:12px 14px;color:#a8c0ca;font-size:.72rem;line-height:1.5}.orbit-load small{display:block;margin:10px 14px 0;color:#7596a5;font-size:.65rem;line-height:1.55}.orbit-load-actions{display:flex;flex-wrap:wrap;gap:6px;margin:0 14px}.orbit-file-button{cursor:pointer}.orbit-load input[type=file]{position:absolute;width:1px;height:1px;opacity:0;overflow:hidden}.orbit-file-button:focus-within{outline:2px solid #8de0e7}
+@media(max-width:1100px){.orbit-layout{grid-template-columns:1fr}.orbit-side{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:720px){.orbit-side{grid-template-columns:1fr}.orbit-canvas-wrap{height:min(64vh,540px)}.orbit-stage-head{align-items:flex-start;flex-direction:column}.orbit-playback{flex-wrap:wrap}.orbit-playback input[type=range]{order:2;flex-basis:100%}.orbit-playback span{margin-left:auto}}
+@media(max-width:520px){.orbit-map-legend{right:10px;gap:7px}.orbit-map-tools{flex-direction:column;align-items:flex-end}.orbit-map-tools button{max-width:66px}.orbit-content{padding:10px}.orbit-notice{align-items:flex-start;flex-direction:column}}

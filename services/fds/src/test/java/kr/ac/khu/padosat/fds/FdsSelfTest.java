@@ -122,6 +122,12 @@ public final class FdsSelfTest {
                 .anyMatch(line -> line.contains(",kari,")), "KARI passes absent");
         check(Files.readAllLines(output.resolve("orbit_ephemeris.csv")).size() == 1442,
                 "24h ephemeris cadence");
+        String viewer = Files.readString(output.resolve("orbit_view.json"));
+        check(viewer.contains("\"schema\":\"fds.orbit-view.v1\"") &&
+                viewer.contains("\"orbital_period_s\":") &&
+                viewer.contains("\"id\":\"yonsei\"") &&
+                viewer.contains("\"id\":\"kari\"") &&
+                viewer.contains("\"samples\":[[\""), "orbit viewer product absent");
         for (String line : Files.readAllLines(output.resolve("contact_schedule.csv")).subList(1,
                 Files.readAllLines(output.resolve("contact_schedule.csv")).size())) {
             String[] fields = line.split(",");
@@ -167,6 +173,8 @@ public final class FdsSelfTest {
         FdsOutput.write(output, config, selected, gnss, orbit);
         check(Files.readAllLines(output.resolve("orbit_ephemeris.csv")).size() == 4322,
                 "72h ephemeris cadence");
+        check(Files.size(output.resolve("orbit_view.json")) > 100000,
+                "72h orbit viewer product absent");
         check(Files.readString(output.resolve("run.properties")).contains("source=GNSS"),
                 "GNSS source metadata absent");
         check(Files.readAllLines(output.resolve("contact_schedule.csv")).size() > 2,

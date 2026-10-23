@@ -18,6 +18,7 @@
 | `contact_schedule.csv` | 안테나별 AOS·LOS·최고 고각과 시각, 예측창 경계 잘림 표시 | N13 `CONTACT_SCHEDULE` |
 | `pass_information.csv` | 가시 구간 10초 간격 방위각·고각·거리·거리 변화율·도플러 | N15 `PASS_INFORMATION` |
 | `orbit_ephemeris.csv` | 60초 간격 GCRF 위치(m)·속도(m/s) | N15 `ORBIT_EPHEMERIS` |
+| `orbit_view.json` | 같은 전파 결과의 60초 간격 ITRF 위치·지상궤적·태양 방향, 두 지상국 PASS 구간 | 포털 내부 읽기 전용 화면 자료 (N2 외부 교환물 아님) |
 
 각 CSV는 `fds.*.v1` 스키마 열로 시작하고 UTC는 밀리초와 `Z`로 출력한다. 세 파일에 기존 매니페스트 스키마의 SHA-256·유형·송신자·수신자를 담은 `.manifest.json`을 붙인다. 도플러 부호는 거리 변화율이 음수(접근)일 때 양수 주파수 편이이며, `-carrier_hz × range_rate_mps / c`의 1차 근사다. 패스 경계는 설정한 최소 고각을 기준으로 탐색하고 0.1초 이하까지 세분화한다. 최대 전파 기간은 72시간이다.
 
@@ -38,5 +39,18 @@ mvn -f services/fds/pom.xml test-compile exec:java \
 ```
 
 `--gnss`가 없으면 TLE만 사용한다. `--out`은 존재하지 않아야 하며 산출물은 임시 디렉터리에서 완성한 뒤 원자적으로 공개한다. 시험 자료의 안테나 좌표·주파수·GNSS 벡터는 **합성값**이다. 실제 N05/N11 SFTP 수신기와 N13/N15 송신기, MPS 본문 파서, 운용 GNSS TM 디코더는 별도 통합 과제다.
+
+## 위성 위치 화면에 게시
+
+`orbit_view.json`에는 같은 FDS 전파기로 계산한 ITRF/ECEF 위치, 지상궤적, 태양 방향, 두 안테나의 PASS 시각이 포함된다. 웹 브라우저는 이 표본 사이를 보간해 현재 위치와 향후 3주기 선을 그린다. 브라우저가 TLE를 재전파하지 않는다. 60초 표본을 보간한 화면 고각은 표시용 근삿값이고 컨택 판정은 FDS PASS 경계를 사용한다.
+
+완료된 FDS 실행 디렉터리를 `tools/publish_fds_view.py`로 읽기 전용 포털 디렉터리에 원자적으로 게시한다. 기본값은 **현재 시각을 포함하고 입력 epoch가 72시간 미만**인 결과만 허용한다. 과거 결과를 화면 구조 검토용으로 재생할 때에만 `--allow-replay`를 사용한다. 게시 경로는 개발 Compose의 `PADO_STAGE9_FDS_VIEW_DIR`와 같아야 한다.
+
+```sh
+python3 tools/publish_fds_view.py /path/to/completed-fds-run out/fds-view
+export PADO_STAGE9_FDS_VIEW_DIR="$(pwd)/out/fds-view"
+```
+
+화면은 인증된 포털의 `/orbit`에서 볼 수 있다. `/api/fds/orbit`은 게시된 파일만 읽으며 TLE 업로드·계산·TC 경로는 제공하지 않는다. FDS 자동 실행과 N05 실제 TLE 수신, 안테나 실측값, 정확도 수락은 아직 별도로 연결해야 한다.
 
 참고 원본: [NovAtel OEM7 BESTXYZ](https://docs.novatel.com/OEM7/Content/Logs/BESTXYZ.htm), [CubeADCS ICD 1.05](https://www.cubespace.co.za/uploads/c862e5e3-eff7-4519-b67f-b0dc2d5590a0.pdf), [Vallado SGP4 검증 자료](https://celestrak.org/publications/AIAA/2006-6753/), [Orekit 데이터 설정](https://test.orekit.org/site-orekit-development/data/default-configuration.html). 모델 수락 전에는 Orekit 물리 자료 세트의 버전과 EOP 유효 기간을 고정하고 기준 궤도력과 비교해야 한다.

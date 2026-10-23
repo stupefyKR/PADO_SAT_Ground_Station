@@ -275,6 +275,8 @@ async function workspace(page) {
     setInterval(() => {
       if (document.visibilityState === "visible") refreshRosSummary();
     }, 5000);
+  } else if (page === "orbit") {
+    await initOrbitViewer();
   } else {
     try {
       const [catalog, passes] = await Promise.all([
@@ -290,4 +292,4 @@ async function workspace(page) {
 
 const page = document.body.dataset.page;
 if (page === "login") loginPage();
-if (page === "ops" || page === "mps") workspace(page);
+if (page === "ops" || page === "mps" || page === "orbit") workspace(page);

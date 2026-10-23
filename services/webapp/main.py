@@ -30,12 +30,17 @@ WEB = ROOT / "web"
 CORE_SOCKET = Path("/run/core/core.sock")
 MAX_BODY = 4096
 MAX_UPSTREAM = 65536
+MAX_ORBIT_VIEW = 4 * 1024 * 1024
 ASSETS = {
     "/login": ("login/index.html", "text/html; charset=utf-8"),
     "/ops": ("ops/index.html", "text/html; charset=utf-8"),
     "/mps": ("mps/index.html", "text/html; charset=utf-8"),
+    "/orbit": ("orbit/index.html", "text/html; charset=utf-8"),
     "/assets/style.css": ("common/style.css", "text/css; charset=utf-8"),
     "/assets/app.js": ("common/app.js", "text/javascript; charset=utf-8"),
+    "/assets/orbit.js": ("orbit/orbit.js", "text/javascript; charset=utf-8"),
+    "/assets/orbit.css": ("orbit/orbit.css", "text/css; charset=utf-8"),
+    "/assets/earth-blue-marble-october.jpg": ("assets/earth-blue-marble-october.jpg", "image/jpeg"),
 }
 PROXY_ROUTES = {
     "/api/ros/overview": ("ros", "/overview"),
@@ -52,7 +57,8 @@ class AppServer(ThreadingHTTPServer):
                  cert: Path, key: Path, ca: Path, auth: AuthStore | None = None,
                  ros_url: str = "", mps_url: str = "", client_cert: Path | None = None,
                  client_key: Path | None = None, static_root: Path = WEB,
-                 core_socket: Path = CORE_SOCKET) -> None:
+                 core_socket: Path = CORE_SOCKET,
+                 orbit_view: Path | None = None) -> None:
         self.mode = mode
         self.auth = auth
         self.ros_url = ros_url
@@ -62,6 +68,7 @@ class AppServer(ThreadingHTTPServer):
         self.ca = ca
         self.core_socket = core_socket
         self.static_root = static_root
+        self.orbit_view = orbit_view
         self.login_attempts: dict[str, list[float]] = {}
         self.login_lock = threading.Lock()
         super().__init__(address, Handler)
@@ -238,6 +245,23 @@ class Handler(BaseHTTPRequestHandler):
                            {"username": session.username, "role": session.role,
                             "csrf": session.csrf, "operational": False})
             return
+        if path == "/api/fds/orbit":
+            if not self._session():
+                self._error(HTTPStatus.UNAUTHORIZED, "login_required")
+                return
+            source = self.server.orbit_view
+            try:
+                if source is None or source.name != "orbit_view.json" or not source.is_file():
+                    raise OSError("orbit view absent")
+                if source.stat().st_size > MAX_ORBIT_VIEW:
+                    raise OSError("orbit view too large")
+                data = source.read_bytes()
+                if len(data) > MAX_ORBIT_VIEW:
+                    raise OSError("orbit view too large")
+                self._send(HTTPStatus.OK, data)
+            except OSError:
+                self._error(HTTPStatus.SERVICE_UNAVAILABLE, "fds_orbit_unavailable")
+            return
         if path in PROXY_ROUTES:
             session = self._session()
             if not session:
@@ -246,7 +270,7 @@ class Handler(BaseHTTPRequestHandler):
             self._proxy(PROXY_ROUTES[path], session.username, session.role)
             return
         if path in ASSETS:
-            if path in ("/ops", "/mps") and not self._session():
+            if path in ("/ops", "/mps", "/orbit") and not self._session():
                 self._send(HTTPStatus.FOUND, extra={"Location": "/login"})
                 return
             relative, content_type = ASSETS[path]
@@ -346,6 +370,7 @@ def parser() -> argparse.ArgumentParser:
             service.add_argument("--client-cert", type=Path, required=True)
             service.add_argument("--client-key", type=Path, required=True)
             service.add_argument("--static-root", type=Path, default=WEB)
+            service.add_argument("--orbit-view", type=Path)
         if mode in ("ros", "mps"):
             service.add_argument("--core-socket", type=Path, default=CORE_SOCKET)
     return result
@@ -379,7 +404,8 @@ def main() -> None:
                        client_cert=getattr(args, "client_cert", None),
                        client_key=getattr(args, "client_key", None),
                        static_root=getattr(args, "static_root", WEB),
-                       core_socket=getattr(args, "core_socket", CORE_SOCKET))
+                       core_socket=getattr(args, "core_socket", CORE_SOCKET),
+                       orbit_view=getattr(args, "orbit_view", None))
     try:
         server.serve_forever(poll_interval=0.2)
     finally:
