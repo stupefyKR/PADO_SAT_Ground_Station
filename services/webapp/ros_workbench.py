@@ -384,7 +384,7 @@ class RosDraftStore:
                     "SELECT r.id,r.sha256,r.step_id,r.target_utc_s,s.payload "
                     "FROM sim_reservations AS r JOIN sim_sequences AS s ON r.sha256=s.sha256 "
                     "WHERE r.status='SCHEDULED' AND r.target_utc_s<=? "
-                    "ORDER BY r.target_utc_s,r.id LIMIT 1", (now_s,)).fetchone()
+                    "ORDER BY r.target_utc_s,r.step_id,r.id LIMIT 1", (now_s,)).fetchone()
                 if row is None:
                     return None
                 ident, digest, step_id, target, payload = row

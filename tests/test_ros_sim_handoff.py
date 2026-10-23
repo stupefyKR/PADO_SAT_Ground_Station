@@ -126,7 +126,7 @@ class RosSimHandoffTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             store = RosDraftStore(Path(folder) / "ros.db")
             payload = store.import_sim_handoff(envelope, "planner01")
-            for step_id in (1, 2, 3):
+            for step_id in (1, 3, 2):
                 store.reserve_sim(payload["sha256"], step_id, "operator01")
             first = store.claim_due(aos + 60)
             self.assertEqual(first["step_id"], 2)
