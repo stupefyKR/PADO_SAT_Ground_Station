@@ -88,19 +88,21 @@ PDR 별첨 47쪽의 OEM719A `BESTPOS`·`BESTVEL`·`BESTXYZ`·`TIME`은 장비 �
 
 `GNSS_PVT` 위치·속도는 3축 직교 벡터이고 자세 quaternion과 별개다. 현재 변환기는 `solution_status=1`, `receiver_age_ms≤1000`, 궤도 범위 및 초 단위 시각을 요구한다. 이 수치는 **임시 지상국 판정**이며 OEM719A 로그에서 OBC까지의 실제 매핑은 확인되지 않았다. 전체 HK 2,034 B 레코드는 160 B 조각 13개로 나누고 레코드 CRC와 조각 메타데이터로 재조립한다. 레코드 내부 필드 해석은 미정이다.
 
+PDR의 `sp_burn`은 CDHS 명령 후보 목록에만 남아 있고 인자가 미정이라 코덱과 MPS 후보 저장에서 거부한다. FDS는 이 명령을 읽거나 기동 궤적을 계산하지 않는다.
+
 ## 코드·운용 상태
 
 | 구성 | 현재 상태 |
 | --- | --- |
 | [초안 카탈로그](../../interfaces/pado_packets/draft_v0.json), [오프라인 코덱](../../tools/pado_packet_codec.py) | 비운용 encode/decode·길이·CRC·full HK 분할 및 GNSS→FDS 변환 |
 | [GNSS 시험 브리지](../../tools/bridge_draft_gnss.py) | 검증된 초안 `GNSS_PVT` 바이너리 1개를 N11 시험 수신함의 본문+manifest로 게시. 실제 RF/OBC 디코더 아님 |
-| [ROS 시험 TM 변환기](../../tools/preview_draft_tm.py) | 초안 TM 바이너리와 명시적 시험 한계표로 ROS 그래프용 `TEST_ONLY_TM_SNAPSHOT` 생성. 임의 운용 한계 추정 없음 |
+| [ROS 시험 TM 변환기](../../tools/preview_draft_tm.py) | 초안 TM 바이너리와 명시적 시험 한계표로 `TEST_ONLY_TM_SNAPSHOT` 생성·원자적 게시. ROS API 재검증 뒤 화면 자동 갱신. 임의 운용 한계 추정 없음 |
 | MPS 웹·후보 저장소 | 초안 58종 검색, 필드가 정의된 36종만 PASS별 이름과 순서를 시험 초안으로 저장. 인자·충돌·승인·송신 없음 |
 | MPS/ROS 운용 명령·TM DB | 비어 있음. 실제 TC 송신과 미검증 TM 표시를 차단 |
-| FDS | 검증된 GNSS N11 및 TLE 계산 기능 존재; 실제 위성 GNSS TM 추출 경로는 미연결 |
+| FDS | 검증된 GNSS N11 및 TLE 기반 궤도 예측 기능 존재; 기동 기능 없음. 실제 위성 GNSS TM 추출 경로는 미연결 |
 | DGS-GS/AX100/FlatSat | 초안 PDU의 실제 링크·인증·ACK 검증 전 |
 
-ROS 시험 화면에서 초안 패킷을 미리 보려면 [`preview_limits.example.json`](preview_limits.example.json)을 **시험 범위값으로만** 복사해, 실제 검토할 항목·한계로 바꾼다. `python tools/preview_draft_tm.py --test-only --limits <한계표.json> <TM1.pdu> <TM2.pdu>`의 표준 출력 JSON을 ROS의 시험 TM 파일 선택기에 넣는다. 범위값이 제공되지 않으면 센서 그래프를 생성하지 않는다. `python tools/bridge_draft_gnss.py --test-only <GNSS_PVT.pdu> <시험 N11 수신함>`은 N11 본문·매니페스트를 게시하며, 이후 기존 `receive_fds_inputs.py`가 이를 검증한다. 두 도구 모두 오프라인 PDU 입력 전용이다.
+ROS 시험 화면에서 초안 패킷을 미리 보려면 [`preview_limits.example.json`](preview_limits.example.json)을 **시험 범위값으로만** 복사해, 실제 검토할 항목·한계로 바꾼다. `python tools/preview_draft_tm.py --test-only --limits <한계표.json> --out out/ros-tm-preview/test_tm_snapshot.json <TM1.pdu> <TM2.pdu>`로 게시하면 ROS 화면이 검증된 파일을 읽는다. `--out` 없이 표준 출력 JSON을 ROS의 수동 시험 TM 파일 선택기에 넣을 수도 있다. 범위값이 제공되지 않으면 센서 그래프를 생성하지 않는다. `python tools/bridge_draft_gnss.py --test-only <GNSS_PVT.pdu> <시험 N11 수신함>`은 N11 본문·매니페스트를 게시하며, 이후 기존 `receive_fds_inputs.py`가 이를 검증한다. 두 도구 모두 오프라인 PDU 입력 전용이다.
 
 ## 승인 전 확인할 사항
 

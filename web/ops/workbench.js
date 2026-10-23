@@ -36,6 +36,9 @@
   let selectedTm = null;
   let selectedSensor = null;
   let minutes = 30;
+  let tmSource = "published";
+  let lastPublishedRaw = "";
+  let previewPending = false;
 
   function selectedSequence() {
     return sequences.find((item) => item.sha256 === $("sequence-select").value);
@@ -345,9 +348,10 @@
     ctx.fillStyle = "#e9f5f6"; ctx.font = "bold 14px Consolas, monospace";
     ctx.textAlign = "center"; ctx.fillText("BOX MODEL · TEST TM", 280, 292);
   }
-  function loadTm(data) {
+  function loadTm(data, sourceLabel = "수동 시험용 정규화 TM") {
     selectedTm = normalizedTm(data);
-    selectedSensor = selectedTm.sensors[0];
+    selectedSensor = selectedTm.sensors.find((item) => item.id === selectedSensor?.id) ||
+      selectedTm.sensors[0];
     window.rosTestPreviewActive = true;
     $("sensor-empty").hidden = true;
     $("sensor-list").hidden = false;
@@ -356,7 +360,7 @@
     $("sensor-count").textContent = `${selectedTm.sensors.length}개 · 시험`;
     $("ros-data-state").textContent = "시험 TM 스냅샷";
     $("ros-last-tm").textContent = selectedTm.received_utc;
-    $("chart-source").textContent = "데이터 소스: 시험용 정규화 TM · 실제 위성 TM 아님";
+    $("chart-source").textContent = `데이터 소스: ${sourceLabel} · 실제 위성 TM 아님`;
     $("demo-toggle").textContent = "합성 예시 보기";
     $("attitude-source").textContent = selectedTm.attitude ? "시험 TM · BOX" : "데이터 없음";
     $("attitude-quaternion").textContent = selectedTm.attitude ?
@@ -365,6 +369,34 @@
     $("attitude-time").textContent = selectedTm.attitude?.utc || "없음";
     renderAttitude(selectedTm.attitude);
     renderSensors();
+  }
+  function markPublishedAge() {
+    if (tmSource !== "published" || !selectedTm) return;
+    const old = Date.now() - Date.parse(selectedTm.received_utc) > 5 * 60 * 1000;
+    $("ros-data-state").textContent = old ? "게시된 시험 TM 오래됨" : "게시된 시험 TM";
+    if (old) $("chart-source").textContent =
+      "데이터 소스: 게시된 시험 TM · 5분 이상 갱신 없음 · 실제 위성 TM 아님";
+  }
+  async function refreshPublishedTm() {
+    if (tmSource !== "published" || previewPending) return;
+    previewPending = true;
+    try {
+      const snapshot = await api("/api/ros/test-tm-snapshot");
+      if (tmSource !== "published") return;
+      const raw = JSON.stringify(snapshot);
+      if (raw !== lastPublishedRaw) {
+        loadTm(snapshot, "게시된 시험용 정규화 TM");
+        lastPublishedRaw = raw;
+      }
+      markPublishedAge();
+    } catch (_) {
+      if (tmSource === "published") {
+        $("ros-data-state").textContent = "시험 TM 입력 대기";
+        $("chart-source").textContent = selectedTm ?
+          "데이터 소스: 이전 시험 TM · 새 입력 확인 불가" : "데이터 소스: 게시된 시험 TM 없음";
+        $("selected-state").textContent = "현재 값 확인 불가";
+      }
+    } finally { previewPending = false; }
   }
   function syntheticTm() {
     const end = Date.now();
@@ -385,11 +417,28 @@
   }
   async function init() {
     renderAttitude(null);
-    $("demo-toggle").addEventListener("click", () => loadTm(syntheticTm()));
+    const publishedButton = document.createElement("button");
+    publishedButton.type = "button";
+    publishedButton.className = "outline";
+    publishedButton.textContent = "게시된 시험 TM 보기";
+    publishedButton.addEventListener("click", () => {
+      tmSource = "published";
+      lastPublishedRaw = "";
+      refreshPublishedTm();
+    });
+    $("demo-toggle").parentElement.prepend(publishedButton);
+    $("demo-toggle").addEventListener("click", () => {
+      tmSource = "example";
+      loadTm(syntheticTm(), "합성 예시");
+    });
     $("tm-file").addEventListener("change", async (event) => {
       const file = event.target.files[0];
       if (!file || file.size > 1024 * 1024) { showError("시험 TM JSON은 1 MiB 이하여야 합니다."); return; }
-      try { loadTm(JSON.parse(await file.text())); $("api-error").hidden = true; }
+      try {
+        loadTm(JSON.parse(await file.text()));
+        tmSource = "manual";
+        $("api-error").hidden = true;
+      }
       catch (error) { showError(`시험 TM 불러오기 실패: ${error.message}`); }
     });
     $("sensor-filter").addEventListener("input", renderSensors);
@@ -405,12 +454,17 @@
     $("reservation-form").addEventListener("submit", reserve);
     try {
       session = await api("/api/session");
-      await refreshDrafts();
+      try { await refreshDrafts(); }
+      catch (error) { message("sequence-message", `ROS 초안 저장소 연결 실패: ${error.message}`, true); }
       if (session.role === "auditor") {
         $("sequence-import").disabled = true;
         $("reservation-form").querySelector("button").disabled = true;
       }
     } catch (error) { message("sequence-message", `ROS 초안 저장소 연결 실패: ${error.message}`, true); }
+    await refreshPublishedTm();
+    setInterval(() => {
+      if (document.visibilityState === "visible") refreshPublishedTm();
+    }, 5000);
   }
   init();
 })();

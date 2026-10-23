@@ -148,6 +148,7 @@ public final class FdsOutput {
                 "profile_step_s=" + config.profileStepSeconds() + "\n" +
                 "gravity_degree=" + config.gravityDegree() + "\n" +
                 "gravity_order=" + config.gravityOrder() + "\n" +
+                "maneuver_model=NONE\n" +
                 "force_models=" + (source.gnss() == null ? "SGP4" :
                         "EARTH_HARMONICS,SUN_GRAVITY,MOON_GRAVITY") + "\n" +
                 "omitted_force_models=" + (source.gnss() == null ? "NOT_APPLICABLE" :

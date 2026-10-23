@@ -8,7 +8,7 @@ CSRF·계정 잠금·로그인 속도 제한을 제공하고 정적 ROS/MPS 화�
 
 ROS는 `SIM_ONLY`와 TC 송출 차단 상태, MPS는 현재 비운용 명령 DB의 버전과 빈
 명령 목록을 표시한다. FDS N13 일정 파일은 C 코어에서 검증해 메모리 계획에
-가져올 수 있지만 이 개발 Compose의 MPS 웹 서비스에는 아직 연결되지 않았다.
+가져와 검증하고 이 개발 Compose의 MPS 웹 서비스에 읽기 전용으로 제공한다.
 **TC 송출, 승인, 업링크 반입, 운용 시퀀스 출력, 실제 TM 파라미터 조회 API는
 존재하지 않는다.** 단계 9 전체 완료로 판정하지 않는다.
 
@@ -43,8 +43,8 @@ ROS·MPS C 읽기 프로세스를 각각 별도 컨테이너에 상주시킨다.
 개발 Compose의 `ros_state`는 ROS C 읽기 서비스에만 읽기 전용으로 붙어 있다.
 이 Compose에는 기록을 쓰는 ROS 코어 서비스가 아직 없으므로 기본값은
 `/state/ros-tm.record` 부재·0건이다. 이 상주 프로세스는 **읽기 어댑터**이며
-실제 ROS TM 수신기나 MPS 계획 처리 데몬을 대체하지 않는다. 영속 계획,
-TM 파라미터 변환과 한계 경보는 아직 연결되지 않았다. 명령 DB와
+실제 ROS TM 수신기나 MPS 계획 처리 데몬을 대체하지 않는다. 운용 계획,
+실제 TM 파라미터 변환과 경보 증적은 아직 연결되지 않았다. 명령 DB와
 시뮬레이터 기록은 크기·파일 유형·권한·무결성을 검사한다. TLS/mTLS와 로그인
 경계는 기존 포털 경로를 유지한다.
 
@@ -52,8 +52,10 @@ TM 파라미터 변환과 한계 경보는 아직 연결되지 않았다. 명령
 
 ROS는 상단 상태 요약, 센서 목록, 선택 센서의 추세·상하한, 한계 초과 이력,
 자세 화면, MPS 시험 시퀀스 검토와 예약 초안으로 구성한다. 센서·차트·한계
-평가·쿼터니안 사각 기둥 뷰는 명시적 `TEST_ONLY_TM_SNAPSHOT` 파일 또는
-합성 예시에서만 활성화된다. 형식은 `interfaces/ros/test_tm_contract.md`에
+평가·쿼터니안 사각 기둥 뷰는 명시적 `TEST_ONLY_TM_SNAPSHOT` 게시 파일,
+수동 파일 또는 합성 예시에서만 활성화된다. 게시 파일은 ROS API가 재검증하고
+화면에서 5초 간격으로 갱신하며 5분 이상 지난 표본을 오래된 시험 자료로 표시한다.
+형식은 `interfaces/ros/test_tm_contract.md`에
 기록했다. 기본 화면은 데이터 미연결·평가 불가로 표시한다.
 MPS `TEST_ONLY_SEQUENCE` 본문과 매니페스트를 업로드하면 ROS API가 SHA-256,
 비운용 표시, 단계와 패스 시간 형식을 확인해 초안 DB에 보존한다. 로그인한
@@ -93,6 +95,22 @@ UTC 수신 시각, 보정 값, 단위, 품질, 하한·상한, 경보 등급 및
 검증·원자적 게시한다. 파일이 없으면 `/api/fds/orbit`은 503을 반환하며
 화면은 빈 지구와 데이터 미연결 상태를 표시한다. 개발 Compose 자체에는
 FDS 계산 컨테이너나 N05 TLE 수집기가 포함되지 않는다.
+
+ROS API는 `PADO_STAGE9_ROS_TM_PREVIEW_DIR`(기본 `out/ros-tm-preview`)을
+읽기 전용으로 마운트한다. 먼저 디렉터리를 만든 뒤 초안 TM PDU와 명시적 시험
+한계표로 다음과 같이 게시한다. ROS API는 파일을 재검증하고 포털
+`/api/ros/test-tm-snapshot`으로만 전달한다. 이 경로는 운용 TM 수신과 분리된다.
+게시 도구는 파일을 `0600`으로 쓰므로 Linux에서는 작성자와 ROS 컨테이너
+UID 10001이 동일하거나, 배포 시 UID 10001의 읽기 권한을 명시적으로 부여해야
+한다. 권한·마운트 검사는 실제 VM 배포 수락 단계에서 수행한다.
+
+```sh
+mkdir -p out/ros-tm-preview
+python3 -m tools.preview_draft_tm --test-only \
+  --limits docs/TC_TM/preview_limits.example.json \
+  --out out/ros-tm-preview/test_tm_snapshot.json \
+  path/to/draft-tm-packet.bin
+```
 
 MPS C 읽기 서비스는 `PADO_STAGE9_MPS_SCHEDULE_DIR`(기본
 `out/mps-schedules`)을 읽기 전용으로 마운트한다. FDS 반복 계산기는 성공한

@@ -54,7 +54,7 @@ services:
     build:
       context: ../..
       dockerfile: docker/stage9/Dockerfile
-    command: ["python3", "-m", "services.webapp.main", "ros", "--bind", "0.0.0.0", "--port", "8443", "--cert", "/certs/ros-api.crt", "--key", "/certs/ros-api.key", "--ca", "/certs/ca.crt", "--draft-db", "/state/ros-drafts.db"]
+    command: ["python3", "-m", "services.webapp.main", "ros", "--bind", "0.0.0.0", "--port", "8443", "--cert", "/certs/ros-api.crt", "--key", "/certs/ros-api.key", "--ca", "/certs/ca.crt", "--draft-db", "/state/ros-drafts.db", "--tm-preview", "/tm-preview/test_tm_snapshot.json"]
     depends_on:
       ros-core-read: {condition: service_healthy}
     volumes:
@@ -67,6 +67,10 @@ services:
         target: /run/core
         read_only: true
       - ros_drafts:/state
+      - type: bind
+        source: ${PADO_STAGE9_ROS_TM_PREVIEW_DIR:-../../out/ros-tm-preview}
+        target: /tm-preview
+        read_only: true
     networks: [portal_ros]
     read_only: true
     cap_drop: [ALL]

@@ -25,6 +25,7 @@ from .auth import AuthError, AuthStore, ROLES
 from .core import CoreUnavailable, mps_catalog, mps_passes, ros_summary
 from .mps_workbench import CandidateError, MpsCandidateStore, draft_commands
 from .ros_workbench import DraftError, RosDraftStore
+from .tm_preview import MAX_SNAPSHOT_BYTES, PreviewError, load_snapshot
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -49,6 +50,7 @@ ASSETS = {
 }
 PROXY_ROUTES = {
     "/api/ros/overview": ("ros", "/overview"),
+    "/api/ros/test-tm-snapshot": ("ros", "/test-tm-snapshot"),
     "/api/ros/test-sequences": ("ros", "/test-sequences"),
     "/api/ros/test-reservations": ("ros", "/test-reservations"),
     "/api/mps/catalog": ("mps", "/catalog"),
@@ -67,6 +69,7 @@ class AppServer(ThreadingHTTPServer):
                  client_key: Path | None = None, static_root: Path = WEB,
                  core_socket: Path = CORE_SOCKET,
                  orbit_view: Path | None = None,
+                 tm_preview: Path | None = None,
                  draft_db: Path | None = None,
                  candidate_db: Path | None = None) -> None:
         self.mode = mode
@@ -79,6 +82,7 @@ class AppServer(ThreadingHTTPServer):
         self.core_socket = core_socket
         self.static_root = static_root
         self.orbit_view = orbit_view
+        self.tm_preview = tm_preview
         self.drafts = RosDraftStore(draft_db) if mode == "ros" and draft_db else None
         self.candidates = MpsCandidateStore(candidate_db) if mode == "mps" and candidate_db else None
         self.login_attempts: dict[str, list[float]] = {}
@@ -344,10 +348,11 @@ class Handler(BaseHTTPRequestHandler):
                 payload = json.dumps(body, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
             connection.request(method, path, body=payload, headers=headers)
             response = connection.getresponse()
-            data = response.read(MAX_UPSTREAM + 1)
-            if len(data) > MAX_UPSTREAM or (method == "GET" and path not in
+            maximum = MAX_SNAPSHOT_BYTES if path == "/test-tm-snapshot" else MAX_UPSTREAM
+            data = response.read(maximum + 1)
+            if len(data) > maximum or (method == "GET" and path not in
                                             ("/test-sequences", "/test-reservations",
-                                             "/test-candidates") and
+                                             "/test-candidates", "/test-tm-snapshot") and
                                             response.status != HTTPStatus.OK):
                 self._error(HTTPStatus.BAD_GATEWAY, "backend_failure")
             else:
@@ -364,6 +369,18 @@ class Handler(BaseHTTPRequestHandler):
         role = self.headers.get("X-Pado-Role", "")
         if role not in ROLES or len(actor) > 64 or not actor:
             self._error(HTTPStatus.FORBIDDEN, "portal_identity")
+            return
+        if self.server.mode == "ros" and path == "/test-tm-snapshot":
+            try:
+                snapshot = load_snapshot(self.server.tm_preview)
+            except PreviewError:
+                self._error(HTTPStatus.SERVICE_UNAVAILABLE, "test_tm_unavailable")
+                return
+            if len(json.dumps(snapshot, separators=(",", ":"),
+                              ensure_ascii=False).encode("utf-8")) > MAX_SNAPSHOT_BYTES:
+                self._error(HTTPStatus.SERVICE_UNAVAILABLE, "test_tm_unavailable")
+                return
+            self._json(HTTPStatus.OK, snapshot)
             return
         if self.server.mode == "ros" and path in ("/test-sequences", "/test-reservations"):
             if self.server.drafts is None:
@@ -508,6 +525,7 @@ def parser() -> argparse.ArgumentParser:
             service.add_argument("--core-socket", type=Path, default=CORE_SOCKET)
         if mode == "ros":
             service.add_argument("--draft-db", type=Path)
+            service.add_argument("--tm-preview", type=Path)
         if mode == "mps":
             service.add_argument("--candidate-db", type=Path)
     return result
@@ -543,6 +561,7 @@ def main() -> None:
                        static_root=getattr(args, "static_root", WEB),
                        core_socket=getattr(args, "core_socket", CORE_SOCKET),
                        orbit_view=getattr(args, "orbit_view", None),
+                       tm_preview=getattr(args, "tm_preview", None),
                        draft_db=getattr(args, "draft_db", None),
                        candidate_db=getattr(args, "candidate_db", None))
     try:

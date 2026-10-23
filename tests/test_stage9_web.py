@@ -17,6 +17,7 @@ from urllib.request import Request, urlopen
 from services.webapp.auth import AuthStore
 from services.webapp.main import AppServer, ROOT
 from tests.test_ros_workbench import pair as test_sequence_pair
+from tests.test_tm_preview import snapshot as test_tm_snapshot
 from tools.publish_mps_schedule import publish as publish_mps_schedule
 
 
@@ -101,6 +102,7 @@ class WebBoundaryTests(unittest.TestCase):
             server = AppServer(("127.0.0.1", 0), mode=mode, cert=cert,
                                key=key, ca=cls.ca_cert,
                                core_socket=cls.core_sockets[mode],
+                               tm_preview=cls.folder / "test_tm_snapshot.json" if mode == "ros" else None,
                                draft_db=cls.folder / "ros-drafts.db" if mode == "ros" else None,
                                candidate_db=cls.folder / "mps-candidates.db" if mode == "mps" else None)
             cls.servers.append(server)
@@ -304,6 +306,30 @@ class WebBoundaryTests(unittest.TestCase):
             self.assertEqual(status, 503)
         finally:
             self.portal.orbit_view = None
+            source.unlink(missing_ok=True)
+
+    def test_ros_published_test_tm_is_session_gated_and_fail_closed(self):
+        source = self.folder / "test_tm_snapshot.json"
+        status, _, _ = self.request("/api/ros/test-tm-snapshot")
+        self.assertEqual(status, 401)
+        status, headers, _ = self.request("/api/login", method="POST", body={
+            "username": "planner01", "password": "valid-password-123"})
+        self.assertEqual(status, 200)
+        auth = {"Cookie": headers["Set-Cookie"].split(";", 1)[0]}
+        try:
+            status, _, _ = self.request("/api/ros/test-tm-snapshot", headers=auth)
+            self.assertEqual(status, 503)
+            source.write_text(json.dumps(test_tm_snapshot()), encoding="utf-8")
+            status, headers, body = self.request("/api/ros/test-tm-snapshot", headers=auth)
+            self.assertEqual(status, 200)
+            self.assertTrue(json.loads(body)["non_operational"])
+            self.assertEqual(headers["Cache-Control"], "no-store")
+            invalid = test_tm_snapshot()
+            invalid["non_operational"] = False
+            source.write_text(json.dumps(invalid), encoding="utf-8")
+            status, _, _ = self.request("/api/ros/test-tm-snapshot", headers=auth)
+            self.assertEqual(status, 503)
+        finally:
             source.unlink(missing_ok=True)
 
     def test_validated_ros_record_reaches_portal_and_corruption_fails_closed(self):

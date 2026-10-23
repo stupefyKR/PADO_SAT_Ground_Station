@@ -49,6 +49,8 @@ public final class FdsSelfTest {
         rejected(() -> FdsConfig.read(badConfig), "73h horizon");
         Files.writeString(badConfig, Files.readString(config) + "\nunknown_setting=true\n");
         rejected(() -> FdsConfig.read(badConfig), "unknown configuration");
+        Files.writeString(badConfig, Files.readString(config) + "\nmaneuver_delta_v_mps=1\n");
+        rejected(() -> FdsConfig.read(badConfig), "FDS excludes orbit maneuver input");
         Path badGnss = temporary.resolve("bad-gnss.properties");
         String gnss = Files.readString(fixture.resolve("test-gnss.properties"));
         Files.writeString(badGnss, gnss.replace("position_valid=true", "position_valid=false"));
@@ -149,6 +151,8 @@ public final class FdsSelfTest {
         }
         check(Files.readString(output.resolve("run.properties")).contains("source=TLE"),
                 "source metadata absent");
+        check(Files.readString(output.resolve("run.properties")).contains("maneuver_model=NONE"),
+                "unmodeled maneuvers must be explicit");
         for (String name : List.of("contact_schedule.csv", "pass_information.csv",
                 "orbit_ephemeris.csv")) {
             String manifest = Files.readString(output.resolve(name + ".manifest.json"));

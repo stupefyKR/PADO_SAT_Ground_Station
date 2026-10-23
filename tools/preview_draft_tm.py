@@ -9,7 +9,9 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import re
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -91,10 +93,36 @@ def build_snapshot(packets: list[bytes], limits: dict[str, Any], *, received_ms:
     return snapshot
 
 
+def publish_snapshot(snapshot: dict, destination: Path) -> None:
+    """Replace the test-only read target only after a complete bounded write."""
+    if (destination.name != "test_tm_snapshot.json" or
+            destination.parent.is_symlink() or not destination.parent.is_dir() or
+            destination.is_symlink()):
+        raise ValueError("regular test snapshot destination directory required")
+    body = (json.dumps(snapshot, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
+    if len(body) > 1024 * 1024:
+        raise ValueError("ROS test snapshot exceeds 1 MiB")
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(prefix=".test_tm_", suffix=".partial",
+                                         dir=destination.parent, delete=False) as output:
+            temporary = Path(output.name)
+            os.chmod(temporary, 0o600)
+            output.write(body)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, destination)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--test-only", action="store_true", required=True)
     parser.add_argument("--limits", type=Path, required=True)
+    parser.add_argument("--out", type=Path,
+                        help="atomically publish to test_tm_snapshot.json; default prints stdout")
     parser.add_argument("packets", type=Path, nargs="+")
     args = parser.parse_args()
     try:
@@ -108,9 +136,12 @@ def main() -> None:
             packets.append(source.read_bytes())
         received = int(datetime.now(timezone.utc).timestamp()) * 1000
         snapshot = build_snapshot(packets, limits, received_ms=received)
+        if args.out:
+            publish_snapshot(snapshot, args.out)
     except (OSError, ValueError, PacketError, OverflowError) as error:
         parser.exit(2, f"draft TM preview rejected input: {error}\n")
-    print(json.dumps(snapshot, ensure_ascii=False, separators=(",", ":")))
+    if not args.out:
+        print(json.dumps(snapshot, ensure_ascii=False, separators=(",", ":")))
 
 
 if __name__ == "__main__":

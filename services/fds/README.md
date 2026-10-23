@@ -8,7 +8,7 @@
 - N11 GNSS: 현재는 `fds.gnss-state.v1` 시험용 정규화 파일이다. `norad_id`, `epoch_utc`(UTC), `frame=ITRF`, `position_valid=true`, `velocity_valid=true`, `x_m/y_m/z_m`, `vx_mps/vy_mps/vz_mps`가 모두 필요하다. 실제 TM 패킷·NovAtel 로그 디코더는 **TBD(ICD)**다. OEM719의 `BESTXYZ`는 ECEF 위치·속도와 유효 상태를 제공할 수 있고 CubeADCS 공개 ICD의 기본 GNSS 연동도 ECEF 벡터를 사용한다. 이것이 PADO-SAT 다운링크의 확정 필드라는 뜻은 아니다. 자세 쿼터니안은 궤도 상태 벡터와 별개다.
 - 공개 자료 재확인(2026-10-23): NovAtel [OEM719 `BESTXYZ` 로그](https://docs.novatel.com/OEM7/Content/Logs/BESTXYZ.htm)는 ECEF 위치·속도, 각각의 solution status, 좌표 표준편차, 속도 시각 지연을 정의한다. 출력 datum은 `OUTPUTDATUM` 설정에 좌우된다. [CubeADCS ICD 1.05 §3.2](https://www.cubespace.co.za/uploads/c862e5e3-eff7-4519-b67f-b0dc2d5590a0.pdf)는 일반적인 OBC→ADCS GNSS 입력에 ECEF 위치·속도 벡터를 요구한다. 두 자료 모두 **PADO-SAT OBC가 실제로 내려보낼 TM 패킷의 필드·프레임·바이트 순서·스케일·시간 태그를 정의하지 않는다**. 따라서 실제 어댑터에는 위성 측 TM 패킷/파라미터 ICD 또는 동일 내용을 담은 샘플 프레임과 해설이 필요하다.
 - 계획 시작 시각에 유효 GNSS 상태의 나이가 **72시간 미만**이면 GNSS를 사용한다. GNSS 파일 부재 또는 **72시간 이상**이면 TLE로 전환한다. 손상된 GNSS 파일은 조용히 TLE로 대체하지 않고 실패한다. TLE까지 없거나 낡으면 실패한다. 선택한 입력과 이유·해시를 `run.properties`에 기록한다.
-- HPOP 경로는 ITRF/ECEF 상태를 GCRF로 변환해 수치 적분한다. 현재 모델은 지구 구면조화 중력(차수/차수는 설정), 태양·달 중력이다. 항력·태양복사압·궤도결정·기동·오차 공분산은 미포함이다. 따라서 **운용 정밀도를 검증한 HPOP가 아니라 예비 수치 전파 기준선**이다.
+- GNSS 수치 전파 경로는 ITRF/ECEF 상태를 GCRF로 변환해 궤도를 예측한다. 현재 모델은 지구 구면조화 중력(차수/차수는 설정), 태양·달 중력이다. 항력·태양복사압·궤도결정·오차 공분산은 미포함이다. **궤도 기동 계획·추력 입력·기동 결과 계산은 FDS 범위 밖이다.** 따라서 운용 정밀도를 검증한 HPOP가 아니라 예비 수치 전파 기준선이다. `run.properties`의 `maneuver_model=NONE`은 기동을 고려하지 않은 예측임을 명시한다.
 
 ## 두 안테나와 산출물
 

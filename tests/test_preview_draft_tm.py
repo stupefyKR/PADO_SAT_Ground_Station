@@ -1,9 +1,13 @@
 """Draft TM preview requires explicit ranges and bounded, valid samples."""
 
 import unittest
+import tempfile
+from pathlib import Path
 
 from tools.pado_packet_codec import encode_tm
-from tools.preview_draft_tm import build_snapshot
+from tools.preview_draft_tm import build_snapshot, publish_snapshot
+from services.webapp.tm_preview import load_snapshot
+from tools.stage_fds_outbox import ROOT
 
 
 STAMP = 1_800_000_000_000
@@ -34,6 +38,23 @@ class DraftPreviewTests(unittest.TestCase):
             build_snapshot([packet, packet], RULES, received_ms=STAMP)
         with self.assertRaises(ValueError):
             build_snapshot([packet], RULES, received_ms=STAMP - 1000)
+
+    def test_published_snapshot_is_ros_readable_and_replaced(self):
+        packet = encode_tm("EPS_PDU1", 1, STAMP, FIELDS)
+        first = build_snapshot([packet], RULES, received_ms=STAMP + 1000)
+        (ROOT / "out").mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=ROOT / "out") as folder:
+            destination = Path(folder) / "test_tm_snapshot.json"
+            publish_snapshot(first, destination)
+            self.assertEqual(load_snapshot(destination)["sensors"][0]["samples"][0]["value"],
+                             first["sensors"][0]["samples"][0]["value"])
+            second = build_snapshot([encode_tm("EPS_PDU1", 2, STAMP + 2000,
+                                               {**FIELDS, "bus_voltage_v": 5.7})],
+                                    RULES, received_ms=STAMP + 3000)
+            publish_snapshot(second, destination)
+            self.assertEqual(load_snapshot(destination)["sensors"][0]["samples"][0]["value"],
+                             second["sensors"][0]["samples"][0]["value"])
+            self.assertEqual(list(Path(folder).iterdir()), [destination])
 
 
 if __name__ == "__main__":
