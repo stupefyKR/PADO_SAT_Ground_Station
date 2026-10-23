@@ -47,7 +47,7 @@ if name == "docker":
         print("28.0.0")
     elif "--services" in args:
         services = ["portal", "ros-api", "mps-api", "ros-core-read",
-                    "mps-core-read", "fds-iss-demo"]
+                    "mps-core-read", "fds-synthetic-demo", "sim-ground", "sim-satellite"]
         if os.environ.get("PADO_LAUNCHER_TEST_SERVICES_INCOMPLETE") == "1":
             services.remove("mps-core-read")
         print("\n".join(services))

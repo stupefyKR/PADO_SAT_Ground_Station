@@ -38,10 +38,56 @@ PADO_OPERATOR_CIDR=192.168.45.1/32 \
 
 Windows에서 별도 SSH 포워딩 없이
 `http://192.168.45.128:8080/login`에 접속해 로그인한다. ROS는 `/ops`,
-MPS는 `/mps`, 현재 ISS 위치는 `/orbit`이다. 화면은 동일 출처의 인증된 API를
-호출한다. `fds-iss-demo`가 15분마다 고정 ISS TLE를 계산해 ORBIT 보기와 N13
-PASS 일정을 공유 Docker 볼륨에 게시한다. MPS의 선택 PASS 지도·polar plot과
-시험 시퀀스는 이 API 자료를 사용한다. 초안 저장은 테스트 전용이다.
+MPS는 `/mps`, 가상 PADO-SAT 위치는 `/orbit`이다. 화면은 동일 출처의 인증된
+API를 호출한다. `fds-synthetic-demo`가 고도 약 500 km, LTAN 06시의 합성 SSO
+TLE를 사용해 15분마다 FDS를 계산하고 ORBIT 보기와 N13 PASS 일정을 공유
+Docker 볼륨에 게시한다. 실행 때마다 TLE epoch를 현재 UTC 약 2초 전으로 갱신하며 예측
+기간은 최대 72시간이다. 이는 실제 PADO-SAT 궤도나 운용 TLE가 아닌 화면·API
+연결 시험 자료다. MPS의 선택 PASS 지도·polar plot과 시험 시퀀스도 이 자료를
+사용한다. 초안 저장은 테스트 전용이다.
+
+### 가상 위성 TM과 FDS 입력 흐름
+
+```text
+fds-synthetic-demo ── TLE 기반 truth 궤도 ──→ sim-satellite
+         │                                  │ 5초마다 EPS_PDU1 / AOCS_STATE / GNSS_PVT
+         │                                  ▼
+         │                        sim-ground (내부 TCP 9200)
+         │                         ├─ 검증·파싱 → ROS 시험 TM 스냅샷
+         │                         └─ GNSS → 시험 N11 파일 쌍 (최초 및 5분 간격)
+         └─ 검증된 시험 N11 재반입 → GNSS 우선 FDS 예측 → ORBIT + MPS N13
+```
+
+`sim-satellite`는 FDS가 TLE로 만든 **별도 truth 파일**만 읽는다. 이후 GNSS로
+다시 계산한 운영자 화면 파일을 위성 위치의 원천으로 되먹이지 않는다.
+`sim-ground`는 길이 접두가 붙은 초안 응용 PDU의 크기·시험 표시·종류·시간·
+순번·GNSS 값·자세 쿼터니안을 확인한 뒤 ROS용 스냅샷을 게시한다. 화면의
+EPS 버스 전압·온도 한계는 `services/sim_ground/test_limits.json`의 명시적인
+시험값이다. GNSS는 N11 시험 본문·매니페스트로 게시해 FDS가 검증 후 읽는다.
+FDS는 GNSS가 계획 시각 기준 72시간 미만이면 이를 우선 사용하고, 없거나
+72시간 이상이면 가상 TLE로 복귀한다. 현재 반복 주기에서는 N11이 게시된 뒤
+다음 FDS 계산까지 최대 약 15분이 걸릴 수 있다.
+시험 N11 파일 쌍은 최근 288개(약 24시간), 완료된 가상 FDS 실행 묶음은 최근
+8개를 보존해 장시간 실행 시 볼륨 증가를 제한한다.
+
+포털 외에 호스트에 게시된 포트는 없다. TCP 9200은 `sim_tm` Docker 내부망에서
+가상 위성과 시험 수신기 사이에만 사용한다. 이 경로는 **RF·CSP·AX100 프레임,
+실제 항우연/연세대 수신 장비, 위성 TC 송출**을 구현하지 않는다. 실제 N05/N11
+수신 경계도 이 시험 볼륨과 분리돼 있다.
+
+VM에서 시작한 뒤 컨테이너 상태와 로그를 확인하려면:
+
+```sh
+./pado-gs.sh status
+docker compose -p pado-stage9-local -f deploy/stage9/compose.local.yaml \
+  logs --tail=100 fds-synthetic-demo sim-satellite sim-ground ros-api mps-api
+```
+
+처음에는 TLE 결과가 게시되고 가상 TM 수신과 GNSS 파일 생성이 뒤따른다.
+Windows 브라우저에서 `/orbit`의 데이터 출처가 `TLE`에서 `GNSS`로 바뀌는지,
+`/ops`의 `02 TM · 자세`에서 계측·자세가 갱신되는지, `/mps`에서 PASS와
+ground view·polar plot이 표시되는지 확인한다. 실제 VM의 Docker 볼륨·권한·
+내부망·브라우저까지 포함한 연결 시험은 별도 통합 검증으로 기록한다.
 
 VM의 사설망 인터페이스가 Windows에서 접속 가능한지와 Docker 포트 `8080`이
 해당 인터페이스에만 게시됐는지 확인한다. Docker 게시 포트는 호스트 UFW의
@@ -52,10 +98,11 @@ VM의 사설망 인터페이스가 Windows에서 접속 가능한지와 Docker �
 네트워크에 연결되고, 두 API는 호스트 포트를 게시하지 않는다. FDS와 C 읽기
 서비스에는 네트워크 인터페이스가 없다. 스크립트는 UFW의 기존 규칙과 SSH
 접속 정책을 변경하지 않는다. 이 Compose는 외부망에 연결된 인터페이스에서
-사용하지 않는다. 고정 ISS TLE는 2026-10-25 22:03 UTC
-이후 신선도 조건을 충족하지 못하므로 그 뒤에는 새 시험 입력 또는 실제 위성
-입력이 필요하다. 만료 뒤 ORBIT는 현재 위치를 표시하지 않고 MPS 패스 경로도
-일치하는 유효 자료가 없다고 표시한다.
+사용하지 않는다. 기본 합성 TLE의 epoch는 반복 계산 때 갱신한다. 별도로 보관한
+ISS 고정 TLE는 **2026-10-25 22:03 UTC 이후** 72시간 신선도 조건을 충족하지
+못하며 현재 위치 시험의 기본 입력으로 사용하지 않는다. 유효한 새 FDS 산출물이
+없거나 예측 범위를 벗어나면 ORBIT는
+현재 위치를 표시하지 않고 MPS 패스 경로도 유효 자료가 없다고 표시한다.
 
 ```sh
 ./pado-gs.sh stop
@@ -98,17 +145,23 @@ FDS PASS를 이용해 시험 시퀀스를 구성한다. FDS N13 일정 파일은
 동시에 보이는 3D 지구와 2D 지상궤적, 주야간, 향후 3주기 궤적과 두 지상국의 PASS polar plot을
 표시한다. 지도에서는 TLE나 GNSS 상태를 다시 전파하지 않는다. 지구 텍스처는
 로컬 NASA Blue Marble이며 출처는 `web/assets/README.md`에 있다.
-`compose.local.yaml`의 `fds-iss-demo`가 15분마다 시험 계산을 수행하고 동일한
-실행에서 ORBIT 파일과 N13 PASS 파일을 이름 있는 Docker 볼륨에 게시한다.
+`compose.local.yaml`의 `fds-synthetic-demo`가 15분마다 합성 TLE의 epoch를
+갱신해 시험 계산을 수행하고 동일한 실행에서 ORBIT 파일과 N13 PASS 파일을
+이름 있는 Docker 볼륨에 게시한다.
 포털과 MPS는 각각의 읽기 API를 통해 표시한다.
-고정 TLE의 유효 기간이 지나면 FDS는 계산을 중단하고 ORBIT/MPS 경로 화면은
-유효한 현재 자료가 없다고 표시한다.
+FDS 계산 실패나 게시 중단으로 유효 기간이 지나면 ORBIT/MPS 경로 화면은
+현재 위치나 패스를 유효한 자료로 표시하지 않는다. 일정 파일의 SHA-256은
+재계산할 때 달라질 수 있으며 현재 MPS 시험 시퀀스 초안은 해당 해시에 묶인다.
+따라서 일정 갱신 후 이전 초안이 현재 목록에서 빠질 수 있다. 안정적인 PASS
+식별과 초안 이어받기는 별도 후속 작업이다.
 별도 개발용 `tools/receive_fds_inputs.py`는 N05 인증 SFTP pull·N11 완료 파일
 수신함을 검증된 스냅샷으로 게시하고 `tools/run_fds_pipeline.py`는 이를 반복
 계산할 수 있다. 이 실제 입력 경로의 수신기·FDS 서비스는 아직 Compose에
 연결되지 않았다. 파일이 없거나 낡으면 현재 위치로
 표시하지 않는다. 시간 이동과 재생 기능은 없으며 화면은 현재 UTC 기준으로만 그린다.
-현재 고정 ISS TLE 화면 시험 도구는 `services/fds/README.md`에 별도로 기록했다.
+합성 PADO-SAT 기본 입력 도구와 과거 ISS 고정 자료의 선택형 시험 방법은
+`services/fds/README.md`에 기록했다. 실제 N05/N11 입력은 이 시뮬레이터에
+자동 반입되지 않는다.
 
 ## 9-1: 비운용 C 코어 읽기 연결
 
@@ -214,7 +267,8 @@ MPS C 읽기 서비스는 `PADO_STAGE9_MPS_SCHEDULE_DIR`(기본
 `python3 -m tools.publish_mps_schedule RUN_DIR out/mps-schedules`로 게시할 수
 있다. 서비스는 파일을 매 요청마다 C 파서로 다시 검증하며, 입력 부재는
 빈 일정, 변조·오류는 503으로 표시한다. MPS 화면의 패스는 예비 전파 결과이며
-승인·TC 송출에 사용하지 않는다. 이 경로는 ISS 시험 화면과 분리된다.
+승인·TC 송출에 사용하지 않는다. 이 실제 입력 경로는 합성 PADO-SAT 화면
+시험과 분리된다.
 
 인증서와 계정 DB는 저장소에 넣지 않는다. 개발용 인증서 디렉터리는
 `PADO_STAGE9_CERT_DIR`에 **절대 경로**로 지정한다. 필요한 파일은 `ca.crt`,

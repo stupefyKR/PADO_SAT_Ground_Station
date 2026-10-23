@@ -96,6 +96,12 @@ jobs:
             -Dexec.mainClass=kr.ac.khu.padosat.fds.FdsSelfTest \
             -Dexec.classpathScope=test \
             "-Dexec.args=$PWD/services/fds/src/test/resources $PWD/out/orekit-data-2422a7d06ee2cc3b5a503a47271203b0706f3e82 $PWD/out"
+      - name: Verify synthetic SSO TLE and rolling phase
+        run: |
+          mvn --batch-mode --no-transfer-progress -f services/fds/pom.xml test-compile exec:java \
+            -Dexec.mainClass=kr.ac.khu.padosat.fds.SyntheticTleSelfTest \
+            -Dexec.classpathScope=test \
+            "-Dexec.args=$PWD/out/orekit-data-2422a7d06ee2cc3b5a503a47271203b0706f3e82 $PWD/out"
       - name: Verify staged GNSS to published FDS view
         run: |
           cc -std=c11 -Wall -Wextra -Werror -Iservices/mps/core -Ilibgs/include -Ithird_party \
@@ -106,7 +112,33 @@ jobs:
           python3 -m tests.run_fds_pipeline_smoke \
             out/orekit-data-2422a7d06ee2cc3b5a503a47271203b0706f3e82 \
             --mps-import-exe out/gs_mps_fds_import
-      - name: Build offline ISS demo container
+      - name: Verify synthetic satellite TM through GNSS-fed FDS
+        run: |
+          python3 -m tests.run_synthetic_demo_smoke \
+            out/orekit-data-2422a7d06ee2cc3b5a503a47271203b0706f3e82
+      - name: Build offline synthetic demo and TM containers
         env:
           PADO_LOCAL_BIND_IP: 127.0.0.1
-        run: docker compose -f deploy/stage9/compose.local.yaml build fds-iss-demo
+        run: docker compose -f deploy/stage9/compose.local.yaml build fds-synthetic-demo sim-ground sim-satellite
+      - name: Verify internal simulator TCP to ROS snapshot
+        env:
+          PADO_LOCAL_BIND_IP: 127.0.0.1
+        run: |
+          set -euo pipefail
+          compose=(docker compose -f deploy/stage9/compose.local.yaml)
+          trap '${compose[@]} down --volumes --remove-orphans' EXIT
+          "${compose[@]}" up -d fds-synthetic-demo sim-ground sim-satellite
+          ready=false
+          for attempt in {1..36}; do
+            if "${compose[@]}" exec -T sim-ground python3 -c \
+              'import json; from pathlib import Path; p=json.loads(Path("/tm-preview/test_tm_snapshot.json").read_text()); assert p["non_operational"] is True and p["attitude"] is not None and len(list(Path("/n11-inbox").glob("*.manifest.json"))) >= 1' \
+              >/dev/null 2>&1; then
+              ready=true
+              break
+            fi
+            sleep 5
+          done
+          if [[ "$ready" != true ]]; then
+            "${compose[@]}" logs --tail=80 fds-synthetic-demo sim-ground sim-satellite
+            exit 1
+          fi

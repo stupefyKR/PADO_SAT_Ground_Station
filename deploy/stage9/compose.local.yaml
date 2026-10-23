@@ -103,17 +103,66 @@ services:
       timeout: 1s
       retries: 10
     logging: {driver: journald}
-  fds-iss-demo:
+  fds-synthetic-demo:
     build:
       context: ../..
       dockerfile: docker/stage9/FdsDemo.Dockerfile
     volumes:
       - fds_runs:/app/out
       - fds_view:/app/out/fds-view
+      - fds_truth:/app/out/fds-truth
       - mps_schedules:/app/out/mps-schedules
+      - sim_n11_inbox:/n11-inbox:ro
     network_mode: none
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
+    logging: {driver: journald}
+  sim-volume-init:
+    build:
+      context: ../..
+      dockerfile: docker/stage9/SimTm.Dockerfile
+    user: "0:0"
+    command: ["chown", "-R", "10001:10001", "/tm-preview", "/n11-inbox"]
+    volumes:
+      - ros_tm_preview:/tm-preview
+      - sim_n11_inbox:/n11-inbox
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN]
+    security_opt: ["no-new-privileges:true"]
+    restart: "no"
+  sim-ground:
+    build:
+      context: ../..
+      dockerfile: docker/stage9/SimTm.Dockerfile
+    command: ["python3", "-m", "services.sim_ground.receiver", "--test-only", "--bind", "0.0.0.0", "--port", "9200", "--snapshot", "/tm-preview/test_tm_snapshot.json", "--n11-inbox", "/n11-inbox", "--limits", "/app/services/sim_ground/test_limits.json"]
+    depends_on:
+      sim-volume-init: {condition: service_completed_successfully}
+    volumes:
+      - ros_tm_preview:/tm-preview
+      - sim_n11_inbox:/n11-inbox
+    networks: [sim_tm]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/tmp"]
+    logging: {driver: journald}
+  sim-satellite:
+    build:
+      context: ../..
+      dockerfile: docker/stage9/SimTm.Dockerfile
+    command: ["python3", "-m", "services.sim_sat.emulator", "--test-only", "--orbit-view", "/fds-view/orbit_view.json", "--host", "sim-ground", "--port", "9200", "--interval-seconds", "5", "--seed", "1"]
+    depends_on:
+      sim-ground: {condition: service_started}
+      fds-synthetic-demo: {condition: service_started}
+    volumes:
+      - fds_truth:/fds-view:ro
+    networks: [sim_tm]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/tmp"]
     logging: {driver: journald}
 volumes:
   internal_token:
@@ -126,8 +175,11 @@ volumes:
   mps_candidates:
   mps_schedules:
   fds_view:
+  fds_truth:
   fds_runs:
+  sim_n11_inbox:
 networks:
   entry: {driver: bridge}
   portal_ros: {driver: bridge, internal: true}
   portal_mps: {driver: bridge, internal: true}
+  sim_tm: {driver: bridge, internal: true}

@@ -1,0 +1,20 @@
+{
+  "sensors": {
+    "EPS_PDU1.bus_voltage_v": {
+      "id": "sim_bus_voltage",
+      "name": "가상 PDU 버스 전압",
+      "group": "EPS",
+      "unit": "V",
+      "lower": 4.5,
+      "upper": 5.5
+    },
+    "EPS_PDU1.temperature_c": {
+      "id": "sim_pdu_temperature",
+      "name": "가상 PDU 온도",
+      "group": "EPS",
+      "unit": "°C",
+      "lower": 10.0,
+      "upper": 35.0
+    }
+  }
+}

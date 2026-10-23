@@ -9,7 +9,7 @@ RUN apt-get update \
 
 WORKDIR /app
 COPY services/fds /app/services/fds
-COPY tools/build_iss_demo.py tools/publish_fds_view.py tools/publish_mps_schedule.py tools/stage_fds_outbox.py /app/tools/
+COPY tools/build_iss_demo.py tools/build_synthetic_demo.py tools/publish_fds_view.py tools/publish_mps_schedule.py tools/stage_fds_outbox.py tools/run_fds_pipeline.py tools/receive_fds_inputs.py /app/tools/
 RUN git clone --depth 1 https://gitlab.orekit.org/orekit/orekit-data.git /opt/orekit-data \
     && git -C /opt/orekit-data fetch --depth 1 origin 2422a7d06ee2cc3b5a503a47271203b0706f3e82 \
     && git -C /opt/orekit-data checkout --detach 2422a7d06ee2cc3b5a503a47271203b0706f3e82 \
@@ -17,8 +17,8 @@ RUN git clone --depth 1 https://gitlab.orekit.org/orekit/orekit-data.git /opt/or
     && mvn -B -ntp -Dmaven.repo.local=/app/m2 -f /app/services/fds/pom.xml test-compile exec:help \
     && printf '#!/bin/sh\nexec mvn -o "$@"\n' > /usr/local/bin/mvn-offline \
     && chmod 0755 /usr/local/bin/mvn-offline \
-    && mkdir -p /app/out/fds-view /app/out/mps-schedules \
+    && mkdir -p /app/out/fds-view /app/out/fds-truth /app/out/mps-schedules \
     && chown -R 10001:10001 /app /opt/orekit-data
 
 USER 10001:10001
-CMD ["python3", "tools/build_iss_demo.py", "--orekit-data", "/opt/orekit-data", "--mvn", "/usr/local/bin/mvn-offline", "--maven-repo", "/app/m2", "--watch", "--refresh-seconds", "900"]
+CMD ["python3", "tools/build_synthetic_demo.py", "--test-only", "--orekit-data", "/opt/orekit-data", "--mvn", "/usr/local/bin/mvn-offline", "--maven-repo", "/app/m2", "--n11-inbox", "/n11-inbox", "--watch", "--refresh-seconds", "900"]

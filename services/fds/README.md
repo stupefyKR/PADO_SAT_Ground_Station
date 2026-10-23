@@ -82,7 +82,7 @@ python3 tools/run_fds_pipeline.py \
   --watch --poll-seconds 60 --refresh-seconds 900
 ```
 
-GNSS가 아직 없으면 N11의 두 인자를 생략한다. 아직 수신되지 않은 설정 경로의 두 파일이 모두 없으면 해당 입력을 기다린다. `--watch`를 생략하면 1회만 실행한다. Maven 경로·캐시는 `--mvn`, `--maven-repo`로 지정할 수 있다. 결과는 기본 `out/fds-runs`에 보존하고, N13/N15 출고함은 `out/fds-outbox`, 화면 파일은 **ISS 시험 화면과 분리한** `out/fds-live-view`에 원자적으로 게시한다. MPS 읽기 전용 N13 스냅샷은 `out/mps-schedules`에 실행별로 게시한다. 각 위치는 `--outbox-dir`, `--view-dir`, `--mps-schedule-dir`로 바꿀 수 있다. 배포 시 포털의 `PADO_STAGE9_FDS_VIEW_DIR`과 MPS의 `PADO_STAGE9_MPS_SCHEDULE_DIR`을 각각 맞춘다. 이 실행기는 SFTP 수신·상대 신원 인증·원시 GNSS TM 해독을 수행하지 않는다. 수신 스냅샷 경계는 아래 도구를 사용한다.
+GNSS가 아직 없으면 N11의 두 인자를 생략한다. 아직 수신되지 않은 설정 경로의 두 파일이 모두 없으면 해당 입력을 기다린다. `--watch`를 생략하면 1회만 실행한다. Maven 경로·캐시는 `--mvn`, `--maven-repo`로 지정할 수 있다. 결과는 기본 `out/fds-runs`에 보존하고, N13/N15 출고함은 `out/fds-outbox`, 화면 파일은 **합성 화면 시험과 분리한** `out/fds-live-view`에 원자적으로 게시한다. MPS 읽기 전용 N13 스냅샷은 `out/mps-schedules`에 실행별로 게시한다. 각 위치는 `--outbox-dir`, `--view-dir`, `--mps-schedule-dir`로 바꿀 수 있다. 배포 시 포털의 `PADO_STAGE9_FDS_VIEW_DIR`과 MPS의 `PADO_STAGE9_MPS_SCHEDULE_DIR`을 각각 맞춘다. 이 실행기는 SFTP 수신·상대 신원 인증·원시 GNSS TM 해독을 수행하지 않는다. 수신 스냅샷 경계는 아래 도구를 사용한다.
 
 ### N05/N11 수신 스냅샷 경계
 
@@ -113,7 +113,7 @@ Linux의 `gs_sftp_tests`는 CI에서 일시적인 키 전용 `sshd`를 시작해
 
 ### N13/N15 전송용 출고함
 
-완료된 FDS 실행 디렉터리의 N13/N15 CSV 세 개와 매니페스트를 `tools/stage_fds_outbox.py`로 다시 검증한다. 반복 계산 실행기는 계산 성공 후 이를 자동 호출한다. 도구는 각 파일에 실행 ID를 붙여 고유 이름의 불변 파일 쌍 3개를 원자적으로 출고함에 게시한다. 원본 FDS 결과와 ISS 시험 화면은 수정하지 않는다. 예를 들어 `out/fds-runs/fds-20261023T100000Z-1234abcd`를 지정하면 `out/fds-outbox/fds-20261023T100000Z-1234abcd/`에 `contact_schedule-fds-20261023T100000Z-1234abcd.csv`와 해당 매니페스트 등이 생긴다. MPS는 원본 고정 파일명과 출고함의 고유 파일명을 모두 검증할 수 있다.
+완료된 FDS 실행 디렉터리의 N13/N15 CSV 세 개와 매니페스트를 `tools/stage_fds_outbox.py`로 다시 검증한다. 반복 계산 실행기는 계산 성공 후 이를 자동 호출한다. 도구는 각 파일에 실행 ID를 붙여 고유 이름의 불변 파일 쌍 3개를 원자적으로 출고함에 게시한다. 원본 FDS 결과와 합성 화면 시험 자료는 수정하지 않는다. 예를 들어 `out/fds-runs/fds-20261023T100000Z-1234abcd`를 지정하면 `out/fds-outbox/fds-20261023T100000Z-1234abcd/`에 `contact_schedule-fds-20261023T100000Z-1234abcd.csv`와 해당 매니페스트 등이 생긴다. MPS는 원본 고정 파일명과 출고함의 고유 파일명을 모두 검증할 수 있다.
 
 ```sh
 python3 tools/stage_fds_outbox.py out/fds-runs/fds-20261023T100000Z-1234abcd
@@ -129,14 +129,62 @@ gs_fds_exchange pull-n05 HOST PORT USER PRIVATE_KEY HOST_KEY_SHA256 REMOTE_DIR F
 
 호스트 키 SHA-256은 OpenSSH의 Base64 표시가 아니라 **64자 소문자 16진수**다. 개인키는 저장소 밖에서 마운트한다. 반복 전송 서비스와 실제 상대 주소·계정·호스트 키는 배포 시 설정하고, 실패한 전송은 재시도·중복 처리 정책을 정해야 한다. 아직 실제 SFTP 상대와의 연결 시험이나 MPS 서비스의 받은 편지함 감시가 완료된 것은 아니다.
 
-### 고정 ISS TLE 화면 시험
+### 가상 PADO-SAT SSO 화면 시험 (로컬 스택 기본값)
 
-PADO-SAT 운용 TLE가 아직 없으므로 사용자 제공 ISS (ZARYA) TLE를 `services/fds/demo/iss-fixed.tle`에 **변경 없이** 보관한다. 69자 길이와 두 줄의 체크섬을 확인했다. 이 입력은 시험 도구 `tools/build_iss_demo.py`에서만 사용하며 운용 N05/N11 입력 선택 경로의 대체값으로 자동 등록하지 않는다. TLE epoch는 **2026-10-22 22:03:10 UTC**이며 72시간을 넘으면 FDS가 새 계산을 거부하고 화면도 현재 위치를 표시하지 않는다. 당시에는 새로운 시험 TLE나 실제 PADO-SAT 입력이 필요하다.
+실제 위성 TLE가 아직 없으므로 `tools/build_synthetic_demo.py --test-only`가 **고도 약 500 km,
+상승교점 지방 평균 태양시(LTAN) 약 06시**의 가상 태양동기궤도(SSO) TLE를 만든다.
+TLE의 epoch와 궤도 위상은 시험 실행 시각에 맞춰 갱신한다. FDS는 이 TLE를
+기존 SGP4 경로로 전파해 현재 UTC부터 최대 72시간의 궤도 보기와 두 지상국의
+PASS 일정을 만든다. 이 TLE는 위성 추적에서 얻은 궤도결정 결과가 아니며
+고도·LTAN도 시험 목표의 근사값이다. 실제 컨택 예보나 TC 예약 판단에 사용하지
+않는다.
 
 ```sh
-python3 tools/build_iss_demo.py --orekit-data /path/to/orekit-data
+python3 tools/build_synthetic_demo.py --test-only --orekit-data /path/to/orekit-data
 ```
 
-도구는 현재 UTC부터 72시간을 전파하고 같은 실행 결과의 ORBIT 보기 파일을 `out/fds-view`, N13 PASS 일정을 `out/mps-schedules`에 게시한다. `--watch --refresh-seconds 900`을 지정하면 독립 FDS 프로세스가 15분마다 다시 계산·게시한다. Maven이 PATH에 없으면 `--mvn /path/to/mvn`, 별도 캐시가 있으면 `--maven-repo /path/to/m2`를 지정한다. 포털 `/api/fds/orbit`과 MPS `/api/mps/passes`는 게시 파일을 각자 읽으며, 화면은 60초마다 새 결과를 확인한다. 이 시험 프로세스는 N05/N11 실제 수신 프로세스와 분리해서 사용한다. 연세대 `(37.5624, 126.9389, 0 m)`, 항우연 대전 `(36.3700, 127.3600, 0 m)`, 최소 고각 `10°`, UHF `435 MHz`, S-band `2.2 GHz`는 모두 **화면 시험용 근삿값·예시값**이다. 실제 안테나의 측량 좌표·고각 마스크·주파수로 교체하기 전 컨택/도플러 시각은 운용에 사용할 수 없다. 별도 로컬 반복 계산기가 실제 N05 TLE 또는 정규화된 N11 GNSS 파일 쌍을 받아 계산·게시할 수 있지만, 수신기와 운용 화면에 연결하는 배포 작업은 남아 있다.
+로컬 Compose의 `fds-synthetic-demo`는 독립 컨테이너에서 15분마다 다시 계산한다.
+먼저 TLE만 사용한 궤도 truth를 별도 `fds-truth` 볼륨에 게시해 가상 위성의
+위치 기준으로 쓴다. `sim-satellite`는 이 위치 표본으로부터 5초마다
+`EPS_PDU1`, `AOCS_STATE`, `GNSS_PVT` **시험용 응용 PDU**를 만든다. 전용
+`sim_tm` 내부망의 TCP 9200에서 `sim-ground`가 길이 접두 프레임을 검증·파싱한다.
+ROS 시험 TM 스냅샷에는 전압·온도 추세와 자세 쿼터니안이 담기고, GNSS PDU는
+첫 수신 및 이후 5분 간격으로 정규화된 N11 시험 본문·매니페스트가 된다.
+
+FDS 실행기는 이 N11 파일 쌍을 다시 검증하고 GNSS가 신선하면 기존 예비
+수치 전파로 **운영자용** 궤도를 계산한다. GNSS가 없거나 계획 시점에 72시간
+이상 낡았으면 TLE/SGP4 결과를 사용한다. 손상된 GNSS 파일을 조용히 TLE로
+대체하지 않는다. 운영자용 ORBIT 파일은 `out/fds-view`, 같은 실행의 검증된
+N13 PASS 파일은 `out/mps-schedules`에 게시한다. 포털 `/api/fds/orbit`과 MPS
+`/api/mps/passes`는 게시 파일을 각자 읽는다. Maven 실행기와 캐시를 별도로
+지정할 때는 도구의 `--mvn`, `--maven-repo` 인자를 사용한다. 재계산할 때 N13
+파일의 SHA-256이 바뀌면 이 해시에 묶인 MPS 시험 시퀀스 초안은 현재 목록에서
+빠질 수 있다. 안정적인 PASS 식별과 초안 이어받기는 후속 작업이다.
+
+오프라인 연결 시험은 Orekit 자료와 Maven을 갖춘 Linux 환경에서 다음처럼
+실행할 수 있다. 이 시험은 TLE truth→가상 PDU→ROS 스냅샷·N11→FDS GNSS 선택과
+MPS 일정 게시를 확인한다. 실제 VM의 Compose, Docker 볼륨·권한, 브라우저 경로는
+`deploy/stage9/README.md`의 별도 통합 확인 절차를 따른다.
+
+```sh
+python3 tests/run_synthetic_demo_smoke.py /path/to/orekit-data
+```
+
+가상 TLE와 가상 위성이 만든 N11은 **실제** N05/N11 본문·매니페스트 수신
+경로에 자동 등록되지 않는다. 이 가상 링크는 RF·CSP·AX100 프레임이나 실제
+항우연/연세대 수신 장비를 거치지 않으며 TC 수신·송출 경로도 없다. 연세대
+`(37.5624, 126.9389, 0 m)`, 항우연 대전 `(36.3700, 127.3600, 0 m)`, 최소 고각
+`10°`, UHF `435 MHz`, S-band `2.2 GHz`는 모두 **화면 시험용 근삿값·예시값**이다.
+실제 안테나의 측량 좌표·고각 마스크·주파수로 교체하기 전 컨택/도플러 시각은
+운용에 사용할 수 없다. 실제 N05 TLE 또는 정규화된 N11 GNSS 파일 쌍의 반복
+계산기는 별도 경로로 남으며, 실제 수신기·운용 화면과의 배포 연결은 후속 작업이다.
+
+### 고정 ISS TLE 자료 (선택형 과거 시험)
+
+사용자가 제공한 ISS (ZARYA) TLE 두 줄은 `services/fds/demo/iss-fixed.tle`에
+변경 없이 보존한다. 별도 `tools/build_iss_demo.py`로 오프라인 비교 시험에
+사용할 수 있지만 로컬 Compose의 기본 입력은 아니다. 원본 TLE epoch는
+**2026-10-22 22:03:10 UTC**이며 FDS의 72시간 신선도 한계를 넘으면 새 현재
+위치 계산을 거부한다. ISS 자료 역시 운용 N05/N11 입력으로 자동 반입되지 않는다.
 
 참고 원본: [NovAtel OEM7 BESTXYZ](https://docs.novatel.com/OEM7/Content/Logs/BESTXYZ.htm), [CubeADCS ICD 1.05](https://www.cubespace.co.za/uploads/c862e5e3-eff7-4519-b67f-b0dc2d5590a0.pdf), [Vallado SGP4 검증 자료](https://celestrak.org/publications/AIAA/2006-6753/), [Orekit 데이터 설정](https://test.orekit.org/site-orekit-development/data/default-configuration.html). 모델 수락 전에는 Orekit 물리 자료 세트의 버전과 EOP 유효 기간을 고정하고 기준 궤도력과 비교해야 한다.

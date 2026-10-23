@@ -95,13 +95,18 @@ function setOrbitData(input, label) {
   orbitState.time = Date.now();
   const isIssTest = input.norad_id === 25544 && input.source === "TLE" &&
     input.input_sha256 === ORBIT_FIXED_ISS_SHA256;
-  orbitEl("orbit-mode-label").textContent = isIssTest ? "ISS TEST MODE" : "PRELIMINARY";
-  orbitEl("orbit-sidebar-mode").textContent = isIssTest ? "ISS 시험 궤도" : "예비 궤도 화면";
-  orbitEl("orbit-sidebar-note").textContent = isIssTest ? "고정 TLE · 운용 금지" : "FDS 산출물 · 운용 금지";
+  const isSyntheticTest = input.norad_id === 99999 &&
+    input.quality === "PRELIMINARY_NOT_FOR_OPERATIONS" && ["TLE", "GNSS"].includes(input.source);
+  orbitEl("orbit-mode-label").textContent = isSyntheticTest ? "PADO-SAT SIMULATION" :
+    isIssTest ? "ISS TEST MODE" : "PRELIMINARY";
+  orbitEl("orbit-sidebar-mode").textContent = isSyntheticTest ? "가상 PADO-SAT" :
+    isIssTest ? "ISS 시험 궤도" : "예비 궤도 화면";
+  orbitEl("orbit-sidebar-note").textContent = isSyntheticTest ? "가상 TM · 운용 금지" :
+    isIssTest ? "고정 TLE · 운용 금지" : "FDS 산출물 · 운용 금지";
   orbitEl("orbit-source-note").textContent =
-    `${isIssTest ? "ISS (ZARYA) 고정 TLE 시험" : `NORAD ${input.norad_id}`} · ${input.source} / ${input.model} · 입력 ${formattedUtc(parsed.inputEpoch)} · ${isIssTest ? "안테나 좌표는 시험용 근삿값입니다. " : "안테나 설정을 확인하세요. "}실제 관제 판단에는 사용하지 마세요.`;
+    `${isSyntheticTest ? "가상 PADO-SAT (500 km SSO · LTAN 06h)" : isIssTest ? "ISS (ZARYA) 고정 TLE 시험" : `NORAD ${input.norad_id}`} · ${input.source} / ${input.model} · 입력 ${formattedUtc(parsed.inputEpoch)} · ${isSyntheticTest || isIssTest ? "안테나 좌표는 시험용 근삿값입니다. " : "안테나 설정을 확인하세요. "}실제 관제 판단에는 사용하지 마세요.`;
   orbitEl("orbit-data-state").textContent = `${label} · ${isCurrentData() ? "현재 위치 표시 가능" : "현재 유효한 입력·예측 범위 없음"}`;
-  orbitEl("orbit-model").textContent = `${isIssTest ? "ISS 시험 · " : ""}${input.source} / ${input.model}`;
+  orbitEl("orbit-model").textContent = `${isSyntheticTest ? "가상 위성 시험 · " : isIssTest ? "ISS 시험 · " : ""}${input.source} / ${input.model}`;
   orbitEl("orbit-period").textContent = `${(input.orbital_period_s / 60).toFixed(1)} 분`;
   orbitEl("orbit-coverage").textContent = `${Math.round((parsed.end - parsed.start) / 3600000)} 시간`;
   orbitEl("api-error").hidden = true;
@@ -374,7 +379,8 @@ function drawOverlay(canvas, flat) {
       4 * scale, station.id === "yonsei" ? [7 * scale, -10 * scale] : [7 * scale, 14 * scale]);
   }
   drawMarker(context, projected[0], "#f4f7fb",
-    orbitState.data.info.norad_id === 25544 ? "ISS / NOW" : `NORAD ${orbitState.data.info.norad_id}`, 6 * scale);
+    orbitState.data.info.norad_id === 99999 ? "PADO-SAT SIM / NOW" :
+      orbitState.data.info.norad_id === 25544 ? "ISS / NOW" : `NORAD ${orbitState.data.info.norad_id}`, 6 * scale);
   if (flat) {
     context.fillStyle = "#eff9fb"; context.font = `${11 * scale}px Arial`;
     context.fillText("N", 8 * scale, 15 * scale);

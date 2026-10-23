@@ -184,7 +184,7 @@ wait_for_services() {
     running="$(compose ps --status running --services)" || return 1
     running=$'\n'"$running"$'\n'
     ready=true
-    for service in portal ros-api mps-api ros-core-read mps-core-read fds-iss-demo; do
+    for service in portal ros-api mps-api ros-core-read mps-core-read fds-synthetic-demo sim-ground sim-satellite; do
       if [[ "$running" != *$'\n'"$service"$'\n'* ]]; then
         ready=false
         break
