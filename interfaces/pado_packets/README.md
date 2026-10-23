@@ -1,5 +1,8 @@
 # PADO-SAT UHF TC/TM packet proposal (draft v0)
 
+The [four PNG review diagrams](../../docs/figures/tc_tm/README.md) summarize
+the RF boundary, TC/TM catalogs, and byte offsets for CS/CDHS discussions.
+
 This directory is a **ground-owned application-packet proposal**, not the
 flight software/AX100 ICD. `draft_v0.json` assigns candidate IDs and fixed
 field layouts to 58 TC names and 16 TM families. Thirty-six TC and all 16 TM
