@@ -1,6 +1,6 @@
 "use strict";
 
-// This UI has no timer or API that can execute a reservation or send a TC.
+// Simulation commands remain separate from the legacy draft and flight TC paths.
 (() => {
   const $ = (id) => document.getElementById(id);
   const svgNS = "http://www.w3.org/2000/svg";
@@ -33,6 +33,8 @@
   let session;
   let sequences = [];
   let reservations = [];
+  let simSequences = [];
+  let simReservations = [];
   let selectedTm = null;
   let selectedSensor = null;
   let minutes = 30;
@@ -89,7 +91,7 @@
       cell(row, step.step_id);
       cell(row, step.command_id);
       cell(row, `+${step.offset_s}초`);
-      cell(row, utc(sequence.aos_utc_s + step.offset_s));
+      cell(row, `+${step.offset_s}초 · ${utc(sequence.aos_utc_s + step.offset_s)}`);
       steps.append(row);
       const option = document.createElement("option");
       option.value = String(step.step_id);
@@ -192,6 +194,115 @@
       await refreshDrafts(sequence.sha256);
       message("reservation-message", "예약 초안을 저장했습니다. 자동 실행과 TC 송출은 없습니다.");
     } catch (error) { message("reservation-message", `초안 저장 실패: ${error.message}`, true); }
+  }
+
+  function selectedSimSequence() {
+    return simSequences.find((item) => item.sha256 === $("sim-sequence-select").value);
+  }
+  function showSimSequence() {
+    const sequence = selectedSimSequence();
+    const rows = $("sim-sequence-steps");
+    rows.replaceChildren();
+    if (!sequence) {
+      empty(rows, 5, "MPS에서 전달한 시험 시퀀스가 없습니다.");
+      $("sim-sequence-pass").textContent = "패스 미선택";
+      return;
+    }
+    $("sim-sequence-pass").textContent =
+      `${sequence.pass_id} · ${utc(sequence.aos_utc_s)} → ${utc(sequence.los_utc_s)} · SIM ONLY`;
+    for (const step of sequence.steps) {
+      const row = document.createElement("tr");
+      cell(row, step.step_id);
+      cell(row, step.command_name);
+      cell(row, Object.entries(step.parameters).map(([key, value]) => `${key}=${value}`).join(", ") || "없음");
+      cell(row, utc(sequence.aos_utc_s + step.offset_s));
+      const control = document.createElement("td");
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "outline";
+      const already = simReservations.some((item) => item.sha256 === sequence.sha256 &&
+        item.step_id === step.step_id && item.status !== "CANCELLED");
+      button.textContent = already ? "예약 기록 있음" : "가상 위성 예약";
+      button.disabled = already || session?.role === "auditor" ||
+        sequence.aos_utc_s + step.offset_s <= Math.floor(Date.now() / 1000);
+      button.addEventListener("click", async () => {
+        button.disabled = true;
+        try {
+          await api("/api/ros/test-sim-reservations", {
+            method: "POST", headers: {"Content-Type": "application/json", "X-CSRF-Token": session.csrf},
+            body: JSON.stringify({sha256: sequence.sha256, step_id: step.step_id})
+          });
+          await refreshSimDrafts(sequence.sha256);
+          message("sim-sequence-message", "가상 위성 시험 예약을 등록했습니다. 실제 RF 송출은 없습니다.");
+        } catch (error) {
+          message("sim-sequence-message", `시험 예약 실패: ${error.message}`, true);
+          button.disabled = false;
+        }
+      });
+      control.append(button); row.append(control); rows.append(row);
+    }
+  }
+  function showSimReservations() {
+    const rows = $("sim-reservation-rows");
+    rows.replaceChildren();
+    if (!simReservations.length) {
+      empty(rows, 5, "가상 위성 시험 예약이 없습니다.");
+      return;
+    }
+    const statusText = {
+      SCHEDULED: "예약 대기", SENDING: "가상 위성 전송 중", ACKED: "ACK 수신",
+      REJECTED: "거절", TIMEOUT: "ACK 시간 초과", SEND_FAILED: "전송 실패",
+      MISSED: "예약 시각 경과", UNKNOWN: "결과 불명", CANCELLED: "취소"
+    };
+    for (const item of simReservations) {
+      const row = document.createElement("tr");
+      cell(row, statusText[item.status] || item.status);
+      cell(row, item.command_name);
+      cell(row, utc(item.target_utc_s));
+      const detail = typeof item.ack === "string" ? item.ack :
+        item.ack ? JSON.stringify(item.ack) : "—";
+      cell(row, detail.length > 180 ? detail.slice(0, 180) + "…" : detail);
+      const control = document.createElement("td");
+      if (item.status === "SCHEDULED" && session?.role !== "auditor") {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "outline";
+        button.textContent = "예약 취소";
+        button.addEventListener("click", async () => {
+          button.disabled = true;
+          try {
+            await api("/api/ros/test-sim-reservations/cancel", {
+              method: "POST", headers: {"Content-Type": "application/json", "X-CSRF-Token": session.csrf},
+              body: JSON.stringify({id: item.id})
+            });
+            await refreshSimDrafts();
+            message("sim-reservation-message", "가상 위성 시험 예약을 취소했습니다.");
+          } catch (error) {
+            message("sim-reservation-message", `취소 실패: ${error.message}`, true);
+            button.disabled = false;
+          }
+        });
+        control.append(button);
+      }
+      row.append(control); rows.append(row);
+    }
+  }
+  async function refreshSimDrafts(selectDigest = "") {
+    const [sequenceData, reservationData] = await Promise.all([
+      api("/api/ros/test-sim-sequences"), api("/api/ros/test-sim-reservations")
+    ]);
+    simSequences = sequenceData.items;
+    simReservations = reservationData.items;
+    const picker = $("sim-sequence-select");
+    const keep = selectDigest || picker.value;
+    picker.replaceChildren(new Option("없음", ""));
+    for (const item of simSequences) {
+      picker.add(new Option(`${item.pass_id} · r${item.revision} · ${item.sha256.slice(0, 10)}`, item.sha256));
+    }
+    if (simSequences.some((item) => item.sha256 === keep)) picker.value = keep;
+    else if (simSequences.length) picker.value = simSequences[0].sha256;
+    showSimSequence();
+    showSimReservations();
   }
 
   function normalizedTm(data) {
@@ -540,6 +651,7 @@
       renderTrend();
     }));
     $("sequence-select").addEventListener("change", showSequence);
+    $("sim-sequence-select").addEventListener("change", showSimSequence);
     $("reservation-step").addEventListener("change", setReservationDefault);
     $("sequence-import").addEventListener("click", importSequence);
     $("reservation-form").addEventListener("submit", reserve);
@@ -547,6 +659,8 @@
       session = await api("/api/session");
       try { await refreshDrafts(); }
       catch (error) { message("sequence-message", `ROS 초안 저장소 연결 실패: ${error.message}`, true); }
+      try { await refreshSimDrafts(); }
+      catch (error) { message("sim-sequence-message", `가상 위성 시험 저장소 연결 실패: ${error.message}`, true); }
       if (session.role === "auditor") {
         $("sequence-import").disabled = true;
         $("reservation-form").querySelector("button").disabled = true;
@@ -555,6 +669,12 @@
     await refreshPublishedTm();
     setInterval(() => {
       if (document.visibilityState === "visible") refreshPublishedTm();
+    }, 5000);
+    setInterval(() => {
+      if (document.visibilityState === "visible" && session) {
+        refreshSimDrafts().catch((error) =>
+          message("sim-reservation-message", `시험 상태 갱신 실패: ${error.message}`, true));
+      }
     }, 5000);
   }
   init();

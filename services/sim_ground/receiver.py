@@ -1,8 +1,10 @@
 """Receive test-only PADO draft TM from the synthetic satellite.
 
 The TCP length prefix is a simulator transport boundary, not an RF, AX100,
-or CSP frame. Only the draft UHF application PDUs are decoded here. This
-service has no TC path and must run on an internal Docker network only.
+or CSP frame. Only draft UHF application PDUs are decoded here. The private
+TCP stream also carries draft TC in the reverse direction and COMMAND_RESULT
+TM back. A local Unix socket accepts one test-only TC request at a time from
+ROS; neither socket is an operational command link.
 """
 
 from __future__ import annotations
@@ -10,15 +12,18 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import re
+import select
 import socket
+import stat
 import struct
 import sys
 import time
 from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
-from threading import Event
+from threading import Event, Lock, Thread
 from typing import Any
 
 from tools.bridge_draft_gnss import bridge
@@ -36,6 +41,8 @@ GNSS_BRIDGE_PERIOD_MS = 300_000
 MAX_N11_PAIRS = 288  # 24 hours at the five-minute bridge cadence.
 SATELLITE_NORAD_ID = 99999
 ALLOWED_TELEMETRY = frozenset({"EPS_PDU1", "AOCS_STATE", "GNSS_PVT"})
+RESULT_TELEMETRY = "COMMAND_RESULT"
+TC_RESPONSE_TIMEOUT_S = 15.0
 ATTITUDE_FRAME = "SIM_BODY_TO_ITRF_NADIR"
 _DRAFT_GNSS_MANIFEST = re.compile(
     r"draft-gnss-[0-9a-f]{32}\.properties\.manifest\.json\Z")
@@ -43,6 +50,17 @@ _DRAFT_GNSS_MANIFEST = re.compile(
 
 class ReceiverError(ValueError):
     """A simulator connection violated its bounded test-only contract."""
+
+
+class _PendingTc:
+    def __init__(self, packet: bytes, command_id: int, sequence: int):
+        self.packet = packet
+        self.command_id = command_id
+        self.sequence = sequence
+        self.sent = False
+        self.done = Event()
+        self.response: bytes | None = None
+        self.error: str | None = None
 
 
 def load_limits(path: Path) -> dict[str, Any]:
@@ -70,6 +88,12 @@ def read_framed_pdu(connection: socket.socket) -> bytes | None:
     if packet is None:  # Defensive: non-empty reads cannot return clean EOF.
         raise ReceiverError("truncated TM PDU")
     return packet
+
+
+def send_framed_pdu(connection: socket.socket, packet: bytes) -> None:
+    if not isinstance(packet, bytes) or not MIN_PDU_BYTES <= len(packet) <= MAX_PDU_BYTES:
+        raise ReceiverError("bounded draft PDU required")
+    connection.sendall(FRAME_LENGTH.pack(len(packet)) + packet)
 
 
 def _read_exact(connection: socket.socket, length: int, *,
@@ -147,6 +171,85 @@ class TmReceiver:
         self.last_stamp_ms: int | None = None
         self.last_stamp_by_name: dict[str, int] = {}
         self.last_gnss_bridge_ms: int | None = None
+        self._tc_lock = Lock()
+        self._tc_pending: _PendingTc | None = None
+        self._satellite_connected = False
+
+    def submit_tc(self, packet: bytes, *, timeout_s: float = TC_RESPONSE_TIMEOUT_S,
+                  now_ms: int | None = None) -> bytes:
+        """Queue one fresh draft TC and await its correlated COMMAND_RESULT TM.
+
+        This method is the in-process boundary behind the private Unix socket.
+        It never accepts a flight packet or initiates a network uplink itself.
+        """
+        if not 0 < timeout_s <= 30 or (now_ms is not None and type(now_ms) is not int):
+            raise ReceiverError("invalid test TC timeout or clock")
+        decoded = decode(packet)
+        if decoded["kind"] != "TC" or decoded["operational"] is not False or \
+                decoded["execute_at_utc_ms"] != 0:
+            raise ReceiverError("immediate draft TC required")
+        instant = int(time.time() * 1000) if now_ms is None else now_ms
+        if not 0 <= instant - decoded["utc_ms"] <= MAX_AGE_MS:
+            raise ReceiverError("test TC issue timestamp is not fresh")
+        request = _PendingTc(packet, decoded["id"], decoded["sequence"])
+        with self._tc_lock:
+            if not self._satellite_connected:
+                raise ReceiverError("simulated satellite TM stream unavailable")
+            if self._tc_pending is not None:
+                raise ReceiverError("simulated TC path is busy")
+            self._tc_pending = request
+        if not request.done.wait(timeout_s):
+            with self._tc_lock:
+                completed_at_deadline = request.done.is_set()
+                if not completed_at_deadline and self._tc_pending is request:
+                    self._tc_pending = None
+            if not completed_at_deadline:
+                raise ReceiverError("simulated COMMAND_RESULT timed out")
+        if request.error is not None or request.response is None:
+            raise ReceiverError(request.error or "simulated COMMAND_RESULT missing")
+        return request.response
+
+    def _fail_pending(self, message: str) -> None:
+        with self._tc_lock:
+            request = self._tc_pending
+            self._tc_pending = None
+            if request is not None:
+                request.error = message
+                request.done.set()
+
+    def _ingest_command_result(self, packet: bytes, decoded: dict[str, Any],
+                               *, received_ms: int | None = None) -> None:
+        """Correlate ACK by draft command ID/sequence before releasing ROS."""
+        now_ms = int(time.time() * 1000) if received_ms is None else received_ms
+        stamp = decoded["utc_ms"]
+        if decoded["kind"] != "TM" or decoded["name"] != RESULT_TELEMETRY or \
+                decoded["operational"] is not False or stamp % 1000 or \
+                not 0 <= now_ms // 1000 * 1000 - stamp <= MAX_AGE_MS or \
+                (self.last_stamp_ms is not None and stamp < self.last_stamp_ms) or \
+                self.last_stamp_by_name.get(RESULT_TELEMETRY, -1) >= stamp:
+            raise ReceiverError("invalid simulated COMMAND_RESULT TM timestamp")
+        if self.last_sequence is not None:
+            step = (decoded["sequence"] - self.last_sequence) & 0xffff
+            if not 1 <= step <= 32767:
+                raise ReceiverError("replayed simulated COMMAND_RESULT TM")
+        with self._tc_lock:
+            request = self._tc_pending
+            fields = decoded["fields"]
+            if request is None or not request.sent or \
+                    fields["command_id"] != request.command_id or \
+                    fields["command_sequence"] != request.sequence:
+                raise ReceiverError("unmatched simulated COMMAND_RESULT TM")
+            if not ((fields["result"] == 0 and fields["reason"] == 0 and
+                     fields["executed_at_utc_ms"] >= stamp) or
+                    (fields["result"] == 1 and fields["reason"] in (1, 2, 3, 4) and
+                     fields["executed_at_utc_ms"] == 0)):
+                raise ReceiverError("invalid simulated COMMAND_RESULT status")
+            self.last_sequence = decoded["sequence"]
+            self.last_stamp_ms = stamp
+            self.last_stamp_by_name[RESULT_TELEMETRY] = stamp
+            self._tc_pending = None
+            request.response = packet
+            request.done.set()
 
     def ingest(self, packet: bytes, *, received_ms: int | None = None) -> dict[str, Any]:
         """Validate one draft PDU, update the preview, and bridge GNSS sparingly."""
@@ -208,14 +311,40 @@ class TmReceiver:
         return required <= present
 
     def process_connection(self, connection: socket.socket) -> int:
-        """Process one stream until clean EOF; invalid streams are closed."""
+        """Process one duplex stream until clean EOF; invalid streams close."""
         accepted = 0
-        while True:
-            packet = read_framed_pdu(connection)
-            if packet is None:
-                return accepted
-            self.ingest(packet)
-            accepted += 1
+        with self._tc_lock:
+            self._satellite_connected = True
+        try:
+            while True:
+                to_send = None
+                with self._tc_lock:
+                    request = self._tc_pending
+                    if request is not None and not request.sent:
+                        request.sent = True
+                        to_send = request.packet
+                if to_send is not None:
+                    # Exactly one writer owns this socket on the ground side.
+                    # A failed send closes the stream and wakes the submitter.
+                    send_framed_pdu(connection, to_send)
+                # Socket doubles used by unit tests have no descriptor. Live
+                # sockets are polled so queued TC is sent within 250 ms.
+                if isinstance(connection, socket.socket) and not \
+                        select.select([connection], [], [], 0.25)[0]:
+                    continue
+                packet = read_framed_pdu(connection)
+                if packet is None:
+                    return accepted
+                decoded = decode(packet)
+                if decoded["name"] == RESULT_TELEMETRY:
+                    self._ingest_command_result(packet, decoded)
+                else:
+                    self.ingest(packet)
+                accepted += 1
+        finally:
+            with self._tc_lock:
+                self._satellite_connected = False
+            self._fail_pending("simulated satellite TM stream closed")
 
     def serve_forever(self, bind: str, port: int, *, stop: Event | None = None) -> None:
         if not 1 <= port <= 65535:
@@ -241,6 +370,46 @@ class TmReceiver:
                         print(f"TM stream {address[0]} rejected: {error}",
                               file=sys.stderr, flush=True)
 
+    def serve_tc_socket(self, path: Path, *, stop: Event | None = None,
+                        ready: Event | None = None) -> None:
+        """Accept one draft TC per Unix connection, replying with one TM PDU."""
+        if (path.name != "bridge.sock" or path.parent.is_symlink() or
+                not path.parent.is_dir()):
+            raise ReceiverError("regular private simulator TC socket directory required")
+        if path.exists() or path.is_symlink():
+            mode = path.lstat().st_mode
+            if not stat.S_ISSOCK(mode):
+                raise ReceiverError("simulator TC path is not a stale socket")
+            path.unlink()
+        try:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+                listener.bind(str(path))
+                os.chmod(path, 0o600)
+                listener.listen(1)
+                listener.settimeout(1.0)
+                if ready is not None:
+                    ready.set()
+                print(f"TEST_ONLY TC bridge listening on {path}", flush=True)
+                while stop is None or not stop.is_set():
+                    try:
+                        connection, _ = listener.accept()
+                    except socket.timeout:
+                        continue
+                    with connection:
+                        connection.settimeout(TC_RESPONSE_TIMEOUT_S + 2)
+                        try:
+                            packet = read_framed_pdu(connection)
+                            if packet is None:
+                                raise ReceiverError("empty simulator TC request")
+                            result = self.submit_tc(packet)
+                            send_framed_pdu(connection, result)
+                        except (OSError, ValueError, PacketError) as error:
+                            print(f"TEST_ONLY TC bridge rejected request: {error}",
+                                  file=sys.stderr, flush=True)
+        finally:
+            if path.is_socket():
+                path.unlink()
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -250,11 +419,29 @@ def main() -> None:
     parser.add_argument("--snapshot", type=Path, required=True)
     parser.add_argument("--n11-inbox", type=Path, required=True)
     parser.add_argument("--limits", type=Path, required=True)
+    parser.add_argument("--tc-socket", type=Path,
+                        help="private Unix socket for one test-only TC/ACK exchange")
     args = parser.parse_args()
     try:
         receiver = TmReceiver(args.snapshot, args.n11_inbox,
                               load_limits(args.limits))
-        receiver.serve_forever(args.bind, args.port)
+        stop = Event()
+        bridge_thread = None
+        if args.tc_socket is not None:
+            ready = Event()
+            bridge_thread = Thread(target=receiver.serve_tc_socket,
+                                   args=(args.tc_socket,),
+                                   kwargs={"stop": stop, "ready": ready},
+                                   name="sim-tc-bridge", daemon=True)
+            bridge_thread.start()
+            if not ready.wait(timeout=3):
+                raise ReceiverError("simulated TC Unix socket did not start")
+        try:
+            receiver.serve_forever(args.bind, args.port, stop=stop)
+        finally:
+            stop.set()
+            if bridge_thread is not None:
+                bridge_thread.join(timeout=2)
     except (OSError, ValueError, PacketError) as error:
         parser.exit(2, f"synthetic TM receiver failed: {error}\n")
 

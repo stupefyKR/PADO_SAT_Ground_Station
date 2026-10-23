@@ -2,8 +2,11 @@
 
 import json
 import os
+import socket
 import struct
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -12,12 +15,15 @@ from services.sim_ground.receiver import (
     ATTITUDE_FRAME,
     ReceiverError,
     TmReceiver,
+    _PendingTc,
     load_limits,
     prune_simulator_n11,
     read_framed_pdu,
+    send_framed_pdu,
 )
 from services.webapp.tm_preview import load_snapshot
-from tools.pado_packet_codec import PacketError, encode_tc, encode_tm
+from tools.pado_packet_codec import PacketError, decode, encode_tc, encode_tm
+from services.sim_sat.emulator import build_command_result, TcReplayState
 from tools.run_fds_pipeline import verified_pair
 
 
@@ -193,6 +199,128 @@ class SyntheticTmReceiverTests(unittest.TestCase):
         self.assertTrue(newest.exists())
         self.assertTrue((self.inbox / newest.name.removesuffix(".manifest.json")).exists())
         self.assertEqual(len(list(self.inbox.glob("*.manifest.json"))), 2)
+
+    @unittest.skipIf(os.name == "nt", "Windows sandbox blocks socket.socketpair")
+    def test_duplex_tc_roundtrip_and_ack_correlation(self):
+        satellite, ground = socket.socketpair()
+        satellite.settimeout(3)
+        ground.settimeout(3)
+        stream_errors = []
+        def process():
+            try:
+                self.receiver.process_connection(ground)
+            except Exception as error:
+                stream_errors.append(error)
+            finally:
+                ground.close()
+        worker = threading.Thread(target=process, daemon=True)
+        worker.start()
+        try:
+            for _ in range(100):
+                if self.receiver._satellite_connected:
+                    break
+                time.sleep(0.01)
+            self.assertTrue(self.receiver._satellite_connected)
+            stamp = int(time.time()) * 1000
+            tc = encode_tc("hk_get", 43, stamp, {})
+            result = {}
+            def submit():
+                try:
+                    result["packet"] = self.receiver.submit_tc(tc, timeout_s=3)
+                except Exception as error:
+                    result["error"] = error
+            submitter = threading.Thread(target=submit, daemon=True)
+            submitter.start()
+            self.assertEqual(read_framed_pdu(satellite), tc)
+            ack = build_command_result(tc, 500, TcReplayState(),
+                                       received_ms=int(time.time() * 1000))
+            send_framed_pdu(satellite, ack)
+            submitter.join(timeout=3)
+            self.assertFalse(submitter.is_alive())
+            self.assertNotIn("error", result)
+            self.assertEqual(result["packet"], ack)
+            with self.assertRaises(ReceiverError):
+                self.receiver.submit_tc(tc, timeout_s=0.1)
+        finally:
+            satellite.close()
+            worker.join(timeout=3)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(stream_errors, [])
+
+    def test_tc_bridge_rejects_bad_crc_scheduled_and_stale_before_uplink(self):
+        stamp = int(time.time()) * 1000
+        tc = encode_tc("hk_get", 1, stamp, {})
+        corrupted = bytearray(tc)
+        corrupted[-1] ^= 1
+        with self.assertRaises(PacketError):
+            self.receiver.submit_tc(bytes(corrupted), now_ms=stamp)
+        scheduled = encode_tc("hk_get", 1, stamp, {},
+                              execute_at_utc_ms=stamp + 5000)
+        with self.assertRaises(ReceiverError):
+            self.receiver.submit_tc(scheduled, now_ms=stamp)
+        with self.assertRaises(ReceiverError):
+            self.receiver.submit_tc(tc, now_ms=stamp + 121_000)
+
+    def test_command_result_requires_matching_pending_id_sequence_and_status(self):
+        stamp = int(time.time()) * 1000
+        tc = encode_tc("hk_get", 33, stamp, {})
+        decoded = decode(tc)
+        request = _PendingTc(tc, decoded["id"], decoded["sequence"])
+        request.sent = True
+        self.receiver._tc_pending = request
+        wrong_command = encode_tc("mm_get_mode", 33, stamp, {})
+        ack = build_command_result(wrong_command, 50, TcReplayState(),
+                                   received_ms=stamp)
+        with self.assertRaisesRegex(ReceiverError, "unmatched"):
+            self.receiver._ingest_command_result(ack, decode(ack), received_ms=stamp)
+        self.assertIs(self.receiver._tc_pending, request)
+        good_ack = build_command_result(tc, 50, TcReplayState(), received_ms=stamp)
+        self.receiver._ingest_command_result(good_ack, decode(good_ack),
+                                             received_ms=stamp)
+        self.assertEqual(request.response, good_ack)
+        self.assertTrue(request.done.is_set())
+
+    @unittest.skipIf(os.name == "nt", "Unix bridge exercised by Linux CI")
+    def test_private_unix_tc_bridge_roundtrip(self):
+        satellite, ground = socket.socketpair()
+        satellite.settimeout(4)
+        ground.settimeout(4)
+        stop = threading.Event()
+        with tempfile.TemporaryDirectory(prefix="pado-sim-tc-") as folder:
+            path = Path(folder) / "bridge.sock"
+            tm_thread = threading.Thread(target=self.receiver.process_connection,
+                                         args=(ground,), daemon=True)
+            bridge_thread = threading.Thread(target=self.receiver.serve_tc_socket,
+                                             args=(path,), kwargs={"stop": stop},
+                                             daemon=True)
+            tm_thread.start()
+            bridge_thread.start()
+            try:
+                for _ in range(200):
+                    if path.is_socket() and self.receiver._satellite_connected:
+                        break
+                    time.sleep(0.01)
+                self.assertTrue(path.is_socket())
+                self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+                issued_ms = int(time.time() * 1000)
+                tc = encode_tc("mm_get_mode", 41, issued_ms, {})
+                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                    client.settimeout(4)
+                    client.connect(str(path))
+                    send_framed_pdu(client, tc)
+                    self.assertEqual(read_framed_pdu(satellite), tc)
+                    ack = build_command_result(tc, 700, TcReplayState(),
+                                               received_ms=int(time.time() * 1000))
+                    send_framed_pdu(satellite, ack)
+                    self.assertEqual(read_framed_pdu(client), ack)
+            finally:
+                stop.set()
+                satellite.close()
+                tm_thread.join(timeout=3)
+                bridge_thread.join(timeout=3)
+                ground.close()
+            self.assertFalse(tm_thread.is_alive())
+            self.assertFalse(bridge_thread.is_alive())
 
 
 if __name__ == "__main__":

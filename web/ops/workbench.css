@@ -6,6 +6,9 @@
 .workbench-tabs button:focus-visible{outline:2px solid #92dee1;outline-offset:-4px}
 .ros-view[hidden]{display:none}.ros-status-grid{grid-template-columns:minmax(320px,.9fr) minmax(400px,1.3fr)}
 .ros-tc-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+.sim-tc-grid{margin-bottom:14px}
+.sim-sequence-panel .table-scroll,.sim-reservation-panel .table-scroll{max-height:350px}
+.sim-sequence-panel td,.sim-reservation-panel td{overflow-wrap:anywhere}
 .current-alerts{min-height:175px;padding:18px 16px;color:#a9c2cc;font-size:.78rem;line-height:1.6}
 .current-alert-row{display:grid;grid-template-columns:1fr auto;gap:10px;padding:10px 0;border-bottom:1px solid #2a4656;color:#f0b48e}
 .current-alert-row{width:100%;border-top:0;border-left:0;border-right:0;background:transparent;text-align:left;cursor:pointer}

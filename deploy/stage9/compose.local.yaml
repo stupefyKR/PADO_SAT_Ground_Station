@@ -34,7 +34,7 @@ services:
     build:
       context: ../..
       dockerfile: docker/stage9/Dockerfile
-    command: ["python3", "-m", "services.webapp.main", "ros", "--transport", "http", "--internal-token-file", "/internal/token", "--bind", "0.0.0.0", "--port", "8081", "--core-socket", "/run/core/core.sock", "--draft-db", "/state/ros-drafts.db", "--tm-preview", "/tm-preview/test_tm_snapshot.json"]
+    command: ["python3", "-m", "services.webapp.main", "ros", "--transport", "http", "--internal-token-file", "/internal/token", "--bind", "0.0.0.0", "--port", "8081", "--core-socket", "/run/core/core.sock", "--draft-db", "/state/ros-drafts.db", "--tm-preview", "/tm-preview/test_tm_snapshot.json", "--sim-tc-socket", "/run/sim-tc/bridge.sock"]
     depends_on:
       init-token: {condition: service_completed_successfully}
       ros-core-read: {condition: service_healthy}
@@ -43,6 +43,7 @@ services:
       - ros_core_socket:/run/core:ro
       - ros_drafts:/state
       - ros_tm_preview:/tm-preview:ro
+      - sim_tc_socket:/run/sim-tc:ro
     networks: [portal_ros]
     read_only: true
     cap_drop: [ALL]
@@ -124,7 +125,7 @@ services:
       context: ../..
       dockerfile: docker/stage9/SimTm.Dockerfile
     user: "0:0"
-    command: ["chown", "-R", "10001:10001", "/tm-preview", "/n11-inbox", "/fds-runs", "/fds-view", "/fds-truth", "/mps-schedules"]
+    command: ["chown", "-R", "10001:10001", "/tm-preview", "/n11-inbox", "/fds-runs", "/fds-view", "/fds-truth", "/mps-schedules", "/sim-tc"]
     volumes:
       - ros_tm_preview:/tm-preview
       - sim_n11_inbox:/n11-inbox
@@ -132,6 +133,7 @@ services:
       - fds_view:/fds-view
       - fds_truth:/fds-truth
       - mps_schedules:/mps-schedules
+      - sim_tc_socket:/sim-tc
     network_mode: none
     read_only: true
     cap_drop: [ALL]
@@ -142,12 +144,13 @@ services:
     build:
       context: ../..
       dockerfile: docker/stage9/SimTm.Dockerfile
-    command: ["python3", "-m", "services.sim_ground.receiver", "--test-only", "--bind", "0.0.0.0", "--port", "9200", "--snapshot", "/tm-preview/test_tm_snapshot.json", "--n11-inbox", "/n11-inbox", "--limits", "/app/services/sim_ground/test_limits.json"]
+    command: ["python3", "-m", "services.sim_ground.receiver", "--test-only", "--bind", "0.0.0.0", "--port", "9200", "--snapshot", "/tm-preview/test_tm_snapshot.json", "--n11-inbox", "/n11-inbox", "--limits", "/app/services/sim_ground/test_limits.json", "--tc-socket", "/run/sim-tc/bridge.sock"]
     depends_on:
       sim-volume-init: {condition: service_completed_successfully}
     volumes:
       - ros_tm_preview:/tm-preview
       - sim_n11_inbox:/n11-inbox
+      - sim_tc_socket:/run/sim-tc
     networks: [sim_tm]
     read_only: true
     cap_drop: [ALL]
@@ -184,6 +187,7 @@ volumes:
   fds_truth:
   fds_runs:
   sim_n11_inbox:
+  sim_tc_socket:
 networks:
   entry: {driver: bridge}
   portal_ros: {driver: bridge, internal: true}

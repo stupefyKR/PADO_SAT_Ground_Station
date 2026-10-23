@@ -1,6 +1,6 @@
 """Development portal and isolated subsystem APIs over local HTTP or TLS.
 
-This is a non-operational development boundary. No TC, approval or upload
+This is a non-operational development boundary. No flight TC, approval or upload
 endpoint exists. Run each mode as a separate process/container.
 """
 
@@ -26,7 +26,8 @@ from urllib.parse import urlsplit
 from .auth import AuthError, AuthStore, ROLES
 from .core import CoreUnavailable, mps_catalog, mps_passes, ros_summary
 from .mps_workbench import CandidateError, MpsCandidateStore, draft_commands
-from .ros_workbench import DraftError, RosDraftStore
+from .ros_workbench import DraftError, RosDraftStore, normalize_sim_handoff
+from .sim_tc_dispatch import SimTcDispatcher
 from .tm_preview import MAX_SNAPSHOT_BYTES, PreviewError, load_snapshot
 
 
@@ -57,6 +58,8 @@ PROXY_ROUTES = {
     "/api/ros/test-tm-snapshot": ("ros", "/test-tm-snapshot"),
     "/api/ros/test-sequences": ("ros", "/test-sequences"),
     "/api/ros/test-reservations": ("ros", "/test-reservations"),
+    "/api/ros/test-sim-sequences": ("ros", "/test-sim-sequences"),
+    "/api/ros/test-sim-reservations": ("ros", "/test-sim-reservations"),
     "/api/mps/catalog": ("mps", "/catalog"),
     "/api/mps/passes": ("mps", "/passes"),
     "/api/mps/test-candidates": ("mps", "/test-candidates"),
@@ -104,6 +107,7 @@ class AppServer(ThreadingHTTPServer):
                  tm_preview: Path | None = None,
                  draft_db: Path | None = None,
                  candidate_db: Path | None = None,
+                 sim_tc_socket: Path | None = None,
                  transport: str = "tls", internal_token_file: Path | None = None) -> None:
         if transport not in ("tls", "http"):
             raise ValueError("invalid_transport")
@@ -134,6 +138,7 @@ class AppServer(ThreadingHTTPServer):
         self.tm_preview = tm_preview
         self.drafts = RosDraftStore(draft_db) if mode == "ros" and draft_db else None
         self.candidates = MpsCandidateStore(candidate_db) if mode == "mps" and candidate_db else None
+        self.sim_tc_socket = sim_tc_socket if mode == "ros" else None
         self.login_attempts: dict[str, list[float]] = {}
         self.login_lock = threading.Lock()
         super().__init__(address, Handler)
@@ -239,15 +244,21 @@ class Handler(BaseHTTPRequestHandler):
                 self._login()
             elif path == "/api/logout":
                 self._logout()
+            elif path == "/api/mps/test-sequences/handoff":
+                self._portal_sim_handoff()
+            elif path == "/api/ros/test-sim-reservations":
+                self._portal_sim_reserve()
             elif path in ("/api/ros/test-sequences", "/api/ros/test-reservations",
                           "/api/ros/test-reservations/cancel", "/api/mps/test-candidates",
-                          "/api/mps/test-sequences"):
+                          "/api/mps/test-sequences",
+                          "/api/ros/test-sim-reservations/cancel"):
                 self._portal_draft_post(path)
             else:
                 self._error(HTTPStatus.NOT_FOUND, "not_found")
         elif self.server.mode == "ros":
             self._backend_draft_post(path)
-        elif self.server.mode == "mps" and path in ("/test-candidates", "/test-sequences"):
+        elif self.server.mode == "mps" and path in ("/test-candidates", "/test-sequences",
+                                                    "/test-sequences/handoff"):
             self._backend_candidate_post(path)
         else:
             self._error(HTTPStatus.NOT_FOUND, "not_found")
@@ -278,6 +289,92 @@ class Handler(BaseHTTPRequestHandler):
         route = ("mps", path.removeprefix("/api/mps")) if path.startswith("/api/mps/") else \
                 ("ros", path.removeprefix("/api/ros"))
         self._proxy(route, session.username, session.role, "POST", body)
+
+    def _portal_sim_handoff(self) -> None:
+        """Get a fresh MPS draft on the server side before forwarding to ROS.
+
+        The browser supplies only a pass reference, never command bytes or
+        handoff contents. Both backend requests retain the authenticated actor.
+        """
+        session = self._session()
+        if not session or not secrets.compare_digest(
+                session.csrf, self.headers.get("X-CSRF-Token", "")):
+            self._error(HTTPStatus.FORBIDDEN, "csrf_or_session")
+            return
+        if session.role not in ("operator", "lead", "planner"):
+            self._error(HTTPStatus.FORBIDDEN, "role_denied")
+            return
+        body = self._read_json()
+        if body is None or set(body) != {"pass_id", "schedule_sha256", "expected_revision"}:
+            self._error(HTTPStatus.BAD_REQUEST, "invalid_request")
+            return
+        response = self._proxy(("mps", "/test-sequences/handoff"), session.username,
+                               session.role, "POST", body, deliver=False)
+        if response is None:
+            return
+        status, data = response
+        if status != HTTPStatus.OK:
+            self._send(status, data)
+            return
+        try:
+            envelope = json.loads(data)
+            if not isinstance(envelope, dict) or len(data) > MAX_DRAFT_BODY:
+                raise ValueError("invalid MPS handoff")
+        except (UnicodeDecodeError, ValueError):
+            self._error(HTTPStatus.BAD_GATEWAY, "invalid_mps_handoff")
+            return
+        self._proxy(("ros", "/test-sim-handoffs"), session.username,
+                    session.role, "POST", envelope)
+
+    def _portal_sim_reserve(self) -> None:
+        """Recheck the saved MPS revision against today's FDS schedule."""
+        session = self._session()
+        if not session or not secrets.compare_digest(
+                session.csrf, self.headers.get("X-CSRF-Token", "")):
+            self._error(HTTPStatus.FORBIDDEN, "csrf_or_session")
+            return
+        if session.role not in ("operator", "lead", "planner"):
+            self._error(HTTPStatus.FORBIDDEN, "role_denied")
+            return
+        body = self._read_json()
+        if body is None or set(body) != {"sha256", "step_id"} or \
+                not isinstance(body["sha256"], str) or \
+                re.fullmatch(r"[0-9a-f]{64}", body["sha256"]) is None:
+            self._error(HTTPStatus.BAD_REQUEST, "invalid_request")
+            return
+        listing = self._proxy(("ros", "/test-sim-sequences"), session.username,
+                              session.role, deliver=False)
+        if listing is None:
+            return
+        try:
+            rows = json.loads(listing[1])["items"]
+            sequence = next((row for row in rows if row["sha256"] == body["sha256"]), None)
+            if sequence is None:
+                self._error(HTTPStatus.CONFLICT, "sim_sequence_not_current")
+                return
+            reference = {"pass_id": sequence["pass_id"],
+                         "schedule_sha256": sequence["schedule_sha256"],
+                         "expected_revision": sequence["revision"]}
+        except (KeyError, TypeError, ValueError):
+            self._error(HTTPStatus.BAD_GATEWAY, "invalid_ros_handoff")
+            return
+        current = self._proxy(("mps", "/test-sequences/handoff"), session.username,
+                              session.role, "POST", reference, deliver=False)
+        if current is None:
+            return
+        if current[0] != HTTPStatus.OK:
+            self._send(current[0], current[1])
+            return
+        try:
+            refreshed = normalize_sim_handoff(json.loads(current[1]))
+        except (DraftError, TypeError, ValueError):
+            self._error(HTTPStatus.BAD_GATEWAY, "invalid_mps_handoff")
+            return
+        if refreshed["sha256"] != body["sha256"]:
+            self._error(HTTPStatus.CONFLICT, "sim_sequence_stale")
+            return
+        self._proxy(("ros", "/test-sim-reservations"), session.username,
+                    session.role, "POST", body)
 
     def _login(self) -> None:
         address = self.client_address[0]
@@ -387,7 +484,8 @@ class Handler(BaseHTTPRequestHandler):
         self._error(HTTPStatus.NOT_FOUND, "not_found")
 
     def _proxy(self, route: tuple[str, str], username: str, role: str,
-               method: str = "GET", body: dict | None = None) -> None:
+               method: str = "GET", body: dict | None = None, *,
+               deliver: bool = True) -> tuple[int, bytes] | None:
         service, path = route
         base = self.server.ros_url if service == "ros" else self.server.mps_url
         address = urlsplit(base)
@@ -416,18 +514,23 @@ class Handler(BaseHTTPRequestHandler):
             connection.request(method, path, body=payload, headers=headers)
             response = connection.getresponse()
             maximum = (MAX_SNAPSHOT_BYTES if path == "/test-tm-snapshot" else
+                       2 * 1024 * 1024 if path == "/test-sim-sequences" else
                        1024 * 1024 if path == "/test-sequences" and service == "mps"
                        else MAX_UPSTREAM)
             data = response.read(maximum + 1)
+            captured = None
             if len(data) > maximum or (method == "GET" and path not in
                                             ("/test-sequences", "/test-reservations",
                                              "/test-candidates",
                                              "/test-tm-snapshot") and
                                             response.status != HTTPStatus.OK):
                 self._error(HTTPStatus.BAD_GATEWAY, "backend_failure")
-            else:
+            elif deliver:
                 self._send(response.status, data)
+            else:
+                captured = (response.status, data)
             connection.close()
+            return captured
         except (OSError, ssl.SSLError, http.client.HTTPException):
             self._error(HTTPStatus.BAD_GATEWAY, "backend_unavailable")
 
@@ -452,12 +555,16 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._json(HTTPStatus.OK, snapshot)
             return
-        if self.server.mode == "ros" and path in ("/test-sequences", "/test-reservations"):
+        if self.server.mode == "ros" and path in ("/test-sequences", "/test-reservations",
+                                                   "/test-sim-sequences",
+                                                   "/test-sim-reservations"):
             if self.server.drafts is None:
                 self._error(HTTPStatus.SERVICE_UNAVAILABLE, "draft_store_unavailable")
                 return
-            items = (self.server.drafts.list_sequences() if path == "/test-sequences"
-                     else self.server.drafts.reservations())
+            items = ({"/test-sequences": self.server.drafts.list_sequences,
+                      "/test-reservations": self.server.drafts.reservations,
+                      "/test-sim-sequences": self.server.drafts.list_sim_sequences,
+                      "/test-sim-reservations": self.server.drafts.list_sim_reservations}[path]())
             self._json(HTTPStatus.OK, {"items": items, "operational": False})
             return
         if self.server.mode == "ros" and path == "/overview":
@@ -469,7 +576,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json(HTTPStatus.OK, {
                 "mode": "SIM_ONLY", "operational": False,
                 "tm_icd": "TBD(ICD)", "tc_send_available": False,
-                "message": "Actual TM parameters and TC sending are unavailable.",
+                "sim_tc_available": self.server.sim_tc_socket is not None,
+                "message": "Flight TC sending is unavailable; simulator loopback is test-only.",
                 **summary})
             return
         if self.server.mode == "mps" and path == "/catalog":
@@ -521,13 +629,19 @@ class Handler(BaseHTTPRequestHandler):
             return
         body = self._read_json(MAX_DRAFT_BODY)
         content_key = "steps" if path == "/test-sequences" else "candidate_ids"
-        if body is None or set(body) != {"pass_id", "schedule_sha256", "expected_revision",
-                                         content_key}:
+        expected = ({"pass_id", "schedule_sha256", "expected_revision"} if
+                    path == "/test-sequences/handoff" else
+                    {"pass_id", "schedule_sha256", "expected_revision", content_key})
+        if body is None or set(body) != expected:
             self._error(HTTPStatus.BAD_REQUEST, "invalid_request")
             return
         try:
             schedule = mps_passes(self.server.core_socket)
-            if path == "/test-sequences":
+            if path == "/test-sequences/handoff":
+                result = self.server.candidates.handoff(
+                    schedule, body["pass_id"], body["schedule_sha256"],
+                    body["expected_revision"], actor)
+            elif path == "/test-sequences":
                 result = self.server.candidates.save_sequence(
                     schedule, body["pass_id"], body["schedule_sha256"],
                     body["expected_revision"], body["steps"], actor)
@@ -568,6 +682,13 @@ class Handler(BaseHTTPRequestHandler):
                                                     body["target_utc_s"], actor)
             elif path == "/test-reservations/cancel" and set(body) == {"id"}:
                 self.server.drafts.cancel(body["id"], actor)
+                result = {"status": "CANCELLED"}
+            elif path == "/test-sim-handoffs":
+                result = self.server.drafts.import_sim_handoff(body, actor)
+            elif path == "/test-sim-reservations" and set(body) == {"sha256", "step_id"}:
+                result = self.server.drafts.reserve_sim(body["sha256"], body["step_id"], actor)
+            elif path == "/test-sim-reservations/cancel" and set(body) == {"id"}:
+                self.server.drafts.cancel_sim(body["id"], actor)
                 result = {"status": "CANCELLED"}
             else:
                 raise DraftError("invalid_request")
@@ -610,6 +731,7 @@ def parser() -> argparse.ArgumentParser:
         if mode == "ros":
             service.add_argument("--draft-db", type=Path)
             service.add_argument("--tm-preview", type=Path)
+            service.add_argument("--sim-tc-socket", type=Path)
         if mode == "mps":
             service.add_argument("--candidate-db", type=Path)
     return result
@@ -659,11 +781,18 @@ def main() -> None:
                        tm_preview=getattr(args, "tm_preview", None),
                        draft_db=getattr(args, "draft_db", None),
                        candidate_db=getattr(args, "candidate_db", None),
+                       sim_tc_socket=getattr(args, "sim_tc_socket", None),
                        transport=args.transport,
                        internal_token_file=args.internal_token_file)
+    dispatcher = (SimTcDispatcher(server.drafts, args.sim_tc_socket)
+                  if args.mode == "ros" and server.drafts and args.sim_tc_socket else None)
+    if dispatcher:
+        dispatcher.start()
     try:
         server.serve_forever(poll_interval=0.2)
     finally:
+        if dispatcher:
+            dispatcher.stop()
         server.server_close()
         if server.drafts:
             server.drafts.close()

@@ -311,3 +311,43 @@ class MpsCandidateStore:
         return {"pass_id": pass_id, "schedule_sha256": digest,
                 "aos_utc_s": aos, "los_utc_s": los, "revision": revision,
                 "steps": clean, "updated_by": actor, "operational": False}
+
+    def handoff(self, schedule: dict, pass_id: str, digest: str,
+                expected_revision: int, actor: str) -> dict:
+        """Read a saved revision again at handoff time; never trust browser steps.
+
+        A rolling FDS refresh can renumber a physical pass. ``_draft_row`` may
+        find that draft, but the returned times and command offsets are checked
+        against the *current* validated pass before exposing the handoff.
+        """
+        selected = self._pass(schedule, pass_id, digest)
+        if selected["station_id"] != "yonsei" or selected["band"] != "UHF":
+            raise CandidateError("sim_uplink_only_yonsei_uhf")
+        if (type(expected_revision) is not int or not 1 <= expected_revision < 0xffffffff or
+                not isinstance(actor, str) or
+                not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", actor)):
+            raise CandidateError("invalid_handoff")
+        with self.lock:
+            row = self._draft_row("sequence_drafts", "steps", schedule, selected)
+            if row is None or row[4] != expected_revision:
+                raise CandidateError("revision_conflict")
+            try:
+                saved_steps = json.loads(row[5])
+                steps = self._validated_steps(
+                    saved_steps, selected["los_utc_s"] - selected["aos_utc_s"])
+            except (ValueError, TypeError) as exc:
+                raise CandidateError("sequence_needs_review") from exc
+        if not steps:
+            raise CandidateError("empty_sequence")
+        from .ros_workbench import SIM_READ_ONLY_COMMANDS
+        if any(step["command_name"] not in SIM_READ_ONLY_COMMANDS for step in steps):
+            raise CandidateError("sim_read_only_commands_required")
+        return {
+            "schema": "pado.sim-sequence.v1", "non_operational": True,
+            "source": "MPS_TEST_DRAFT",
+            "pass_id": pass_id, "station_id": selected["station_id"],
+            "band": selected["band"], "schedule_sha256": digest,
+            "aos_utc_s": selected["aos_utc_s"],
+            "los_utc_s": selected["los_utc_s"],
+            "revision": expected_revision, "steps": steps,
+        }

@@ -157,6 +157,7 @@ function mpsRenderSequenceEditor(pass, schedule, session, drafts) {
   const existing = drafts.find((item) => item.pass_id === pass.pass_id);
   let revision = existing?.revision ?? 0;
   let steps = structuredClone(existing?.steps ?? []);
+  let savedSteps = JSON.stringify(existing?.steps ?? []);
   let needsReview = existing?.needs_review === true;
   const editable = ["planner", "operator", "lead"].includes(session.role) &&
     pass.station_id === "yonsei" && pass.band === "UHF";
@@ -218,12 +219,21 @@ function mpsRenderSequenceEditor(pass, schedule, session, drafts) {
   table.innerHTML = "<thead><tr><th>#</th><th>AOS + 초</th><th>명령</th><th>인자</th><th>편집</th></tr></thead><tbody></tbody>";
   const tbody = table.querySelector("tbody");
   const note = document.createElement("p"); note.className = "inspector-note";
+  const simUplink = pass.station_id === "yonsei" && pass.band === "UHF";
+  const simQueries = new Set(["mm_get_mode", "hk_get", "eps_get_hk", "aocs_get_hk",
+    "cs_get_hk", "siren_get_hk", "crest_get_hk"]);
   note.textContent = needsReview ?
     "FDS 일정 갱신으로 PASS가 짧아졌습니다. 범위를 벗어난 실행 오프셋을 수정한 뒤 다시 저장하세요." :
-    "시험용 초안입니다. 순서대로 저장하며 충돌 검사·승인·TC 인코딩·송출은 연결되지 않았습니다.";
+    simUplink ? "연세대 UHF의 조회 명령 7종만 가상 위성에 전달할 수 있습니다. 실제 TC 승인·운용 송출은 차단됩니다." :
+      "가상 위성 TC 왕복은 연세대 UHF 패스에서만 지원합니다. 이 패스의 시퀀스 초안은 저장할 수 있습니다.";
   scroll.replaceChildren(form, note, table);
   const save = document.createElement("button"); save.type = "button";
   save.textContent = "시험 시퀀스 저장"; save.disabled = !editable;
+  const handoff = document.createElement("button"); handoff.type = "button";
+  handoff.textContent = "ROS 시험 초안으로 전달";
+  const handoffStatus = document.createElement("span");
+  handoffStatus.className = "mps-handoff-status";
+  handoffStatus.setAttribute("role", "status");
   save.addEventListener("click", async () => {
     save.disabled = true;
     try {
@@ -234,14 +244,36 @@ function mpsRenderSequenceEditor(pass, schedule, session, drafts) {
       });
       revision = saved.revision;
       needsReview = false;
-      note.textContent = "시험용 초안입니다. 순서대로 저장하며 충돌 검사·승인·TC 인코딩·송출은 연결되지 않았습니다.";
+      savedSteps = JSON.stringify(saved.steps);
+      handoffStatus.textContent = "";
+      note.textContent = simUplink ?
+        "연세대 UHF의 조회 명령 7종만 가상 위성에 전달할 수 있습니다. 실제 TC 승인·운용 송출은 차단됩니다." :
+        "가상 위성 TC 왕복은 연세대 UHF 패스에서만 지원합니다. 이 패스의 시퀀스 초안은 저장할 수 있습니다.";
       const position = drafts.findIndex((item) => item.pass_id === pass.pass_id);
       if (position < 0) drafts.push(saved); else drafts[position] = saved;
       document.getElementById("api-error").hidden = true; draw();
     } catch (_) { showError("저장 실패: 일정 또는 리비전 변경과 인자 범위를 확인하세요."); }
     finally { save.disabled = !editable; }
   });
-  actions.replaceChildren(save);
+  handoff.addEventListener("click", async () => {
+    handoff.disabled = true;
+    handoffStatus.textContent = "ROS에 시험 초안을 전달하는 중입니다.";
+    try {
+      await api("/api/mps/test-sequences/handoff", {
+        method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": session.csrf },
+        body: JSON.stringify({ pass_id: pass.pass_id,
+          schedule_sha256: schedule.schedule_sha256, expected_revision: revision })
+      });
+      handoffStatus.replaceChildren("ROS에 전달됨 · ");
+      const link = document.createElement("a"); link.href = "/ops";
+      link.textContent = "ROS에서 확인"; handoffStatus.append(link);
+      document.getElementById("api-error").hidden = true;
+    } catch (error) {
+      handoffStatus.textContent = "전달 실패";
+      showError(`ROS 전달 실패: ${error.message}`);
+    } finally { draw(); }
+  });
+  actions.replaceChildren(save, handoff, handoffStatus);
   const draw = () => {
     tbody.replaceChildren();
     value("mps-review-commands", steps.length ? steps.map((item) => item.command_name).join(" → ") : "미등록");
@@ -250,6 +282,9 @@ function mpsRenderSequenceEditor(pass, schedule, session, drafts) {
     tag.textContent = needsReview ? "시각 재검토 필요" :
       revision ? `시험 초안 · 리비전 ${revision}` : "새 시험 초안";
     tag.className = needsReview ? "tag warning" : "tag neutral";
+    handoff.disabled = !editable || !simUplink || !revision || !steps.length || needsReview ||
+      steps.some((step) => !simQueries.has(step.command_name)) ||
+      JSON.stringify(steps) !== savedSteps;
     steps.forEach((step, index) => {
       const row = document.createElement("tr");
       [index + 1, step.offset_s, step.command_name,

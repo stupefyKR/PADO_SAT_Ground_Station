@@ -17,6 +17,71 @@ def schedule(digest="a" * 64):
 
 
 class MpsCandidateStoreTest(unittest.TestCase):
+    def test_handoff_rechecks_saved_revision_and_current_pass(self):
+        (ROOT / "out").mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=ROOT / "out") as folder:
+            store = MpsCandidateStore(Path(folder) / "drafts.db")
+            original = schedule()
+            steps = [{"offset_s": 10, "command_name": "hk_get", "parameters": {}}]
+            store.save_sequence(original, "yonsei-001", "a" * 64, 0,
+                                steps, "planner01")
+            exported = store.handoff(original, "yonsei-001", "a" * 64,
+                                     1, "operator01")
+            self.assertEqual(exported, {
+                "schema": "pado.sim-sequence.v1", "non_operational": True,
+                "source": "MPS_TEST_DRAFT", "pass_id": "yonsei-001",
+                "station_id": "yonsei", "band": "UHF",
+                "schedule_sha256": "a" * 64, "aos_utc_s": 100,
+                "los_utc_s": 200, "revision": 1, "steps": steps,
+            })
+            with self.assertRaisesRegex(CandidateError, "invalid_handoff"):
+                store.handoff(original, "yonsei-001", "a" * 64,
+                              0, "operator01")
+            with self.assertRaisesRegex(CandidateError, "revision_conflict"):
+                store.handoff(original, "yonsei-001", "a" * 64,
+                              2, "operator01")
+            with self.assertRaisesRegex(CandidateError, "stale_schedule"):
+                store.handoff(schedule("b" * 64), "yonsei-001", "a" * 64,
+                              1, "operator01")
+            shifted = schedule("b" * 64)
+            shifted["passes"][0].update(pass_id="yonsei-002", aos_utc_s=103,
+                                          los_utc_s=203)
+            carried = store.handoff(shifted, "yonsei-002", "b" * 64,
+                                    1, "operator01")
+            self.assertEqual(carried["aos_utc_s"], 103)
+            self.assertEqual(carried["pass_id"], "yonsei-002")
+            shortened = schedule("c" * 64)
+            shortened["passes"][0].update(pass_id="yonsei-003", aos_utc_s=105,
+                                            los_utc_s=112)
+            with self.assertRaisesRegex(CandidateError, "sequence_needs_review"):
+                store.handoff(shortened, "yonsei-003", "c" * 64,
+                              1, "operator01")
+            store.close()
+
+    def test_empty_sequence_cannot_be_handed_off(self):
+        (ROOT / "out").mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=ROOT / "out") as folder:
+            store = MpsCandidateStore(Path(folder) / "drafts.db")
+            store.save_sequence(schedule(), "yonsei-001", "a" * 64, 0,
+                                [], "planner01")
+            with self.assertRaisesRegex(CandidateError, "empty_sequence"):
+                store.handoff(schedule(), "yonsei-001", "a" * 64,
+                              1, "operator01")
+            store.close()
+
+    def test_mutating_draft_cannot_be_handed_to_simulator(self):
+        (ROOT / "out").mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=ROOT / "out") as folder:
+            store = MpsCandidateStore(Path(folder) / "drafts.db")
+            store.save_sequence(schedule(), "yonsei-001", "a" * 64, 0,
+                                [{"offset_s": 10, "command_name": "hk_set_period",
+                                  "parameters": {"period_s": 30}}], "planner01")
+            with self.assertRaisesRegex(CandidateError,
+                                        "sim_read_only_commands_required"):
+                store.handoff(schedule(), "yonsei-001", "a" * 64,
+                              1, "planner01")
+            store.close()
+
     def test_sequence_persists_typed_steps_and_rejects_stale_or_invalid_input(self):
         (ROOT / "out").mkdir(exist_ok=True)
         with tempfile.TemporaryDirectory(dir=ROOT / "out") as folder:

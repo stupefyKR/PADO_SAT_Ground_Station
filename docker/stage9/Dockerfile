@@ -27,6 +27,7 @@ RUN apt-get update \
 COPY --from=core-builder /build/gs_stage9_core_probe /usr/local/bin/gs_stage9_core_probe
 WORKDIR /app
 COPY services/webapp /app/services/webapp
+COPY tools/pado_packet_codec.py /app/tools/pado_packet_codec.py
 COPY web /app/web
 COPY interfaces/command_db/commands.json /app/interfaces/command_db/commands.json
 COPY interfaces/pado_packets/draft_v0.json /app/interfaces/pado_packets/draft_v0.json

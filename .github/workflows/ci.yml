@@ -116,18 +116,25 @@ jobs:
         run: |
           python3 -m tests.run_synthetic_demo_smoke \
             out/orekit-data-2422a7d06ee2cc3b5a503a47271203b0706f3e82
-      - name: Build offline synthetic demo and TM containers
+      - name: Build offline synthetic demo, TM, and ROS containers
         env:
           PADO_LOCAL_BIND_IP: 127.0.0.1
-        run: docker compose -f deploy/stage9/compose.local.yaml build fds-synthetic-demo sim-ground sim-satellite
-      - name: Verify internal simulator TCP to ROS snapshot
+        run: docker compose -f deploy/stage9/compose.local.yaml build fds-synthetic-demo sim-ground sim-satellite ros-api
+      - name: Verify simulator TM, private TC bridge, and scheduled ROS ACK
         env:
           PADO_LOCAL_BIND_IP: 127.0.0.1
         run: |
           set -euo pipefail
           compose=(docker compose -f deploy/stage9/compose.local.yaml)
-          trap '${compose[@]} down --volumes --remove-orphans' EXIT
-          "${compose[@]}" up -d fds-synthetic-demo sim-ground sim-satellite
+          cleanup() {
+            result=$?
+            if (( result != 0 )); then
+              "${compose[@]}" logs --tail=80 fds-synthetic-demo sim-ground sim-satellite ros-api || true
+            fi
+            "${compose[@]}" down --volumes --remove-orphans
+          }
+          trap cleanup EXIT
+          "${compose[@]}" up -d fds-synthetic-demo sim-ground sim-satellite ros-api
           ready=false
           for attempt in {1..36}; do
             if "${compose[@]}" exec -T sim-ground python3 -c \
@@ -139,6 +146,62 @@ jobs:
             sleep 5
           done
           if [[ "$ready" != true ]]; then
-            "${compose[@]}" logs --tail=80 fds-synthetic-demo sim-ground sim-satellite
             exit 1
           fi
+          "${compose[@]}" exec -T ros-api python3 - <<'PY'
+          import time
+          from pathlib import Path
+          from services.webapp.ros_workbench import RosDraftStore
+          from services.webapp.sim_tc_dispatch import send_sim_tc
+
+          ack = send_sim_tc(Path('/run/sim-tc/bridge.sock'), {
+              'command_name': 'mm_get_mode',
+              'command_sequence': 7,
+              'parameters': {},
+          })
+          assert ack['command_id'] == 4098, ack
+          assert ack['command_sequence'] == 7, ack
+          assert ack['result'] == 0 and ack['reason'] == 0, ack
+          assert ack['executed_at_utc_ms'] > 0, ack
+
+          # Use the same persistent DB as the running ROS service. The service's
+          # own dispatcher must claim this future AOS+offset reservation and
+          # record the satellite's correlated ACK; this process only observes.
+          store = RosDraftStore(Path('/state/ros-drafts.db'))
+          try:
+              now = int(time.time())
+              aos = now + 20
+              sequence = store.import_sim_handoff({
+                  'schema': 'pado.sim-sequence.v1',
+                  'source': 'MPS_TEST_DRAFT',
+                  'non_operational': True,
+                  'pass_id': 'yonsei-ci-roundtrip',
+                  'station_id': 'yonsei',
+                  'band': 'UHF',
+                  'schedule_sha256': 'c' * 64,
+                  'aos_utc_s': aos,
+                  'los_utc_s': aos + 180,
+                  'revision': 1,
+                  'steps': [{'offset_s': 5, 'command_name': 'mm_get_mode',
+                             'parameters': {}}],
+              }, 'ci')
+              reservation = store.reserve_sim(sequence['sha256'], 1, 'ci')
+              deadline = time.monotonic() + 65
+              while time.monotonic() < deadline:
+                  current = next(row for row in store.list_sim_reservations()
+                                 if row['id'] == reservation['id'])
+                  if current['status'] == 'ACKED':
+                      saved_ack = current['ack']
+                      assert saved_ack['command_id'] == 4098, current
+                      assert saved_ack['command_sequence'] == (
+                          (reservation['id'] - 1) % 65535 + 1), current
+                      assert saved_ack['result'] == 0 and saved_ack['reason'] == 0, current
+                      break
+                  if current['status'] not in ('SCHEDULED', 'SENDING'):
+                      raise RuntimeError(f'ROS reservation did not ACK: {current}')
+                  time.sleep(0.5)
+              else:
+                  raise TimeoutError(f'ROS dispatcher did not finish: {current}')
+          finally:
+              store.close()
+          PY

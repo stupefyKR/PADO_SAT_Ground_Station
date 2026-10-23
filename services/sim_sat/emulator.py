@@ -3,8 +3,9 @@
 This is a TEST_ONLY application-PDU source, not a spacecraft/RF protocol. The
 view already contains the FDS TLE propagation; ECEF velocity is approximated
 by differentiating four neighboring 60-second ECEF position samples. No second
-orbit propagator runs here. A private TCP receiver gets repeated
-``uint32_be packet_length + draft_PDU`` records, with no TC listener or route.
+orbit propagator runs here. The private TCP stream carries framed draft TM in
+one direction and a strictly test-only TC/COMMAND_RESULT exchange in the other.
+It is neither an RF/AX100/CSP transport nor an operational command link.
 """
 
 from __future__ import annotations
@@ -13,22 +14,36 @@ import argparse
 import bisect
 import json
 import math
+import select
 import socket
 import struct
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable
 
-from tools.pado_packet_codec import PacketError, encode_tm
+from tools.pado_packet_codec import PacketError, decode, encode_tm
 
 
 MAX_VIEW_BYTES = 4 * 1024 * 1024
 MAX_SAMPLES = 5000
 VIRTUAL_NORAD_ID = 99999
 DEFAULT_RECEIVER_PORT = 9200
+MAX_TC_AGE_MS = 120_000
+MAX_TC_REPLAY_ENTRIES = 64  # At most one TC per five-second tick in this demo.
+SIM_READ_ONLY_COMMANDS = frozenset({
+    "hk_get", "mm_get_mode", "eps_get_hk", "aocs_get_hk", "cs_get_hk",
+    "siren_get_hk", "crest_get_hk",
+})
+RESULT_OK = 0
+RESULT_REJECTED = 1
+REASON_OK = 0
+REASON_UNSUPPORTED = 1
+REASON_SCHEDULED = 2
+REASON_REPLAY = 3
+REASON_STALE = 4
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 _SIMULATED_BOOT_S = int((datetime(2026, 10, 23, tzinfo=timezone.utc) - _EPOCH).total_seconds())
 
@@ -47,6 +62,13 @@ class OrbitView:
     end_s: int
     samples: tuple[OrbitSample, ...]
     times_s: tuple[int, ...]
+
+
+@dataclass
+class TcReplayState:
+    """Recent issue-time/sequence pairs, independent of reservation ordering."""
+
+    seen: dict[tuple[int, int], int] = field(default_factory=dict)
 
 
 def _unique_pairs(items: list[tuple[str, object]]) -> dict:
@@ -291,14 +313,101 @@ def send_packet_batch(connection: socket.socket, packets: tuple[bytes, ...]) -> 
         connection.sendall(struct.pack(">I", len(packet)) + packet)
 
 
+def _read_exact(connection: socket.socket, length: int, *, clean_eof: bool = False) -> bytes | None:
+    result = bytearray()
+    while len(result) < length:
+        chunk = connection.recv(length - len(result))
+        if not chunk:
+            if not result and clean_eof:
+                return None
+            raise OSError("truncated test-only TC frame")
+        result.extend(chunk)
+    return bytes(result)
+
+
+def read_test_tc(connection: socket.socket) -> bytes | None:
+    """Read one bounded PADO application PDU, never a flight link frame."""
+    prefix = _read_exact(connection, 4, clean_eof=True)
+    if prefix is None:
+        return None
+    (length,) = struct.unpack(">I", prefix)
+    if not 24 <= length <= 200:
+        raise ValueError("test-only TC frame length outside 24..200 bytes")
+    packet = _read_exact(connection, length)
+    if packet is None:
+        raise OSError("truncated test-only TC frame")
+    return packet
+
+
+def build_command_result(packet: bytes, tm_sequence: int, replay: TcReplayState,
+                         *, received_ms: int) -> bytes:
+    """Return a deterministic draft ACK/rejection for one validly framed TC.
+
+    Only the seven query commands can succeed. This does not change simulated
+    spacecraft state. CRC, draft marker, field shape and command ID are checked
+    by the shared codec before a result is generated. A corrupt PDU is dropped.
+    """
+    if type(tm_sequence) is not int or not 0 <= tm_sequence <= 65535 or \
+            type(received_ms) is not int or received_ms <= 0 or \
+            not isinstance(replay, TcReplayState):
+        raise ValueError("invalid simulator ACK context")
+    decoded = decode(packet)
+    if decoded["kind"] != "TC" or decoded["operational"] is not False:
+        raise PacketError("draft TC required on simulator uplink")
+    issue_ms = decoded["utc_ms"]
+    command_seq = decoded["sequence"]
+    replay.seen = {key: when for key, when in replay.seen.items()
+                   if 0 <= received_ms - when <= MAX_TC_AGE_MS}
+    replay_key = (issue_ms, command_seq)
+    if not 0 <= received_ms - issue_ms <= MAX_TC_AGE_MS:
+        reason = REASON_STALE
+    elif replay_key in replay.seen or len(replay.seen) >= MAX_TC_REPLAY_ENTRIES:
+        reason = REASON_REPLAY
+    else:
+        replay.seen[replay_key] = received_ms
+        if decoded["execute_at_utc_ms"]:
+            reason = REASON_SCHEDULED
+        elif decoded["name"] not in SIM_READ_ONLY_COMMANDS:
+            reason = REASON_UNSUPPORTED
+        else:
+            reason = REASON_OK
+    return encode_tm("COMMAND_RESULT", tm_sequence,
+                     received_ms // 1000 * 1000,
+                     {"command_id": decoded["id"],
+                      "command_sequence": command_seq,
+                      "result": RESULT_OK if reason == REASON_OK else RESULT_REJECTED,
+                      "reason": reason,
+                      "executed_at_utc_ms": received_ms if reason == REASON_OK else 0})
+
+
+def wait_and_answer_one_tc(connection: socket.socket, tm_sequence: int,
+                           replay: TcReplayState, timeout_s: float,
+                           *, clock_ms: Callable[[], int] | None = None) -> bool:
+    """Poll the same private TM socket for at most one TC per TM interval."""
+    if timeout_s < 0:
+        raise ValueError("negative simulator wait")
+    if not select.select([connection], [], [], timeout_s)[0]:
+        return False
+    packet = read_test_tc(connection)
+    if packet is None:
+        raise OSError("simulated ground TCP peer closed")
+    sampled_ms = (clock_ms or (lambda: int(time.time() * 1000)))()
+    result = build_command_result(packet, tm_sequence, replay,
+                                  received_ms=sampled_ms)
+    send_packet_batch(connection, (result,))
+    return True
+
+
 def run_forever(orbit_view: Path, host: str, port: int, interval_s: int,
                 seed: int, *, clock: Callable[[], datetime] | None = None,
                 sleeper: Callable[[float], None] = time.sleep) -> None:
     """Keep the simulated downlink alive while valid FDS output covers now."""
     clock = clock or (lambda: datetime.now(timezone.utc))
     connection: socket.socket | None = None
+    replay = TcReplayState()
     try:
         while True:
+            tick_started = time.monotonic()
             try:
                 view = load_orbit_view(orbit_view)
                 moment = clock()
@@ -307,18 +416,25 @@ def run_forever(orbit_view: Path, host: str, port: int, interval_s: int,
                 now = moment.astimezone(timezone.utc).replace(microsecond=0)
                 utc_s = int((now - _EPOCH).total_seconds())
                 # Recover monotone modular sequence after an emulator restart.
-                sequence = (3 * (utc_s // interval_s)) & 0xffff
+                # Reserve the fourth sequence number in each tick for one
+                # COMMAND_RESULT TM. The next tick remains monotone whether
+                # or not a command arrived.
+                sequence = (4 * (utc_s // interval_s)) & 0xffff
                 packets, _ = generate_packet_batch(view, now, sequence, seed=seed)
                 if connection is None:
                     connection = socket.create_connection((host, port), timeout=3)
                     connection.settimeout(3)
                 send_packet_batch(connection, packets)
+                remaining = max(0.0, interval_s - (time.monotonic() - tick_started))
+                if wait_and_answer_one_tc(connection, (sequence + 3) & 0xffff,
+                                          replay, remaining):
+                    sleeper(max(0.0, interval_s - (time.monotonic() - tick_started)))
             except (OSError, ValueError, PacketError) as error:
                 if connection is not None:
                     connection.close()
                     connection = None
                 print(f"TEST_ONLY simulated TM waiting: {error}", file=sys.stderr, flush=True)
-            sleeper(interval_s)
+                sleeper(max(0.0, interval_s - (time.monotonic() - tick_started)))
     finally:
         if connection is not None:
             connection.close()

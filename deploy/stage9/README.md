@@ -72,6 +72,36 @@ FDS는 GNSS가 계획 시각 기준 72시간 미만이면 이를 우선 사용�
 `sim-volume-init`는 첫 실행과 재시작 때 FDS·TM 공유 볼륨을 컨테이너 UID 10001에
 맞춰 초기화한다.
 
+### MPS → ROS → 가상 위성 TC 왕복 시험
+
+`/mps`에서 미래의 **연세대 UHF PASS**에 읽기 전용 초안 명령을 저장한 뒤
+`ROS 시험 초안으로 전달`을 누른다. 포털은 저장된 일정 해시·리비전을 MPS에
+재확인하고 그 결과만 ROS에 전달한다. `/ops`의 `03 TC 준비 · 예약` 탭에서
+별도 `SIM ONLY` 영역의 단계를 선택해 `가상 위성 예약`을 누르면 AOS와 저장된
+오프셋으로 실행 시각을 정한다. 예약 때에도 포털이 MPS의 최신 일정과 저장된
+리비전을 다시 확인하므로, 일정이 바뀐 이전 초안은 새로 전달해야 한다.
+전송 시각에는 ROS API가 초안 TC PDU를 만들어
+공유 볼륨의 비공개 Unix socket으로 `sim-ground`에 보낸다. `sim-ground`가
+Docker 내부 TCP 9200의 기존 가상 위성 연결로 전달하면 `sim-satellite`가
+`COMMAND_RESULT` TM PDU로 응답한다. ROS는 명령 ID·순번이 일치하는 응답을
+검증해 예약 표에 ACK 또는 거절을 표시한다.
+
+```text
+MPS 저장 시퀀스 → 포털에서 재검증 → ROS SIM ONLY 예약
+  → Unix socket (ROS API ↔ sim-ground) → 내부 TCP 9200 → sim-satellite
+  ← 검증된 COMMAND_RESULT TM ←───────────────────────────────────┘
+```
+
+첫 왕복은 `mm_get_mode`, `hk_get`, `eps_get_hk`, `aocs_get_hk`, `cs_get_hk`,
+`siren_get_hk`, `crest_get_hk`와 같은 **읽기 전용** 초안 명령만 허용한다.
+예약은 해당 PASS의 미래 시각에만 만들 수 있고, 예정 시각에서 30초 넘게
+지나거나 LOS가 끝나면 `MISSED`가 된다. 전송 뒤 응답을 확정하지 못한 예약은
+자동 재시도하지 않으며 재시작 중 전송 상태였다면 `UNKNOWN`으로 남는다.
+기존 파일 쌍 가져오기 및 `DRAFT_ONLY` 예약은 별도 검토 경로이며 자동 실행되지
+않는다. 이 시험은 실제 위성의 인증·승인·명령 충돌 검사·RF 송출 기능이 아니다.
+가상 위성의 TCP 연결은 상시 유지되므로 성공 ACK는 응용 패킷 왕복의 증거다.
+실제 안테나 가시성이나 무선 링크 성공을 증명하지는 않는다.
+
 포털 외에 호스트에 게시된 포트는 없다. TCP 9200은 `sim_tm` Docker 내부망에서
 가상 위성과 시험 수신기 사이에만 사용한다. 이 경로는 **RF·CSP·AX100 프레임,
 실제 항우연/연세대 수신 장비, 위성 TC 송출**을 구현하지 않는다. 실제 N05/N11
@@ -211,9 +241,10 @@ MPS `TEST_ONLY_SEQUENCE` 본문과 매니페스트를 업로드하면 ROS API가
 operator/lead/planner는 패스 내부 시각의 단계별 예약 초안을 저장·취소할 수
 있으며 auditor는 읽기만 가능하다. POST에는 포털 세션·CSRF와 내부 토큰
 (`compose.local.yaml`) 또는 mTLS(`compose.dev.yaml`)가
-필요하다. 초안은 `DRAFT_ONLY`이며 시간 도래 시 실행하는 타이머, TC 인코더,
-signer, tc-gate, RF 송출 경로가 없다. 이는 기존 C 코어의 독립 승인·충돌·
-명령 검증을 대신하지 않는다.
+필요하다. 이 **파일 가져오기** 초안은 `DRAFT_ONLY`이며 시간 도래 시 실행하는
+타이머나 송출 경로가 없다. 위의 MPS 직접 전달 `SIM ONLY` 예약만 가상 위성
+응답을 시험한다. 둘 다 signer, tc-gate, RF 송출 경로와 연결되지 않으며 기존
+C 코어의 독립 승인·충돌·명령 검증을 대신하지 않는다.
 MPS는 검증된 N13 패스 일정, 선택 패스의 ground view/polar plot, 초안 명령
 카탈로그, 시험 시퀀스 편집기를 작업 순서에 맞춰 배치했다. 경로 화면은
 `/api/fds/orbit`의 ECEF 위치 표본으로만 그리며, N13 일정과 AOS·LOS가
@@ -224,7 +255,8 @@ MPS는 검증된 N13 패스 일정, 선택 패스의 ground view/polar plot, 초
 MPS API는 인자 형식과 패스 범위·일정 SHA-256·예상 리비전을 검증한다.
 `mps_candidates` 볼륨의 별도 `sequence_drafts` 테이블이 초안을 보관한다.
 auditor는 조회만 가능하다. 대전 S-band는 패스 경로 조회만 제공한다.
-명령 인코딩, 충돌 판정, 승인, 출력·송출은 아직 연결되지 않는다.
+저장된 시퀀스는 위의 가상 위성 시험으로 전달할 수 있다. 실제 명령 인증,
+충돌 판정, 승인, 출력·송출은 아직 연결되지 않는다.
 
 실제 TM 연결 단계에서는 확정된 패킷/파라미터 DB를 기준으로 센서 ID,
 UTC 수신 시각, 보정 값, 단위, 품질, 하한·상한, 경보 등급 및 이력을 제공해야

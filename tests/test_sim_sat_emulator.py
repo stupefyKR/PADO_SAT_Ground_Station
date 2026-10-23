@@ -8,8 +8,12 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 from services.sim_sat.emulator import (VIRTUAL_NORAD_ID, generate_packet_batch,
-                                       parse_orbit_view, send_packet_batch)
-from tools.pado_packet_codec import decode
+                                       parse_orbit_view, send_packet_batch,
+                                       build_command_result, TcReplayState,
+                                       REASON_REPLAY, REASON_SCHEDULED,
+                                       REASON_STALE, REASON_UNSUPPORTED,
+                                       SIM_READ_ONLY_COMMANDS)
+from tools.pado_packet_codec import PacketError, decode, encode_tc
 
 
 START = datetime(2026, 10, 23, 12, 0, tzinfo=timezone.utc)
@@ -170,6 +174,60 @@ class SimulatorEmulatorTests(unittest.TestCase):
         earlier_uptime = decode(before[0])["fields"]["uptime_s"]
         later_uptime = decode(after[0])["fields"]["uptime_s"]
         self.assertEqual(later_uptime - earlier_uptime, 5)
+
+    def test_query_only_tc_generates_correlated_draft_command_result(self):
+        stamp = int(START.timestamp()) * 1000
+        state = TcReplayState()
+        for index, name in enumerate(sorted(SIM_READ_ONLY_COMMANDS)):
+            with self.subTest(name=name):
+                tc = encode_tc(name, index, stamp, {})
+                result = decode(build_command_result(
+                    tc, index + 3, state, received_ms=stamp + 1000))
+                self.assertEqual(result["name"], "COMMAND_RESULT")
+                self.assertEqual(result["kind"], "TM")
+                self.assertFalse(result["operational"])
+                self.assertEqual(result["fields"]["command_id"], decode(tc)["id"])
+                self.assertEqual(result["fields"]["command_sequence"], index)
+                self.assertEqual(result["fields"]["result"], 0)
+                self.assertEqual(result["fields"]["reason"], 0)
+                self.assertEqual(result["fields"]["executed_at_utc_ms"], stamp + 1000)
+
+    def test_unsupported_replay_scheduled_and_stale_tc_are_rejected(self):
+        stamp = int(START.timestamp()) * 1000
+        state = TcReplayState()
+        def answer(packet, sequence, received=stamp + 1000):
+            return decode(build_command_result(packet, sequence, state,
+                                               received_ms=received))["fields"]
+        supported = encode_tc("hk_get", 5, stamp, {})
+        self.assertEqual(answer(supported, 20)["result"], 0)
+        self.assertEqual(answer(supported, 21)["reason"], REASON_REPLAY)
+        unsupported = encode_tc("mm_set_mode", 6, stamp, {"mode": 1})
+        self.assertEqual(answer(unsupported, 22)["reason"], REASON_UNSUPPORTED)
+        scheduled = encode_tc("hk_get", 7, stamp, {},
+                              execute_at_utc_ms=stamp + 5000)
+        self.assertEqual(answer(scheduled, 23)["reason"], REASON_SCHEDULED)
+        stale = encode_tc("hk_get", 8, stamp, {})
+        self.assertEqual(answer(stale, 24, stamp + 121_000)["reason"], REASON_STALE)
+        corrupted = bytearray(encode_tc("hk_get", 9, stamp, {}))
+        corrupted[-1] ^= 0x01
+        with self.assertRaises(PacketError):
+            build_command_result(bytes(corrupted), 25, state, received_ms=stamp + 1000)
+
+    def test_out_of_order_reservation_sequences_are_not_treated_as_replay(self):
+        stamp = int(START.timestamp()) * 1000
+        state = TcReplayState()
+        # Reservation 2 may execute first if reservation 1 belongs to a later pass.
+        later_created = encode_tc("hk_get", 2, stamp, {})
+        earlier_created = encode_tc("mm_get_mode", 1, stamp + 1000, {})
+        first = decode(build_command_result(later_created, 10, state,
+                                            received_ms=stamp + 1000))
+        second = decode(build_command_result(earlier_created, 11, state,
+                                             received_ms=stamp + 2000))
+        duplicate = decode(build_command_result(earlier_created, 12, state,
+                                                received_ms=stamp + 2000))
+        self.assertEqual(first["fields"]["result"], 0)
+        self.assertEqual(second["fields"]["result"], 0)
+        self.assertEqual(duplicate["fields"]["reason"], REASON_REPLAY)
 
 
 if __name__ == "__main__":
