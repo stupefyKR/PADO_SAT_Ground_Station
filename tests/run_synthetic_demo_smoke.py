@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import tempfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -49,7 +49,9 @@ def main() -> None:
         assert snapshot["non_operational"] is True
         assert snapshot["attitude"]["frame"] == "SIM_BODY_TO_ITRF_NADIR"
         assert len(snapshot["sensors"]) == 2
-        _, source = run_once(options)
+        # Model a GNSS packet that arrives after the next TLE truth run's
+        # planning start but before its slower propagation has completed.
+        _, source = run_once(options, now=now - timedelta(seconds=5))
         assert source == "GNSS", source
         operator = json.loads((options.view_dir / "orbit_view.json").read_text())
         assert operator["source"] == "GNSS"

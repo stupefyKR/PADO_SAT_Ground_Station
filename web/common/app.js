@@ -417,6 +417,17 @@ function renderMpsDraftCatalog(commands) {
   draw();
 }
 
+function mpsSamePhysicalPass(previous, current) {
+  if (!previous || !current || previous.station_id !== current.station_id ||
+      previous.band !== current.band || previous.clipped_start || previous.clipped_end ||
+      current.clipped_start || current.clipped_end) return false;
+  const drift = 300;
+  const a = previous.aos_utc_s, b = previous.los_utc_s;
+  const c = current.aos_utc_s, d = current.los_utc_s;
+  return Math.abs(a - c) <= drift && Math.abs(b - d) <= drift &&
+    Math.max(0, Math.min(b, d) - Math.max(a, c)) >= Math.ceil(Math.min(b - a, d - c) / 2);
+}
+
 function renderMpsPasses(schedule, session, drafts) {
   const panel = document.querySelector(".passes-panel");
   document.querySelector(".notice span").textContent =
@@ -489,8 +500,8 @@ function renderMpsPasses(schedule, session, drafts) {
   }
   table.append(head, body);
   timeline.append(table);
-  const selected = [...body.children].find((row) =>
-    row.lastElementChild?.textContent === mpsSelectedPass?.pass_id);
+  const selected = [...body.children].find((_, index) =>
+    mpsSamePhysicalPass(mpsSelectedPass, schedule.passes[index]));
   const upcoming = [...body.children].find((_, index) =>
     schedule.passes[index].los_utc_s > Date.now() / 1000);
   (selected || upcoming || body.firstElementChild)?.click();

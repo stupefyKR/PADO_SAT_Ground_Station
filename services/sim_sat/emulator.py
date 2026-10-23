@@ -180,13 +180,20 @@ def _unit(vector: tuple[float, ...]) -> tuple[float, ...]:
     return tuple(component / length for component in vector)
 
 
-def _nadir_quaternion(position: tuple[float, ...],
-                      velocity: tuple[float, ...]) -> tuple[float, float, float, float]:
-    """Body-to-ITRF: body +Z points to Earth; +X points along track."""
+def _nadir_axes(position: tuple[float, ...],
+                velocity: tuple[float, ...]) -> tuple[tuple[float, ...], ...]:
+    """Body basis in ITRF: +Z nadir, +X along-track, +Y right-handed."""
     z = tuple(-value for value in _unit(position))
     tangential = tuple(velocity[i] - _dot(velocity, z) * z[i] for i in range(3))
     x = _unit(tangential)
     y = _unit(_cross(z, x))
+    return x, y, z
+
+
+def _nadir_quaternion(position: tuple[float, ...],
+                      velocity: tuple[float, ...]) -> tuple[float, float, float, float]:
+    """Body-to-ITRF: body +Z points to Earth; +X points along track."""
+    x, y, z = _nadir_axes(position, velocity)
     # Rotation matrix columns are the body axes expressed in ITRF.
     m = ((x[0], y[0], z[0]), (x[1], y[1], z[1]), (x[2], y[2], z[2]))
     trace = m[0][0] + m[1][1] + m[2][2]
@@ -212,6 +219,27 @@ def _nadir_quaternion(position: tuple[float, ...],
     return tuple(-part for part in normalized) if normalized[0] < 0 else normalized
 
 
+def _nadir_body_rates(view: OrbitView, utc_s: int,
+                      axes: tuple[tuple[float, ...], ...]) -> tuple[float, float, float]:
+    """Body angular velocity relative to ITRF, consistent with the TM quaternion.
+
+    For an orthonormal moving basis e_i, sum(e_i x de_i/dt) = 2 omega.
+    Differentiate over one second on either side of the sample when possible.
+    """
+    before_s = max(view.start_s, utc_s - 1)
+    after_s = min(view.end_s, utc_s + 1)
+    if before_s == after_s:
+        raise ValueError("virtual view has no interval for attitude rate")
+    before = _nadir_axes(*_interpolated_ecef(view, before_s))
+    after = _nadir_axes(*_interpolated_ecef(view, after_s))
+    span_s = after_s - before_s
+    omega_itrf = tuple(
+        0.5 * sum(_cross(axis, tuple((new[i] - old[i]) / span_s for i in range(3)))[k]
+                  for axis, old, new in zip(axes, before, after))
+        for k in range(3))
+    return tuple(_dot(omega_itrf, axis) for axis in axes)
+
+
 def generate_packet_batch(view: OrbitView, now: datetime, seq: int, *,
                           seed: int = 1) -> tuple[tuple[bytes, bytes, bytes], int]:
     """Pure TM sample source; caller supplies time and starting sequence."""
@@ -225,6 +253,7 @@ def generate_packet_batch(view: OrbitView, now: datetime, seq: int, *,
         raise ValueError("virtual TLE result is not current")
     position, velocity = _interpolated_ecef(view, stamp)
     quaternion = _nadir_quaternion(position, velocity)
+    body_rates = _nadir_body_rates(view, stamp, _nadir_axes(position, velocity))
     phase = (seed % 10000) * 0.017
     # A roughly 220-second cycle guarantees a visible, short test overvoltage
     # episode in every five-minute ROS history window (test limit: 5.5 V).
@@ -235,7 +264,6 @@ def generate_packet_batch(view: OrbitView, now: datetime, seq: int, *,
     elapsed_s = stamp - _SIMULATED_BOOT_S
     if not 0 <= elapsed_s <= 0xffffffff:
         raise ValueError("simulated uptime exceeds draft TM field range")
-    rates = math.hypot(*_cross(position, velocity)) / math.hypot(*position) ** 2
     sampled_ms = stamp * 1000
     eps = encode_tm("EPS_PDU1", seq, sampled_ms, {
         "channel_enabled_bits": 3, "latchup_bits": 0,
@@ -246,8 +274,8 @@ def generate_packet_batch(view: OrbitView, now: datetime, seq: int, *,
         "sram_latchup_count": 0, "edac_error_count": 0,
         "q_w": quaternion[0], "q_x": quaternion[1],
         "q_y": quaternion[2], "q_z": quaternion[3],
-        "body_rate_x_rad_s": 0.0, "body_rate_y_rad_s": rates,
-        "body_rate_z_rad_s": 0.0})
+        "body_rate_x_rad_s": body_rates[0], "body_rate_y_rad_s": body_rates[1],
+        "body_rate_z_rad_s": body_rates[2]})
     gnss = encode_tm("GNSS_PVT", (seq + 2) & 0xffff, sampled_ms, {
         "norad_id": view.norad_id, "solution_status": 1, "receiver_age_ms": 0,
         "x_m": position[0], "y_m": position[1], "z_m": position[2],

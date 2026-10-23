@@ -9,6 +9,7 @@ simulated input is sent to the operational N05/N11 exchange.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import re
 import shutil
@@ -34,6 +35,7 @@ else:
 ROOT = Path(__file__).resolve().parents[1]
 POM = ROOT / "services/fds/pom.xml"
 _GROUP = re.compile(r"fds-synthetic-truth-(\d{8}T\d{6}Z-[0-9a-f]{8})")
+_N11_DIGEST = re.compile(r"[0-9a-f]{64}")
 
 
 def prune_completed_runs(output_root: Path, schedule_root: Path, *, keep: int = 8) -> int:
@@ -50,7 +52,8 @@ def prune_completed_runs(output_root: Path, schedule_root: Path, *, keep: int = 
         group = _GROUP.fullmatch(truth.name).group(1)
         paths = [truth, output_root / f"fds-synthetic-operator-{group}",
                  output_root / f"synthetic-{group}.tle",
-                 output_root / f"synthetic-{group}.properties"]
+                 output_root / f"synthetic-{group}.properties",
+                 output_root / f"synthetic-operator-{group}.properties"]
         if schedule_root.is_dir():
             paths.extend((schedule_root / f"fds-synthetic-truth-{group}",
                           schedule_root / f"fds-synthetic-operator-{group}"))
@@ -64,6 +67,49 @@ def prune_completed_runs(output_root: Path, schedule_root: Path, *, keep: int = 
                 path.unlink()
         deleted += 1
     return deleted
+
+
+def prune_synthetic_n11_snapshots(root: Path, *, keep: int = 288) -> int:
+    """Bound verified simulator N11 snapshots, retaining the atomic current one."""
+    if type(keep) is not int or keep < 1 or root.is_symlink() or not root.is_dir():
+        raise ValueError("invalid synthetic N11 retention root")
+    body, manifest = current_pair(root, "gnss")
+    if body is None or manifest is None:
+        return 0
+    current = body.parent
+    if current.parent != root or not _N11_DIGEST.fullmatch(current.name):
+        raise ValueError("invalid synthetic N11 current snapshot")
+
+    snapshots = []
+    for path in root.iterdir():
+        if path.is_symlink() or not path.is_dir() or not _N11_DIGEST.fullmatch(path.name):
+            continue
+        entries = list(path.iterdir())
+        manifests = [entry for entry in entries if entry.name.endswith(".manifest.json")]
+        if len(entries) != 2 or len(manifests) != 1:
+            continue
+        pair_manifest = manifests[0]
+        pair_body = path / pair_manifest.name.removesuffix(".manifest.json")
+        try:
+            payload = verified_pair(pair_body, pair_manifest, "gnss")
+            metadata = pair_manifest.read_bytes()
+        except (OSError, ValueError):
+            continue
+        if payload is None or hashlib.sha256(b"gnss\0" + payload + b"\0" +
+                                              metadata).hexdigest() != path.name:
+            continue
+        snapshots.append(path)
+    if current not in snapshots:
+        raise ValueError("synthetic N11 current snapshot is not verified")
+    recent = sorted((path for path in snapshots if path != current),
+                    key=lambda path: (path.stat().st_mtime_ns, path.name), reverse=True)
+    removed = 0
+    for path in recent[keep - 1:]:
+        if path.parent != root or path.is_symlink():
+            raise ValueError("synthetic N11 retention target escaped its root")
+        shutil.rmtree(path)
+        removed += 1
+    return removed
 
 
 def config_text(start: datetime) -> str:
@@ -91,6 +137,10 @@ station.kari.minimum_elevation_deg=10
 station.kari.carrier_hz=2200000000
 station.kari.frequency_example=true
 """
+
+
+def _utc_now_second() -> datetime:
+    return datetime.now(timezone.utc).replace(microsecond=0)
 
 
 def _maven_args(values: list[object]) -> str:
@@ -125,13 +175,14 @@ def _latest_gnss(args: argparse.Namespace) -> Path | None:
     body, manifest = current_pair(ingress, "gnss")
     if verified_pair(body, manifest, "gnss") is None:
         return None
+    prune_synthetic_n11_snapshots(ingress)
     return body
 
 
 def run_once(args: argparse.Namespace, *, now: datetime | None = None) -> tuple[Path, str]:
     if not args.orekit_data.is_dir():
         raise ValueError("--orekit-data must be an existing directory")
-    now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).replace(microsecond=0)
+    now = (now or _utc_now_second()).astimezone(timezone.utc).replace(microsecond=0)
     if now.year < 2026 or now.year > 2100:
         raise ValueError("synthetic TLE epoch outside supported test years")
     args.output_root.mkdir(parents=True, exist_ok=True)
@@ -160,8 +211,14 @@ def run_once(args: argparse.Namespace, *, now: datetime | None = None) -> tuple[
     gnss = _latest_gnss(args)
     selected_run = truth_run
     if gnss is not None:
+        # The truth propagation may take minutes. N11 can arrive during it,
+        # after the truth start. Plan the operator run from the time N11 was
+        # selected so that a fresh GNSS epoch is not rejected as future data.
+        operator_start = max(now, _utc_now_second())
+        operator_config = args.output_root / f"synthetic-operator-{stamp}.properties"
+        operator_config.write_text(config_text(operator_start), encoding="utf-8")
         selected_run = args.output_root / f"fds-synthetic-operator-{stamp}"
-        _java(args, "FdsMain", ["--config", config.resolve(), "--orekit-data",
+        _java(args, "FdsMain", ["--config", operator_config.resolve(), "--orekit-data",
                                 args.orekit_data.resolve(), "--tle", tle.resolve(),
                                 "--gnss", gnss.resolve(), "--out", selected_run.resolve()])
     schedule = publish_schedule(selected_run, args.mps_schedule_dir)

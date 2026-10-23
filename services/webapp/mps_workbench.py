@@ -18,6 +18,7 @@ class CandidateError(ValueError):
 
 
 CATALOG_PATH = Path(__file__).resolve().parents[2] / "interfaces/pado_packets/draft_v0.json"
+PASS_BOUNDARY_DRIFT_S = 300
 
 
 def draft_commands() -> list[dict]:
@@ -74,6 +75,10 @@ class MpsCandidateStore:
                         "revision INTEGER NOT NULL, steps TEXT NOT NULL, "
                         "updated_by TEXT NOT NULL, updated_at INTEGER NOT NULL, "
                         "PRIMARY KEY(pass_id, schedule_sha256))")
+        self.db.execute("CREATE INDEX IF NOT EXISTS candidate_drafts_aos "
+                        "ON candidate_drafts(aos_utc_s)")
+        self.db.execute("CREATE INDEX IF NOT EXISTS sequence_drafts_aos "
+                        "ON sequence_drafts(aos_utc_s)")
         self.db.commit()
         self.lock = threading.Lock()
 
@@ -91,28 +96,74 @@ class MpsCandidateStore:
         match = next((item for item in schedule["passes"] if item["pass_id"] == pass_id), None)
         if match is None:
             raise CandidateError("unknown_pass")
+        if not pass_id.startswith(match["station_id"] + "-"):
+            raise CandidateError("unknown_pass")
         if (match.get("station_id"), match.get("band")) != ("yonsei", "UHF"):
             raise CandidateError("tc_not_available_for_pass")
         return match
+
+    def _draft_row(self, table: str, payload: str, schedule: dict,
+                   selected: dict) -> tuple | None:
+        """Find one prior draft for the same physical pass across FDS refreshes.
+
+        FDS pass IDs are ordinal within each rolling 72 h window, so neither the
+        ID nor the schedule hash identifies a pass across runs. Only a nearby,
+        overlapping pass at the same site may inherit a test draft.
+        """
+        digest = schedule["schedule_sha256"]
+        pass_id = selected["pass_id"]
+        aos, los = selected["aos_utc_s"], selected["los_utc_s"]
+        prefix = selected["station_id"] + "-"
+        if not pass_id.startswith(prefix):
+            return None
+        fields = f"pass_id,schedule_sha256,aos_utc_s,los_utc_s,revision,{payload},updated_by"
+        exact = self.db.execute(
+            f"SELECT {fields} FROM {table} WHERE pass_id=? AND schedule_sha256=?",
+            (pass_id, digest)).fetchone()
+        if exact is not None:
+            if exact[2:4] != (aos, los):
+                raise CandidateError("revision_conflict")
+            return exact
+        # A clipped boundary moves with the prediction window and cannot serve
+        # as a stable identity for a future contact.
+        if selected.get("clipped_start") or selected.get("clipped_end"):
+            return None
+        nearby = self.db.execute(
+            f"SELECT {fields} FROM {table} WHERE aos_utc_s BETWEEN ? AND ? "
+            "AND los_utc_s BETWEEN ? AND ?",
+            (aos - PASS_BOUNDARY_DRIFT_S, aos + PASS_BOUNDARY_DRIFT_S,
+             los - PASS_BOUNDARY_DRIFT_S, los + PASS_BOUNDARY_DRIFT_S)).fetchall()
+        matches = [row for row in nearby
+                   if row[0].startswith(prefix) and
+                   min(row[3], los) - max(row[2], aos) >=
+                   (min(row[3] - row[2], los - aos) + 1) // 2]
+        # If two previously saved drafts could apply, avoid silently choosing
+        # either command set. The rows remain intact for review.
+        return matches[0] if len(matches) == 1 else None
+
+    @staticmethod
+    def _current_passes(schedule: dict) -> list[dict]:
+        return [item for item in schedule["passes"]
+                if (item.get("station_id"), item.get("band")) in
+                (("yonsei", "UHF"), ("kari", "S_BAND"))]
 
     def list_current(self, schedule: dict) -> list[dict]:
         if schedule.get("schedule_state") != "validated":
             return []
         digest = schedule["schedule_sha256"]
-        with self.lock:
-            rows = self.db.execute(
-                "SELECT pass_id,aos_utc_s,los_utc_s,revision,candidate_ids,updated_by "
-                "FROM candidate_drafts WHERE schedule_sha256=? ORDER BY pass_id LIMIT 64",
-                (digest,)).fetchall()
-        current = {item["pass_id"]: item for item in schedule["passes"]}
         result = []
-        for pass_id, aos, los, revision, ids, actor in rows:
-            item = current.get(pass_id)
-            if (item and (item.get("station_id"), item.get("band")) ==
-                    ("yonsei", "UHF") and
-                    (aos, los) == (item["aos_utc_s"], item["los_utc_s"])):
-                result.append({"pass_id": pass_id, "schedule_sha256": digest,
-                               "aos_utc_s": aos, "los_utc_s": los,
+        with self.lock:
+            for item in self._current_passes(schedule):
+                try:
+                    row = self._draft_row("candidate_drafts", "candidate_ids", schedule, item)
+                except CandidateError:
+                    continue
+                if row is None:
+                    continue
+                _, _, _, _, revision, ids, actor = row
+                result.append({"pass_id": item["pass_id"], "schedule_sha256": digest,
+                               "aos_utc_s": item["aos_utc_s"],
+                               "los_utc_s": item["los_utc_s"],
                                "revision": revision, "candidate_ids": json.loads(ids),
                                "updated_by": actor, "operational": False})
         return result
@@ -131,9 +182,7 @@ class MpsCandidateStore:
             raise CandidateError("invalid_candidate_draft")
         aos, los = selected["aos_utc_s"], selected["los_utc_s"]
         with self.lock, self.db:
-            row = self.db.execute(
-                "SELECT aos_utc_s,los_utc_s,revision FROM candidate_drafts "
-                "WHERE pass_id=? AND schedule_sha256=?", (pass_id, digest)).fetchone()
+            row = self._draft_row("candidate_drafts", "candidate_ids", schedule, selected)
             if row is None:
                 if expected_revision != 0:
                     raise CandidateError("revision_conflict")
@@ -143,14 +192,16 @@ class MpsCandidateStore:
                     (pass_id, digest, aos, los, revision,
                      json.dumps(candidate_ids, separators=(",", ":")), actor, int(time.time())))
             else:
-                if row != (aos, los, expected_revision):
+                if row[4] != expected_revision:
                     raise CandidateError("revision_conflict")
                 revision = expected_revision + 1
                 self.db.execute(
-                    "UPDATE candidate_drafts SET revision=?,candidate_ids=?,updated_by=?,updated_at=? "
+                    "UPDATE candidate_drafts SET pass_id=?,schedule_sha256=?,aos_utc_s=?,"
+                    "los_utc_s=?,revision=?,candidate_ids=?,updated_by=?,updated_at=? "
                     "WHERE pass_id=? AND schedule_sha256=?",
-                    (revision, json.dumps(candidate_ids, separators=(",", ":")), actor,
-                     int(time.time()), pass_id, digest))
+                    (pass_id, digest, aos, los, revision,
+                     json.dumps(candidate_ids, separators=(",", ":")), actor,
+                     int(time.time()), row[0], row[1]))
         return {"pass_id": pass_id, "schedule_sha256": digest,
                 "aos_utc_s": aos, "los_utc_s": los,
                 "revision": revision, "candidate_ids": candidate_ids,
@@ -160,20 +211,35 @@ class MpsCandidateStore:
         if schedule.get("schedule_state") != "validated":
             return []
         digest = schedule["schedule_sha256"]
+        result = []
         with self.lock:
-            rows = self.db.execute(
-                "SELECT pass_id,aos_utc_s,los_utc_s,revision,steps,updated_by "
-                "FROM sequence_drafts WHERE schedule_sha256=? ORDER BY pass_id LIMIT 256",
-                (digest,)).fetchall()
-        current = {item["pass_id"]: item for item in schedule["passes"]}
-        return [{"pass_id": pass_id, "schedule_sha256": digest,
-                 "aos_utc_s": aos, "los_utc_s": los, "revision": revision,
-                 "steps": json.loads(steps), "updated_by": actor, "operational": False}
-                for pass_id, aos, los, revision, steps, actor in rows
-                if pass_id in current and
-                (current[pass_id].get("station_id"), current[pass_id].get("band")) ==
-                ("yonsei", "UHF") and
-                (aos, los) == (current[pass_id]["aos_utc_s"], current[pass_id]["los_utc_s"])]
+            for item in self._current_passes(schedule):
+                try:
+                    row = self._draft_row("sequence_drafts", "steps", schedule, item)
+                except CandidateError:
+                    continue
+                if row is None:
+                    continue
+                _, _, old_aos, old_los, revision, steps_json, actor = row
+                try:
+                    steps = json.loads(steps_json)
+                    self._validated_steps(steps, old_los - old_aos)
+                except (ValueError, TypeError):
+                    continue
+                # Keep the work visible if a refreshed pass became shorter,
+                # but require the planner to adjust out-of-bounds offsets
+                # before any further save.
+                needs_review = any(step["offset_s"] >=
+                                   item["los_utc_s"] - item["aos_utc_s"]
+                                   for step in steps)
+                result.append({"pass_id": item["pass_id"],
+                               "schedule_sha256": digest,
+                               "aos_utc_s": item["aos_utc_s"],
+                               "los_utc_s": item["los_utc_s"],
+                               "revision": revision, "steps": steps,
+                               "updated_by": actor, "needs_review": needs_review,
+                               "operational": False})
+        return result
 
     @staticmethod
     def _validated_steps(steps: object, duration: int) -> list[dict]:
@@ -223,9 +289,7 @@ class MpsCandidateStore:
         aos, los = selected["aos_utc_s"], selected["los_utc_s"]
         clean = self._validated_steps(steps, los - aos)
         with self.lock, self.db:
-            row = self.db.execute(
-                "SELECT aos_utc_s,los_utc_s,revision FROM sequence_drafts "
-                "WHERE pass_id=? AND schedule_sha256=?", (pass_id, digest)).fetchone()
+            row = self._draft_row("sequence_drafts", "steps", schedule, selected)
             if row is None:
                 if expected_revision != 0:
                     raise CandidateError("revision_conflict")
@@ -234,14 +298,16 @@ class MpsCandidateStore:
                                 (pass_id, digest, aos, los, revision,
                                  json.dumps(clean, separators=(",", ":")), actor, int(time.time())))
             else:
-                if row != (aos, los, expected_revision):
+                if row[4] != expected_revision:
                     raise CandidateError("revision_conflict")
                 revision = expected_revision + 1
                 self.db.execute(
-                    "UPDATE sequence_drafts SET revision=?,steps=?,updated_by=?,updated_at=? "
+                    "UPDATE sequence_drafts SET pass_id=?,schedule_sha256=?,aos_utc_s=?,"
+                    "los_utc_s=?,revision=?,steps=?,updated_by=?,updated_at=? "
                     "WHERE pass_id=? AND schedule_sha256=?",
-                    (revision, json.dumps(clean, separators=(",", ":")), actor,
-                     int(time.time()), pass_id, digest))
+                    (pass_id, digest, aos, los, revision,
+                     json.dumps(clean, separators=(",", ":")), actor,
+                     int(time.time()), row[0], row[1]))
         return {"pass_id": pass_id, "schedule_sha256": digest,
                 "aos_utc_s": aos, "los_utc_s": los, "revision": revision,
                 "steps": clean, "updated_by": actor, "operational": False}

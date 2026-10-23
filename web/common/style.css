@@ -24,3 +24,4 @@ body[data-page="login"] .login-wrap,body[data-page="ops"] .shell,body[data-page=
 .global-clock-divider{flex:none;width:1px;height:59px;background:#3a5b6c}
 @media(max-width:750px){.global-clock{gap:20px}.global-clock time{font-size:clamp(1.1rem,3.1vw,1.45rem)}}
 @media(max-width:540px){.global-clock{align-items:stretch;flex-direction:column;gap:12px;padding:14px 18px}.global-clock-zone{gap:4px}.global-clock time{font-size:clamp(1.23rem,5.2vw,1.65rem)}.global-clock-divider{width:100%;height:1px}}
+.tag.warning{border-color:#9b713a;color:#ffd18e}

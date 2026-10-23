@@ -83,6 +83,21 @@ class SimulatorEmulatorTests(unittest.TestCase):
         self.assertLess(math.dist(rotated_z, tuple(-component for component in radial)),
                         1e-5)
 
+    def test_body_rates_follow_the_nadir_quaternion_rotation(self):
+        # In this fixed-plane prograde orbit, +Z faces nadir and +X follows
+        # velocity, so the body rotates about -Y relative to ITRF.
+        for seconds in (0, 155, 540):
+            with self.subTest(seconds=seconds):
+                packets, _ = generate_packet_batch(
+                    self.view, START + timedelta(seconds=seconds), 1)
+                fields = decode(packets[1])["fields"]
+                self.assertAlmostEqual(fields["body_rate_x_rad_s"], 0.0,
+                                       delta=2e-5)
+                self.assertAlmostEqual(fields["body_rate_y_rad_s"], -RATE,
+                                       delta=2e-5)
+                self.assertAlmostEqual(fields["body_rate_z_rad_s"], 0.0,
+                                       delta=2e-5)
+
     def test_smooth_sensor_values_and_bounded_wire_frames(self):
         before, _ = generate_packet_batch(self.view, START + timedelta(seconds=150), 0)
         after, _ = generate_packet_batch(self.view, START + timedelta(seconds=155), 3)

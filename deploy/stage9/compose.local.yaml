@@ -107,6 +107,8 @@ services:
     build:
       context: ../..
       dockerfile: docker/stage9/FdsDemo.Dockerfile
+    depends_on:
+      sim-volume-init: {condition: service_completed_successfully}
     volumes:
       - fds_runs:/app/out
       - fds_view:/app/out/fds-view
@@ -122,10 +124,14 @@ services:
       context: ../..
       dockerfile: docker/stage9/SimTm.Dockerfile
     user: "0:0"
-    command: ["chown", "-R", "10001:10001", "/tm-preview", "/n11-inbox"]
+    command: ["chown", "-R", "10001:10001", "/tm-preview", "/n11-inbox", "/fds-runs", "/fds-view", "/fds-truth", "/mps-schedules"]
     volumes:
       - ros_tm_preview:/tm-preview
       - sim_n11_inbox:/n11-inbox
+      - fds_runs:/fds-runs
+      - fds_view:/fds-view
+      - fds_truth:/fds-truth
+      - mps_schedules:/mps-schedules
     network_mode: none
     read_only: true
     cap_drop: [ALL]

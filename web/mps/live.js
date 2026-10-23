@@ -157,6 +157,7 @@ function mpsRenderSequenceEditor(pass, schedule, session, drafts) {
   const existing = drafts.find((item) => item.pass_id === pass.pass_id);
   let revision = existing?.revision ?? 0;
   let steps = structuredClone(existing?.steps ?? []);
+  let needsReview = existing?.needs_review === true;
   const editable = ["planner", "operator", "lead"].includes(session.role) &&
     pass.station_id === "yonsei" && pass.band === "UHF";
   if (pass.station_id !== "yonsei" || pass.band !== "UHF") {
@@ -217,7 +218,9 @@ function mpsRenderSequenceEditor(pass, schedule, session, drafts) {
   table.innerHTML = "<thead><tr><th>#</th><th>AOS + 초</th><th>명령</th><th>인자</th><th>편집</th></tr></thead><tbody></tbody>";
   const tbody = table.querySelector("tbody");
   const note = document.createElement("p"); note.className = "inspector-note";
-  note.textContent = "시험용 초안입니다. 순서대로 저장하며 충돌 검사·승인·TC 인코딩·송출은 연결되지 않았습니다.";
+  note.textContent = needsReview ?
+    "FDS 일정 갱신으로 PASS가 짧아졌습니다. 범위를 벗어난 실행 오프셋을 수정한 뒤 다시 저장하세요." :
+    "시험용 초안입니다. 순서대로 저장하며 충돌 검사·승인·TC 인코딩·송출은 연결되지 않았습니다.";
   scroll.replaceChildren(form, note, table);
   const save = document.createElement("button"); save.type = "button";
   save.textContent = "시험 시퀀스 저장"; save.disabled = !editable;
@@ -230,6 +233,8 @@ function mpsRenderSequenceEditor(pass, schedule, session, drafts) {
           expected_revision: revision, steps })
       });
       revision = saved.revision;
+      needsReview = false;
+      note.textContent = "시험용 초안입니다. 순서대로 저장하며 충돌 검사·승인·TC 인코딩·송출은 연결되지 않았습니다.";
       const position = drafts.findIndex((item) => item.pass_id === pass.pass_id);
       if (position < 0) drafts.push(saved); else drafts[position] = saved;
       document.getElementById("api-error").hidden = true; draw();
@@ -242,8 +247,9 @@ function mpsRenderSequenceEditor(pass, schedule, session, drafts) {
     value("mps-review-commands", steps.length ? steps.map((item) => item.command_name).join(" → ") : "미등록");
     value("mps-review-revision", revision || "미저장");
     value("mps-review-summary", `${pass.pass_id} · 시험 단계 ${steps.length}개 · 충돌 검사·승인·송출 차단`);
-    tag.textContent = revision ? `시험 초안 · 리비전 ${revision}` : "새 시험 초안";
-    tag.className = "tag neutral";
+    tag.textContent = needsReview ? "시각 재검토 필요" :
+      revision ? `시험 초안 · 리비전 ${revision}` : "새 시험 초안";
+    tag.className = needsReview ? "tag warning" : "tag neutral";
     steps.forEach((step, index) => {
       const row = document.createElement("tr");
       [index + 1, step.offset_s, step.command_name,
