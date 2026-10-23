@@ -31,7 +31,7 @@ typedef struct {
 int gs_mps_command_catalog_parse(const char *json, size_t length,
                                  gs_mps_command_catalog_t *out);
 
-/* Internal model only: a verified FDS importer is a later stage. */
+/* Ordered pass model; the FDS importer validates the N13 file pair. */
 int gs_mps_pass_catalog_add(gs_mps_pass_catalog_t *catalog,
                             const gs_mps_pass_t *pass);
 int gs_mps_pass_catalog_get(const gs_mps_pass_catalog_t *catalog, size_t index,

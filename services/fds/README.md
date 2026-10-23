@@ -38,7 +38,7 @@ mvn -f services/fds/pom.xml test-compile exec:java \
   -Dexec.args="$(pwd)/services/fds/src/test/resources /path/to/orekit-data $(pwd)/out"
 ```
 
-`--gnss`가 없으면 TLE만 사용한다. `--out`은 존재하지 않아야 하며 산출물은 임시 디렉터리에서 완성한 뒤 원자적으로 공개한다. 시험 자료의 안테나 좌표·주파수·GNSS 벡터는 **합성값**이다. 실제 N05/N11 SFTP 수신기와 N13/N15 송신기, MPS 본문 파서, 운용 GNSS TM 디코더는 별도 통합 과제다.
+`--gnss`가 없으면 TLE만 사용한다. `--out`은 존재하지 않아야 하며 산출물은 임시 디렉터리에서 완성한 뒤 원자적으로 공개한다. 시험 자료의 안테나 좌표·주파수·GNSS 벡터는 **합성값**이다. MPS C 코어는 생성된 N13 `contact_schedule.csv`와 매니페스트를 검증해 PASS 목록으로 읽는다. 실제 SFTP 상대 설정·상주 호출과 운용 GNSS TM 디코더는 별도 통합 과제다.
 
 ## 위성 위치 화면에 게시
 
@@ -68,7 +68,25 @@ python3 tools/run_fds_pipeline.py \
   --watch --poll-seconds 60 --refresh-seconds 900
 ```
 
-GNSS가 아직 없으면 N11의 두 인자를 생략한다. 아직 수신되지 않은 설정 경로의 두 파일이 모두 없으면 해당 입력을 기다린다. `--watch`를 생략하면 1회만 실행한다. Maven 경로·캐시는 `--mvn`, `--maven-repo`로 지정할 수 있다. 결과는 기본 `out/fds-runs`에 보존하고, 화면 파일은 **ISS 시험 화면과 분리한** `out/fds-live-view`에 원자적으로 게시한다. 실제 화면을 이 결과에 연결하려면 배포 시 `PADO_STAGE9_FDS_VIEW_DIR`을 해당 디렉터리로 명시해야 한다. 이 실행기는 SFTP 수신·상대 신원 인증·원시 GNSS TM 해독을 수행하지 않는다. 그 경계와 실측 설정, 서비스 컨테이너 구성은 여전히 미완료다. 생성된 N13/N15 본문·매니페스트도 아직 SFTP 송신기에 연결되지 않았다.
+GNSS가 아직 없으면 N11의 두 인자를 생략한다. 아직 수신되지 않은 설정 경로의 두 파일이 모두 없으면 해당 입력을 기다린다. `--watch`를 생략하면 1회만 실행한다. Maven 경로·캐시는 `--mvn`, `--maven-repo`로 지정할 수 있다. 결과는 기본 `out/fds-runs`에 보존하고, 화면 파일은 **ISS 시험 화면과 분리한** `out/fds-live-view`에 원자적으로 게시한다. 실제 화면을 이 결과에 연결하려면 배포 시 `PADO_STAGE9_FDS_VIEW_DIR`을 해당 디렉터리로 명시해야 한다. 이 실행기는 SFTP 수신·상대 신원 인증·원시 GNSS TM 해독을 수행하지 않는다. 그 경계와 실측 설정, 서비스 컨테이너 구성은 여전히 미완료다.
+
+### N13/N15 전송용 출고함
+
+완료된 FDS 실행 디렉터리의 N13/N15 CSV 세 개와 매니페스트를 `tools/stage_fds_outbox.py`로 다시 검증한다. 도구는 각 파일에 실행 ID를 붙여 고유 이름의 불변 파일 쌍 3개를 원자적으로 출고함에 게시한다. 원본 FDS 결과와 ISS 시험 화면은 수정하지 않는다. 예를 들어 `out/fds-runs/fds-20261023T100000Z-1234abcd`를 지정하면 `out/fds-outbox/fds-20261023T100000Z-1234abcd/`에 `contact_schedule-fds-20261023T100000Z-1234abcd.csv`와 해당 매니페스트 등이 생긴다. MPS는 원본 고정 파일명과 출고함의 고유 파일명을 모두 검증할 수 있다.
+
+```sh
+python3 tools/stage_fds_outbox.py out/fds-runs/fds-20261023T100000Z-1234abcd
+```
+
+Linux 빌드의 `gs_fds_exchange`는 기존 단계 6 SFTP 경로 검증기를 사용한다. `push-n13`은 MPS로 일정 한 쌍, `push-n15`는 Archive로 궤도력·패스 정보 각 한 쌍을 송신한다. `pull-n05`는 DGS-NET에서 TLE 한 쌍을 받아 로컬 완료 파일로 게시한다. 호출 형식은 다음과 같다.
+
+```text
+gs_fds_exchange push-n13 HOST PORT USER PRIVATE_KEY HOST_KEY_SHA256 REMOTE_DIR BODY MANIFEST
+gs_fds_exchange push-n15 HOST PORT USER PRIVATE_KEY HOST_KEY_SHA256 REMOTE_DIR BODY MANIFEST
+gs_fds_exchange pull-n05 HOST PORT USER PRIVATE_KEY HOST_KEY_SHA256 REMOTE_DIR FILENAME LOCAL_DIR
+```
+
+호스트 키 SHA-256은 OpenSSH의 Base64 표시가 아니라 **64자 소문자 16진수**다. 개인키는 저장소 밖에서 마운트한다. 반복 전송 서비스와 실제 상대 주소·계정·호스트 키는 배포 시 설정하고, 실패한 전송은 재시도·중복 처리 정책을 정해야 한다. 아직 실제 SFTP 상대와의 연결 시험이나 MPS 서비스의 받은 편지함 감시가 완료된 것은 아니다.
 
 ### 고정 ISS TLE 화면 시험
 

@@ -16,17 +16,17 @@ GitHub 원격 저장소는 비공개로 설정되어 있습니다(2026-10-21 확
 | 1 | `interfaces/`, `libgs/` | 완료(기준선) | N2 21개 원본 화살표, 승인 흐름 21개, Windows·Linux 매니페스트·로그·파일 교환 시험 통과; TC/TM 실값은 ICD 대기 |
 | 2 | 서브시스템 간 통신 기반 | 완료(개발 기준선) | VMware Linux VM의 Docker 격리 네트워크에서 mTLS·SFTP 송수신/거부 시험 통과 |
 | 3 | TM 수신 경로 | 완료(시뮬레이터 기준선) | `fake_kari` → `dgs-gs` → `ros-core`; 실제 ICD·TM 해석 대기 |
-| 4-1 | MPS 입력·카탈로그 기준선 | 완료(비운용 기준선) | 빈 명령 DB만 판독; 내부 패스 모델 검증, 실제 FDS 형식 대기 |
+| 4-1 | MPS 입력·카탈로그 기준선 | 완료(비운용 기준선) | 빈 명령 DB 판독과 FDS N13 PASS 파일 쌍 검증·시간순 반입; 실제 SFTP 서비스 연결 대기 |
 | 4-2 | 시퀀스 초안·버전 이력 | 완료(비운용 기준선) | 패스·DB 버전 결합, 불변 이력, 동시 수정 거부; 영속 저장소 미연결 |
-| 4-3 | 충돌 분석 | 완료(시험 계약 기준선) | 6개 규칙의 시험용 속성 계약; 실제 명령 속성은 ICD 대기 |
+| 4-3 | 충돌 분석 | 완료(기존 시험 계약 기준선) | 6개 합성 규칙은 TC 후보 선택 경로와 분리; 실제 충돌 정책은 위성개발측 논의 대기 |
 | 4-4 | 승인·출력·ROS 연동 | 완료(비운용 시험 기준선) | 최신 초안 승인, `TEST_ONLY_SEQUENCE`·매니페스트, ROS 독립 재검증; 실제 TC ICD 대기 |
 | 4-5 | Mission Request·업링크 반입 | 완료(비운용 시험 기준선) | 두 단계 출처 체인·해시·버전·권한·FlatSat 기록 ID 검사; 외부 본문 형식 대기 |
 | 5 | TC 검증→승인→signer→tc-gate→`fake_sat` ACK | 완료(비운용 시험 기준선) | 위험 TC 별도 lead 승인·게이트 차단 시험 통과; 실제 명령·프레임·HMAC 사양 대기 |
-| 6 | FDS·DGS-NET·아카이브·SDC 교환 | 완료(비운용 파일 교환 기준선) | N05·N08–N18 경로·유형·SFTP 시험 통과; 외부 수집·영속 보관·FDS 계산 코어와 전송 경계의 연결은 미구현 |
+| 6 | FDS·DGS-NET·아카이브·SDC 교환 | 완료(비운용 파일 교환 기준선) | N05·N08–N18 경로·유형·SFTP 시험 통과; FDS N13/N15 출고함·단발 송수신 CLI 추가, 실제 상대·상주 서비스 연결 대기 |
 | 7 | 단일 VM의 Docker·UFW 배포 기반 | 완료(개발 기준선) | N2 연결 쌍·Docker 격리·journald·UFW·시뮬레이터 앱 경계 시험 통과; 실제 서버 적용은 최종 배포 수락 절차 |
 | 8 | 백업·복구·퍼징·핵심 서비스 보안 시험 | 완료(개발 기준선) | 로컬 복원·변조 거부 및 4개 파서 ASan+UBSan 퍼징 통과; 실제 백업 매체·FlatSat 복구는 최종 배포 수락 절차 |
 | 9 | 포털 인증·ROS/MPS 웹 UI | 진행 중(비운용 읽기 전용 기준선) | Argon2id·TOTP 세션, 포털→API mTLS, 9-1 C 명령 DB·시험 TM 기록 조회, 9-2 상주 C 읽기 서비스; 운용 코어·ICD·관제 PC 현장 시험 대기 |
-| FDS 코어 | TLE SGP4·GNSS 예비 수치 전파 | 진행 중(비운용 계산 기준선) | 두 안테나 최대 72시간 패스·도플러·궤도력 산출, 검증된 로컬 N05/N11 파일 쌍의 반복 계산·게시. 실제 GNSS TM ICD·힘 모델 정밀도 검증·SFTP 송수신 연결 대기 |
+| FDS 코어 | TLE SGP4·GNSS 예비 수치 전파 | 진행 중(비운용 계산 기준선) | 두 안테나 최대 72시간 산출, 로컬 N05/N11 반복 계산·게시, N13/N15 출고함과 MPS 일정 반입. 실제 GNSS TM ICD·정밀도 검증·SFTP 서비스 연결 대기 |
 
 ## 아키텍처
 
@@ -103,7 +103,7 @@ python3 tools/check_secrets.py --staged
 
 단계 3의 `fake_kari` → `dgs-gs` → `ros-core` 수신 경로는 Linux에서 CTest의 `gs_stage3_tests`로 실행합니다. `openssl`이 시험용 CA·상호 인증서를 임시 디렉터리에 만들고, 두 유효 프레임의 ROS 기록과 다섯 무효 입력의 DGS-GS 격리를 검사합니다. 프레임은 [시험 전용 규격](interfaces/frames/simulator.md)이며 실제 TM 항목을 해석하지 않습니다.
 
-단계 4-1의 `gs_mps_inputs_tests`는 Windows와 Linux CTest에 포함됩니다. 현재 `interfaces/command_db/commands.json`의 비운용 상태를 확인하고, 운용 활성화·미정 명령 항목·비정상 JSON을 거부합니다. 패스 목록은 ID와 UTC AOS/LOS, 여유 시간, 개수 경계를 확인하는 내부 모델입니다. 실제 FDS Contact Schedule 파일 형식, 수신·출처 검증과 명령 항목 스키마는 확정 전입니다. 입력 파서는 `GS_BUILD_MPS_CATALOG_FUZZER=ON`으로 Clang libFuzzer 대상으로 빌드할 수 있습니다.
+단계 4-1의 `gs_mps_inputs_tests`는 Windows와 Linux CTest에 포함됩니다. 현재 `interfaces/command_db/commands.json`의 비운용 상태를 확인하고, 운용 활성화·미정 명령 항목·비정상 JSON을 거부합니다. `gs_mps_fds_tests`는 FDS N13 PASS 일정의 매니페스트·CSV 검증과 PASS별 TC 후보 순서·리비전을 시험합니다. TC 후보는 명령 DB 항목이나 송출 명령으로 해석하지 않으며, 실제 전송·영속 서비스와 충돌 정책은 아직 연결되지 않았습니다. 명령 DB 입력 파서는 `GS_BUILD_MPS_CATALOG_FUZZER=ON`으로 Clang libFuzzer 대상으로 빌드할 수 있습니다.
 
 단계 2 공통 통신의 Linux 시험도 위 CMake·CTest 명령으로 실행합니다. Docker가 있는 개발용 Linux VM에서는 다음 명령으로 두 컨테이너의 실제 네트워크 주소를 이용해 상호 인증 TLS, SFTP 파일·매니페스트, 잘못된 상대 인증서와 분리된 네트워크의 접속 거부를 시험합니다. `openssl`과 `ssh-keygen`이 필요하며, 시험 키·인증서는 임시 디렉터리에 생성됩니다. 스크립트는 시험 컨테이너·네트워크를 제거하고, 빌드된 이미지 `pado-stage2-test:local`은 재사용할 수 있게 남깁니다.
 

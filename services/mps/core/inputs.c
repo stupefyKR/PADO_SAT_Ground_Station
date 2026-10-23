@@ -84,6 +84,7 @@ static int valid_pass_id(const char *id)
     if (id[0] == '\0' || memchr(id, '\0', GS_MPS_PASS_ID_SIZE) == NULL) return 0;
     for (index = 0u; id[index] != '\0'; ++index) {
         if ((id[index] < 'A' || id[index] > 'Z') &&
+                (id[index] < 'a' || id[index] > 'z') &&
                 (id[index] < '0' || id[index] > '9') && id[index] != '-') return 0;
     }
     return 1;

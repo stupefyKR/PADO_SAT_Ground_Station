@@ -9,7 +9,8 @@ static int bounded_id(const char *value, size_t capacity, int underscore)
     for (index = 0u; index < capacity; ++index) {
         const char c = value[index];
         if (c == '\0') return index != 0u;
-        if ((c < 'A' || c > 'Z') && (c < '0' || c > '9') && c != '-' &&
+        if ((c < 'A' || c > 'Z') && (underscore || c < 'a' || c > 'z') &&
+                (c < '0' || c > '9') && c != '-' &&
                 (!underscore || c != '_')) return 0;
     }
     return 0;

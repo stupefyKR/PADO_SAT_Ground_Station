@@ -55,7 +55,8 @@ endif()
 
 add_library(gs_mps STATIC services/mps/core/inputs.c
     services/mps/core/plan_store.c services/mps/core/conflict.c
-    services/mps/core/sequence_export.c services/mps/core/intake.c)
+    services/mps/core/sequence_export.c services/mps/core/intake.c
+    services/mps/core/fds_schedule.c services/mps/core/tc_selection.c)
 target_include_directories(gs_mps PUBLIC services/mps/core)
 target_link_libraries(gs_mps PUBLIC gs)
 
@@ -85,6 +86,10 @@ add_library(gs_stage6_exchange STATIC services/common/stage6_routes.c
 target_include_directories(gs_stage6_exchange PUBLIC services/common
     services/dgs-net services/dgs-archive)
 target_link_libraries(gs_stage6_exchange PUBLIC gs)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_executable(gs_fds_exchange services/fds/exchange_main.c)
+    target_link_libraries(gs_fds_exchange PRIVATE gs_stage6_exchange)
+endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_executable(gs_stage9_core_probe services/webapp/core_probe.c
@@ -116,6 +121,9 @@ if(BUILD_TESTING)
     add_executable(gs_mps_planning_tests tests/mps_planning_test.c)
     target_link_libraries(gs_mps_planning_tests PRIVATE gs_mps)
     add_test(NAME gs_mps_planning_tests COMMAND gs_mps_planning_tests)
+    add_executable(gs_mps_fds_tests tests/mps_fds_test.c)
+    target_link_libraries(gs_mps_fds_tests PRIVATE gs_mps)
+    add_test(NAME gs_mps_fds_tests COMMAND gs_mps_fds_tests ${CMAKE_CURRENT_BINARY_DIR})
     add_executable(gs_stage4_tests tests/stage4_test.c)
     target_link_libraries(gs_stage4_tests PRIVATE gs_mps gs_ros_sequence_verify)
     add_test(NAME gs_stage4_tests COMMAND gs_stage4_tests ${CMAKE_CURRENT_BINARY_DIR})
