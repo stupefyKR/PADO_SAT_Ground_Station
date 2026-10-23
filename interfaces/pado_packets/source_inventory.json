@@ -1,0 +1,17 @@
+{
+  "schema": "pado.pdr-hk-inventory.v1",
+  "source": "PDR 별첨자료 PDF page 47; PDR 발표자료 PDF pages 65-69; PDR 제안서 PDF pages 181-184",
+  "note": "Names are source-document inventory, not confirmed wire encodings or limits. Entries absent from draft_v0.json await CDR/vendor ICD.",
+  "nodes": {
+    "P60_Dock": ["c_out[0..12]", "v_out[0..12]", "out_en[0..12]", "temp[0..1]", "bootcause", "bootcnt", "uptime", "resetcause", "batt_mode", "heater_on", "conv_5v_en", "latchup[0..12]", "vbat_v", "vcc_c", "batt_c", "batt_v", "batt_temp[0..1]", "device_type[0..7]", "device_status[0..7]", "dearm_status", "wdt_cnt_gnd", "wdt_cnt_i2c", "wdt_cnt_can", "wdt_cnt_csp[0..1]", "wdt_gnd_left", "wdt_i2c_left", "wdt_can_left", "wdt_csp_left[0..1]", "batt_chrg", "batt_dischrg", "ant6_depl", "ar6_depl"],
+    "PDU_200_each": ["c_out[0..8]", "v_out[0..8]", "vcc", "vbat", "temp", "conv_en", "out_en[0..8]", "bootcause", "bootcnt", "uptime", "resetcause", "batt_mode", "latchup[0..8]", "device_type[0..7]", "device_status[0..7]", "wdt_cnt_gnd", "wdt_cnt_i2c", "wdt_cnt_can", "wdt_cnt_csp[0..1]", "wdt_gnd_left", "wdt_i2c_left", "wdt_can_left", "wdt_csp_left[0..1]"],
+    "ACU_200": ["c_in[0..5]", "v_in[0..5]", "vbat", "vcc", "temp[0..2]", "mppt_mode", "vboost[0..5]", "power[0..5]", "dac_en[0..2]", "dac_val[0..5]", "bootcause", "bootcnt", "uptime", "resetcause", "mppt_time", "mppt_period", "device_type[0..7]", "device_status[0..7]", "wdt_cnt_gnd", "wdt_gnd_left"],
+    "BPX": ["bpx_hk_tcur_chargecur_dischargecur_heatervbatt", "bat_temp1", "bat_temp2", "bat_temp3", "bat_temp4", "counter_boot", "bootcause"],
+    "CubeADCS": ["Current ADCS State", "ADCS State", "ADCS Measurements", "Power and Temperature Measurements", "Actuator Commands", "T3 Estimation Data", "Communication Status", "SRAM Latchupcounters", "EDAC Error Counters", "Current Unix Time", "Boot Index and Status", "AdcsExecution Times", "ACP Execution State"],
+    "OEM719A": ["BESTPOS", "BESTVEL", "BESTXYZ", "HWMONITOR", "RXSTATUS", "RXSTATUSEVENT", "TIME"],
+    "AX100": ["temp_brd", "temp_pa", "last_rssi", "last_rferr", "tx_count", "rx_count", "tx_bytes", "rx_bytes", "active_conf", "boot_count", "boot_cause", "last_contact", "bgnd_rssi", "tx_duty", "tot_tx_count", "tot_rx_count", "tot_tx_bytes", "tot_rx_bytes"],
+    "A3200": ["reset_cause", "boot_count", "active_image", "crash_count", "fsw_version", "nor_usage", "watchdog_state"],
+    "CREST": ["voltage", "current", "temperature", "uart_link_state"],
+    "SIREN": ["hardware_state", "inference_summary", "backup_mode_flag", "risk_detection", "anomaly_detection"]
+  }
+}
