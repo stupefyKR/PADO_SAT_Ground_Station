@@ -1,5 +1,7 @@
 # 단계 8: 백업·복구 및 입력 보안 시험
 
+**개발 기준선 완료:** [Ubuntu CI #40](https://github.com/stupefyKR/PADO_SAT_Ground_Station/actions/runs/39897193087)에서 로컬 복구·퍼징·핵심 보안 회귀 시험이 통과했다(결정 #18).
+
 실제 서버·NAS·오프라인 매체·FlatSat은 모든 개발 뒤 배포 수락 단계에서 연결한다.
 여기서는 **비운용 데이터로 재현 가능한 개발 기준선**을 검증한다. 현재 서비스의
 운용 DB, 실 TC/TM, HMAC 키는 이 절차에 포함되지 않는다.
@@ -62,3 +64,11 @@ build-linux-fuzz`를 따른다.
 퍼징은 입력 파서의 충돌·메모리 오류를 찾는 시험이다. TC 승인·역할 분리,
 게이트 거부, SFTP 해시·경로·상대 신원 시험은 기존 CTest와 Docker CI에서
 계속 실행하며, 최종 운용 서비스의 전체 경로 보안 판정은 앱 통합 후 수행한다.
+
+| 개발 보안 판정 | 검증 위치 |
+|---|---|
+| TC 위험도별 별도 승인, signer·게이트 차단, 재전송 거부 | `gs_stage5_tests` CTest |
+| 매니페스트 해시·경로·타입 및 SFTP 상대 신원·격리 | `gs_stage1_tests`, `gs_sftp_tests`, `run_network.py` |
+| DGS-GS·ROS mTLS와 잘못된 프레임 격리·상대 IP 거부 | `gs_stage3_tests`, `run_stage7_tm.py` |
+| 스냅샷 변조·경로 탈출·키 경로 거부와 복원 C 파서 판독 | `test_stage8_snapshot.py`, `run_stage8_recovery.py` |
+| 매니페스트·MPS·합성 TM·TLE 입력 퍼징 | `run_stage8_fuzz.py` |
