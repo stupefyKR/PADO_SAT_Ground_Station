@@ -44,6 +44,7 @@ ASSETS = {
     "/assets/app.js": ("common/app.js", "text/javascript; charset=utf-8"),
     "/assets/ros-workbench.js": ("ops/workbench.js", "text/javascript; charset=utf-8"),
     "/assets/ros-workbench.css": ("ops/workbench.css", "text/css; charset=utf-8"),
+    "/assets/mps-workflow.css": ("mps/workflow.css", "text/css; charset=utf-8"),
     "/assets/orbit.js": ("orbit/orbit.js", "text/javascript; charset=utf-8"),
     "/assets/orbit.css": ("orbit/orbit.css", "text/css; charset=utf-8"),
     "/assets/earth-blue-marble-october.jpg": ("assets/earth-blue-marble-october.jpg", "image/jpeg"),

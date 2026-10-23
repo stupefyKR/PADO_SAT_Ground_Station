@@ -39,6 +39,34 @@
   let tmSource = "published";
   let lastPublishedRaw = "";
   let previewPending = false;
+  let publishedReachable = false;
+
+  function activateTab(name, focus = false) {
+    const tabs = [...document.querySelectorAll("[data-ros-target]")];
+    for (const tab of tabs) {
+      const active = tab.dataset.rosTarget === name;
+      tab.setAttribute("aria-selected", String(active));
+      tab.tabIndex = active ? 0 : -1;
+      $("ros-view-" + tab.dataset.rosTarget).hidden = !active;
+      if (active && focus) tab.focus();
+    }
+  }
+
+  function setupTabs() {
+    const tabs = [...document.querySelectorAll("[data-ros-target]")];
+    tabs.forEach((tab, index) => {
+      tab.addEventListener("click", () => activateTab(tab.dataset.rosTarget));
+      tab.addEventListener("keydown", (event) => {
+        const next = event.key === "ArrowRight" ? index + 1 :
+          event.key === "ArrowLeft" ? index - 1 :
+          event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : null;
+        if (next === null) return;
+        event.preventDefault();
+        activateTab(tabs[(next + tabs.length) % tabs.length].dataset.rosTarget, true);
+      });
+    });
+    activateTab("status");
+  }
 
   function selectedSequence() {
     return sequences.find((item) => item.sha256 === $("sequence-select").value);
@@ -281,8 +309,7 @@
         (sample.value < item.lower || sample.value > item.upper))
       .map((sample) => ({sensor: item, sample})))
       .sort((a, b) => b.sample.utc.localeCompare(a.sample.utc));
-    $("event-count").textContent = `시험 ${events.length}건`;
-    $("ros-alarm-state").textContent = `시험 ${events.length}건`;
+    $("event-count").textContent = `선택 구간 · 시험 ${events.length}건`;
     const rows = $("alarm-rows");
     rows.replaceChildren();
     if (!events.length) empty(rows, 4, "선택 구간에 시험 한계 초과가 없습니다.");
@@ -369,6 +396,58 @@
     $("attitude-time").textContent = selectedTm.attitude?.utc || "없음";
     renderAttitude(selectedTm.attitude);
     renderSensors();
+    renderCurrentAlerts();
+  }
+  function renderCurrentAlerts() {
+    const count = $("ros-current-count");
+    const list = $("ros-current-alerts");
+    list.replaceChildren();
+    if (!selectedTm) {
+      count.textContent = "입력 대기";
+      list.textContent = "시험 TM 입력 대기";
+      $("ros-alarm-state").textContent = "평가 불가";
+      return;
+    }
+    if (tmSource === "published" && (!publishedReachable ||
+        Date.now() - Date.parse(selectedTm.received_utc) > 5 * 60 * 1000)) {
+      count.textContent = "현재 판정 불가";
+      list.textContent = publishedReachable ?
+        "게시된 시험 TM이 5분 이상 갱신되지 않았습니다." :
+        "게시된 시험 TM의 새 입력을 확인할 수 없습니다.";
+      $("ros-alarm-state").textContent = "현재 판정 불가";
+      return;
+    }
+    const breached = selectedTm.sensors.filter((sensor) => {
+      const value = sensor.samples.at(-1).value;
+      return value < sensor.lower || value > sensor.upper;
+    });
+    const label = tmSource === "published" ? "게시 시험 표본" : "불러온 시험 표본";
+    count.textContent = `${label} · ${breached.length}개 초과`;
+    $("ros-alarm-state").textContent = breached.length ?
+      `시험 표본 초과 ${breached.length}개` : "시험 표본 범위 내";
+    if (!breached.length) {
+      list.textContent = "최신 표본에서 시험 한계를 벗어난 센서가 없습니다.";
+      return;
+    }
+    for (const sensor of breached) {
+      const value = sensor.samples.at(-1).value;
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "current-alert-row";
+      const name = document.createElement("strong");
+      name.textContent = `${sensor.group} · ${sensor.name}`;
+      const detail = document.createElement("span");
+      detail.textContent = `${value} ${sensor.unit} · ${value > sensor.upper ?
+        "상한" : "하한"} ${value > sensor.upper ? sensor.upper : sensor.lower} ${sensor.unit}`;
+      row.append(name, detail);
+      row.addEventListener("click", () => {
+        $("sensor-filter").value = "";
+        selectedSensor = sensor;
+        renderSensors();
+        activateTab("telemetry");
+      });
+      list.append(row);
+    }
   }
   function markPublishedAge() {
     if (tmSource !== "published" || !selectedTm) return;
@@ -376,6 +455,7 @@
     $("ros-data-state").textContent = old ? "게시된 시험 TM 오래됨" : "게시된 시험 TM";
     if (old) $("chart-source").textContent =
       "데이터 소스: 게시된 시험 TM · 5분 이상 갱신 없음 · 실제 위성 TM 아님";
+    renderCurrentAlerts();
   }
   async function refreshPublishedTm() {
     if (tmSource !== "published" || previewPending) return;
@@ -383,18 +463,24 @@
     try {
       const snapshot = await api("/api/ros/test-tm-snapshot");
       if (tmSource !== "published") return;
+      const recovered = !publishedReachable;
+      publishedReachable = true;
       const raw = JSON.stringify(snapshot);
       if (raw !== lastPublishedRaw) {
         loadTm(snapshot, "게시된 시험용 정규화 TM");
         lastPublishedRaw = raw;
+      } else if (recovered) {
+        renderTrend();
       }
       markPublishedAge();
     } catch (_) {
       if (tmSource === "published") {
+        publishedReachable = false;
         $("ros-data-state").textContent = "시험 TM 입력 대기";
         $("chart-source").textContent = selectedTm ?
           "데이터 소스: 이전 시험 TM · 새 입력 확인 불가" : "데이터 소스: 게시된 시험 TM 없음";
         $("selected-state").textContent = "현재 값 확인 불가";
+        renderCurrentAlerts();
       }
     } finally { previewPending = false; }
   }
@@ -416,6 +502,7 @@
       attitude: {utc: stamp(0), frame: "TEST_FRAME", quaternion_wxyz: [0.9238795,0,0.3826834,0]}};
   }
   async function init() {
+    setupTabs();
     renderAttitude(null);
     const publishedButton = document.createElement("button");
     publishedButton.type = "button";
@@ -434,12 +521,16 @@
     $("tm-file").addEventListener("change", async (event) => {
       const file = event.target.files[0];
       if (!file || file.size > 1024 * 1024) { showError("시험 TM JSON은 1 MiB 이하여야 합니다."); return; }
+      const previousSource = tmSource;
       try {
-        loadTm(JSON.parse(await file.text()));
         tmSource = "manual";
+        loadTm(JSON.parse(await file.text()));
         $("api-error").hidden = true;
       }
-      catch (error) { showError(`시험 TM 불러오기 실패: ${error.message}`); }
+      catch (error) {
+        tmSource = previousSource;
+        showError(`시험 TM 불러오기 실패: ${error.message}`);
+      }
     });
     $("sensor-filter").addEventListener("input", renderSensors);
     document.querySelectorAll("[data-range]").forEach((button) => button.addEventListener("click", () => {

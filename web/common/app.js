@@ -262,10 +262,34 @@ function renderMpsCandidateEditor(pass, schedule, session, drafts) {
   const scroll = panel.querySelector(".table-scroll");
   const actions = panel.querySelector(".panel-actions");
   const tag = panel.querySelector(".panel-head .tag");
+  if (pass.station_id !== "yonsei" || pass.band !== "UHF") {
+    actions.replaceChildren();
+    scroll.replaceChildren();
+    const note = document.createElement("p");
+    note.className = "inspector-note";
+    note.textContent = "이 지상국 PASS는 조회 전용입니다. 현재 시험 TC 카탈로그는 연세대 UHF 패스에만 적용됩니다.";
+    scroll.append(note);
+    tag.textContent = "TC 구성 불가 · 조회 전용";
+    tag.className = "tag locked";
+    document.getElementById("mps-review-summary").textContent =
+      "대전 S-band PASS는 현재 UHF TC 구성 대상이 아닙니다. 예측 일정만 조회할 수 있습니다.";
+    document.getElementById("mps-review-commands").textContent = "구성 불가";
+    document.getElementById("mps-review-revision").textContent = "해당 없음";
+    return;
+  }
   const existing = drafts.find((item) => item.pass_id === pass.pass_id);
   let revision = existing?.revision ?? 0;
   let candidates = [...(existing?.candidate_ids ?? [])];
   const editable = ["planner", "operator", "lead"].includes(session.role);
+  const updateReview = () => {
+    document.getElementById("mps-review-commands").textContent =
+      candidates.length ? candidates.join(" → ") : "등록된 후보 없음";
+    document.getElementById("mps-review-revision").textContent =
+      revision ? String(revision) : "미저장";
+    document.getElementById("mps-review-summary").textContent =
+      `${pass.pass_id} · 시험 TC 후보 ${candidates.length}개 · 리비전 ${revision || "미저장"} · ` +
+      "인자·실행 시각·충돌 검토·승인·송출은 아직 연결되지 않았습니다.";
+  };
   actions.replaceChildren();
   tag.textContent = "시험 초안 · 송출 차단";
   tag.className = "tag neutral";
@@ -299,6 +323,7 @@ function renderMpsCandidateEditor(pass, schedule, session, drafts) {
       const position = drafts.findIndex((item) => item.pass_id === pass.pass_id);
       if (position >= 0) drafts[position] = saved; else drafts.push(saved);
       tag.textContent = `시험 초안 · 리비전 ${revision} 저장됨`;
+      updateReview();
       document.getElementById("api-error").hidden = true;
     } catch (_) { showError("초안 저장에 실패했습니다. 일정 또는 리비전 변경 여부를 확인하세요."); }
     finally { save.disabled = false; }
@@ -315,6 +340,7 @@ function renderMpsCandidateEditor(pass, schedule, session, drafts) {
   scroll.replaceChildren(note, table);
   const draw = () => {
     body.replaceChildren();
+    updateReview();
     if (!candidates.length) {
       const row = document.createElement("tr");
       const cell = document.createElement("td");
@@ -422,12 +448,16 @@ function renderMpsPasses(schedule, session, drafts) {
         ["AOS / LOS", `${new Date(pass.aos_utc_s * 1000).toISOString()} / ${new Date(pass.los_utc_s * 1000).toISOString()}`],
         ["최대 고각", `${pass.max_elevation_deg}°`], ["최소 고각", `${pass.minimum_elevation_deg}°`],
         ["시간 경계 절단", `${pass.clipped_start ? "시작 " : ""}${pass.clipped_end ? "종료" : ""}` || "없음"],
-        ["명령 계획", "TC ICD 확정 대기"]
+        ["명령 계획", pass.station_id === "yonsei" && pass.band === "UHF" ?
+          "UHF 시험 TC 후보 구성 가능 · 송출 차단" : "조회 전용 · UHF TC 대상 아님"],
+        ["후보 명령", "등록된 후보 없음"], ["초안 리비전", "미저장"]
       ];
       inspector.replaceChildren(...details.map(([key, content]) => {
         const line = document.createElement("div");
         const term = document.createElement("dt"); term.textContent = key;
         const desc = document.createElement("dd"); desc.textContent = content;
+        if (key === "후보 명령") desc.id = "mps-review-commands";
+        if (key === "초안 리비전") desc.id = "mps-review-revision";
         line.append(term, desc); return line;
       }));
       document.querySelector(".draft-meta strong").textContent = pass.pass_id;

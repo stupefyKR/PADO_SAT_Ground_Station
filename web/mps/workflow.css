@@ -1,0 +1,15 @@
+.mps-workflow{display:grid;gap:18px;margin-top:16px}
+.mps-step{min-width:0}
+.workflow-head{display:flex;gap:12px;align-items:center;margin-bottom:8px}
+.workflow-head>span{display:grid;place-items:center;flex:none;width:34px;height:34px;border:1px solid #4a8290;background:#173849;color:#a9e1e4;font:700 .77rem Consolas,monospace}
+.workflow-head strong{display:block;color:#edf6f7;font-size:.88rem}.workflow-head small{display:block;margin-top:3px;color:#8daab8;font-size:.71rem;line-height:1.45}
+.mps-build-grid{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(290px,.75fr);gap:12px}
+.mps-build-grid .draft-meta{grid-template-columns:repeat(3,minmax(0,1fr))}
+.mps-workflow .passes-panel .timeline{max-height:330px;overflow:auto}
+.mps-workflow .catalog-panel .table-scroll{max-height:390px}
+.mps-workflow .inspector-panel dl{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1px;background:#2a4656}
+.mps-workflow .inspector-panel dl>div{min-width:0;padding:12px 15px;background:#112636}
+.mps-workflow .inspector-panel dd{overflow-wrap:anywhere}
+.mps-workflow .inspector-note{margin:0;padding:13px 15px;border-top:1px solid #2a4656}
+@media(max-width:1150px){.mps-build-grid{grid-template-columns:1fr}.mps-workflow .inspector-panel dl{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:650px){.mps-workflow .inspector-panel dl{grid-template-columns:1fr}.workflow-head{align-items:flex-start}}

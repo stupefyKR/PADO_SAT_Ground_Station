@@ -1,4 +1,17 @@
 .inline-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.upload-label{cursor:pointer}
+.workbench-tabs{display:flex;gap:1px;margin:16px 0 12px;border-bottom:1px solid #365367;background:#1a3343}
+.workbench-tabs button{flex:1;min-height:43px;padding:9px 14px;border:0;border-bottom:3px solid transparent;background:#122838;color:#9eb8c4;text-align:left;font:700 .78rem "Malgun Gothic",sans-serif;cursor:pointer}
+.workbench-tabs button:hover{background:#1a3a4a;color:#e9f4f5}
+.workbench-tabs button[aria-selected="true"]{border-bottom-color:#76cbd1;background:#1c3b4a;color:#f0fafb}
+.workbench-tabs button:focus-visible{outline:2px solid #92dee1;outline-offset:-4px}
+.ros-view[hidden]{display:none}.ros-status-grid{grid-template-columns:minmax(320px,.9fr) minmax(400px,1.3fr)}
+.ros-tc-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+.current-alerts{min-height:175px;padding:18px 16px;color:#a9c2cc;font-size:.78rem;line-height:1.6}
+.current-alert-row{display:grid;grid-template-columns:1fr auto;gap:10px;padding:10px 0;border-bottom:1px solid #2a4656;color:#f0b48e}
+.current-alert-row{width:100%;border-top:0;border-left:0;border-right:0;background:transparent;text-align:left;cursor:pointer}
+.current-alert-row:hover,.current-alert-row:focus-visible{background:#263a43;outline:1px solid #b17d60}
+.current-alert-row strong{font-size:.77rem}.current-alert-row span{font:700 .74rem Consolas,monospace}
+.ros-status-grid .alarm-panel .table-scroll{max-height:370px}
 .attitude-panel,.sequence-panel,.reservation-panel{min-height:250px}
 .attitude-stage{position:relative;background:#091824;padding:12px;min-height:290px}
 .attitude-stage canvas{display:block;width:100%;max-height:310px;object-fit:contain}
@@ -18,3 +31,5 @@
 .workbench-message.error{color:#f3a9a9}
 .reservation-panel .table-scroll{max-height:330px}.sequence-panel .table-scroll{max-height:330px}
 @media(max-width:850px){.file-pair,.reservation-form{grid-template-columns:1fr}.file-pair button,.reservation-form button{justify-self:start}}
+@media(max-width:1100px){.ros-status-grid,.ros-tc-grid{grid-template-columns:1fr}}
+@media(max-width:650px){.workbench-tabs{flex-direction:column}.workbench-tabs button{min-height:38px}.current-alert-row{grid-template-columns:1fr}}

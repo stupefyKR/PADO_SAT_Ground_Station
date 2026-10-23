@@ -83,6 +83,8 @@ class MpsCandidateStore:
         match = next((item for item in schedule["passes"] if item["pass_id"] == pass_id), None)
         if match is None:
             raise CandidateError("unknown_pass")
+        if (match.get("station_id"), match.get("band")) != ("yonsei", "UHF"):
+            raise CandidateError("tc_not_available_for_pass")
         return match
 
     def list_current(self, schedule: dict) -> list[dict]:
@@ -98,7 +100,9 @@ class MpsCandidateStore:
         result = []
         for pass_id, aos, los, revision, ids, actor in rows:
             item = current.get(pass_id)
-            if item and (aos, los) == (item["aos_utc_s"], item["los_utc_s"]):
+            if (item and (item.get("station_id"), item.get("band")) ==
+                    ("yonsei", "UHF") and
+                    (aos, los) == (item["aos_utc_s"], item["los_utc_s"])):
                 result.append({"pass_id": pass_id, "schedule_sha256": digest,
                                "aos_utc_s": aos, "los_utc_s": los,
                                "revision": revision, "candidate_ids": json.loads(ids),

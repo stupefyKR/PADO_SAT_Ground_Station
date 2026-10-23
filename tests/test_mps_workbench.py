@@ -10,8 +10,10 @@ from tools.stage_fds_outbox import ROOT
 
 def schedule(digest="a" * 64):
     return {"schedule_state": "validated", "schedule_sha256": digest,
-            "passes": [{"pass_id": "yonsei-001", "aos_utc_s": 100,
-                        "los_utc_s": 200}]}
+            "passes": [{"pass_id": "yonsei-001", "station_id": "yonsei",
+                        "band": "UHF", "aos_utc_s": 100, "los_utc_s": 200},
+                       {"pass_id": "kari-001", "station_id": "kari",
+                        "band": "S_BAND", "aos_utc_s": 300, "los_utc_s": 400}]}
 
 
 class MpsCandidateStoreTest(unittest.TestCase):
@@ -41,6 +43,9 @@ class MpsCandidateStoreTest(unittest.TestCase):
                            ["SP_BURN"], "planner01")
             with self.assertRaisesRegex(CandidateError, "stale_schedule"):
                 store.save(schedule("b" * 64), "yonsei-001", "a" * 64, 1,
+                           ["HK_GET"], "planner01")
+            with self.assertRaisesRegex(CandidateError, "tc_not_available_for_pass"):
+                store.save(schedule(), "kari-001", "a" * 64, 0,
                            ["HK_GET"], "planner01")
             self.assertEqual(store.save(schedule(), "yonsei-001", "a" * 64, 1,
                                         ["HK_GET"], "planner01")["revision"], 2)
