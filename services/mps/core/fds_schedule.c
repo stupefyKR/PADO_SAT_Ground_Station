@@ -237,17 +237,17 @@ static int read_bounded(const char *path, size_t limit, char **data, size_t *len
     return 0;
 }
 
-static int basename_is(const char *path, const char *expected)
+static const char *file_basename(const char *path)
 {
     const char *name;
     const char *separator;
-    if (path == NULL) return 0;
+    if (path == NULL) return NULL;
     name = path;
     separator = strrchr(name, '/');
     if (separator != NULL) name = separator + 1;
     separator = strrchr(name, '\\');
     if (separator != NULL) name = separator + 1;
-    return strcmp(name, expected) == 0;
+    return name;
 }
 
 int gs_mps_fds_schedule_load_pair(const char *csv_path,
@@ -257,19 +257,23 @@ int gs_mps_fds_schedule_load_pair(const char *csv_path,
     char *csv = NULL;
     char *manifest = NULL;
     gs_manifest_t metadata;
-    char expected_manifest_name[sizeof(metadata.file) + 16u];
+    const char *manifest_basename;
     size_t csv_length, manifest_length;
     int result = -1;
     if (out == NULL || read_bounded(csv_path, GS_MPS_FDS_SCHEDULE_MAX_BYTES,
                                      &csv, &csv_length) != 0) return -1;
+    manifest_basename = file_basename(manifest_path);
     if (read_bounded(manifest_path, GS_MANIFEST_MAX_BYTES,
                      &manifest, &manifest_length) == 0 &&
             gs_manifest_parse(manifest, manifest_length, &metadata) == 0 &&
             valid_schedule_name(metadata.file) &&
-            snprintf(expected_manifest_name, sizeof(expected_manifest_name),
-                     "%s.manifest.json", metadata.file) > 0 &&
-            basename_is(csv_path, metadata.file) &&
-            basename_is(manifest_path, expected_manifest_name))
+            file_basename(csv_path) != NULL &&
+            strcmp(file_basename(csv_path), metadata.file) == 0 &&
+            manifest_basename != NULL &&
+            strncmp(manifest_basename, metadata.file,
+                    strlen(metadata.file)) == 0 &&
+            strcmp(manifest_basename + strlen(metadata.file),
+                   ".manifest.json") == 0)
         result = gs_mps_fds_schedule_parse(csv, csv_length, manifest,
                                            manifest_length, out);
     free(csv);

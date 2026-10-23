@@ -27,15 +27,14 @@ int main(int argc, char **argv)
             (strcmp(argv[1], "pull-n05") != 0 &&
              strcmp(argv[1], "push-n13") != 0 &&
              strcmp(argv[1], "push-n15") != 0)) {
-        (void)fprintf(stderr,
-                      "usage: gs_fds_exchange pull-n05|push-n13|push-n15 "
-                      "HOST PORT USER PRIVATE_KEY HOST_KEY_SHA256 REMOTE_DIR "
-                      "FILE_OR_NAME MANIFEST_OR_LOCAL_DIR\n");
+        (void)fputs("usage: gs_fds_exchange pull-n05|push-n13|push-n15 "
+                    "HOST PORT USER PRIVATE_KEY HOST_KEY_SHA256 REMOTE_DIR "
+                    "FILE_OR_NAME MANIFEST_OR_LOCAL_DIR\n", stderr);
         return 2;
     }
     client = gs_sftp_connect(argv[2], port, argv[4], argv[5], argv[6]);
     if (client == NULL) {
-        (void)fprintf(stderr, "FDS SFTP peer authentication failed\n");
+        (void)fputs("FDS SFTP peer authentication failed\n", stderr);
         return 1;
     }
     if (strcmp(argv[1], "pull-n05") == 0)
@@ -46,7 +45,7 @@ int main(int argc, char **argv)
                                   argv[8], argv[9], argv[7]);
     gs_sftp_disconnect(client);
     if (result != 0) {
-        (void)fprintf(stderr, "FDS SFTP file pair transfer failed\n");
+        (void)fputs("FDS SFTP file pair transfer failed\n", stderr);
         return 1;
     }
     return 0;
