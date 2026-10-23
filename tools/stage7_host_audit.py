@@ -13,8 +13,11 @@ import sys
 
 
 def command(*args):
-    result = subprocess.run(args, capture_output=True, text=True, check=False,
-                            timeout=20, env={**os.environ, "LC_ALL": "C"})
+    try:
+        result = subprocess.run(args, capture_output=True, text=True, check=False,
+                                timeout=20, env={**os.environ, "LC_ALL": "C"})
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return 1, "", str(exc)
     return result.returncode, result.stdout.strip(), result.stderr.strip()
 
 
@@ -28,7 +31,8 @@ def inbound_rules(status: str) -> list[tuple[str, str]]:
 
 
 def audit(admin_ip: str):
-    report = {"docker_access": False, "published_ports": [],
+    report = {"docker_access": False, "docker_inventory_complete": False,
+              "published_ports": [],
               "ufw_active": False, "ufw_default_deny_incoming": False,
               "ufw_default_deny_routed": False, "ufw_logging_on": False,
               "ufw_inbound_rules": [], "ufw_unexpected_inbound": [],
@@ -39,15 +43,26 @@ def audit(admin_ip: str):
         report["docker_access"] = True
         report["docker_logging_driver"] = out
         rc, out, err = command("docker", "ps", "-q")
-        if rc == 0 and out:
+        if rc != 0:
+            report["errors"].append(f"docker ps: {err}")
+        elif not out:
+            report["docker_inventory_complete"] = True
+        else:
             rc, data, err = command("docker", "inspect", *out.splitlines())
             if rc == 0:
-                for item in json.loads(data):
-                    for port, bindings in item["NetworkSettings"]["Ports"].items():
-                        if bindings:
-                            report["published_ports"].append({
-                                "container": item["Name"].lstrip("/"),
-                                "container_port": port, "bindings": bindings})
+                try:
+                    items = json.loads(data)
+                    if len(items) != len(out.splitlines()):
+                        raise ValueError("container count changed during audit")
+                    for item in items:
+                        for port, bindings in item["NetworkSettings"]["Ports"].items():
+                            if bindings:
+                                report["published_ports"].append({
+                                    "container": item["Name"].lstrip("/"),
+                                    "container_port": port, "bindings": bindings})
+                    report["docker_inventory_complete"] = True
+                except (KeyError, TypeError, ValueError) as exc:
+                    report["errors"].append(f"docker inspect parse: {exc}")
             else:
                 report["errors"].append(f"docker inspect: {err}")
     else:
@@ -81,7 +96,8 @@ def main():
     ipaddress.IPv4Address(args.admin_ip)
     report = audit(args.admin_ip)
     print(json.dumps(report, indent=2, ensure_ascii=False))
-    passed = (report["docker_access"] and not report["published_ports"] and
+    passed = (report["docker_access"] and report["docker_inventory_complete"] and
+              not report["published_ports"] and
               report["ufw_active"] and report["ufw_default_deny_incoming"] and
               report["ufw_default_deny_routed"] and report["ufw_logging_on"] and
               report["ufw_inbound_rules"] == [("22/tcp", args.admin_ip)] and

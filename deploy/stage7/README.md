@@ -5,6 +5,8 @@ FDS, DGS-Archive, DGS-GS, DGS-NET, Portal을 별도 Docker 컨테이너로 둔�
 이 폴더의 Compose 파일은 연결 경계를 시험하는 **일회용 probe**다. 실제
 서브시스템 데몬, 운용 TC, 외부 지상국 연결을 배포하지 않는다.
 
+실제 서버 준비·UFW·Docker·로그·검증·복구 절차는 [서버 설정 매뉴얼](SERVER_SETUP.md)에 정리했다.
+
 ## 생성과 검사
 
 ```sh
