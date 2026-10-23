@@ -2,16 +2,16 @@
 
 ## 현재 상태
 
-- 현재 단계: 단계 1 인터페이스·공통 파일 교환, 단계 2 공통 통신, 단계 3 시험용 TM 수신, 단계 4 MPS 비운용 기준선, 단계 5 TC 비운용 시험 경로, 단계 6 내부 파일 교환 기준선 구현 중
-- 다음 작업: 단계 6 Linux CI 및 서비스 간 교환 검증. 운용 명령 항목·FDS 파일·Mission Request 본문·트랜시버 HMAC 형식은 확정 뒤 연결
+- 현재 단계: 단계 1 인터페이스·공통 파일 교환, 단계 2 공통 통신, 단계 3 시험용 TM 수신, 단계 4 MPS 비운용 기준선, 단계 5 TC 비운용 시험 경로, 단계 6 내부 파일 교환 비운용 기준선 완료
+- 다음 작업: 단계 7 실제 서버·VM 배포 기반. 운용 명령 항목·FDS 파일·Mission Request 본문·트랜시버 HMAC 형식은 확정 뒤 연결
 - 미결 사항: TBD(ICD) 항우연·연세대 연동 포트·프로토콜·프레임, TC 명령·TM 실제 항목, DGS-GS 임시 원시데이터 용량·보관시간·회수 주기; TBD(HMAC) 트랜시버 세부 사양
 
 ## 기록
 
-### 2026-10-21 — 단계 6 내부 교환 기준선 진행
+### 2026-10-23 — 단계 6 내부 교환 비운용 기준선 완료
 
 - 구현: N05·N08–N18의 데이터·연결 방향과 유형을 N2 기준표에 대조하는 SFTP 경로표, NORAD TLE 구문·체크섬·위성 ID 검사, Archive 반입·메모리 카탈로그·SDC/MPS 목적지별 매니페스트 생성
-- 시험: Windows Release CTest 6/6. Linux SFTP 시험에 12개 경로의 실제 파일 쌍 송수신과 SDC→Archive→MPS 릴레이를 추가함. Linux CI 결과는 확인 후 갱신
+- 시험: Windows Release·ASan CTest 각각 6/6, Python 10/10. Linux SFTP 시험에서 12개 경로의 파일 쌍 송수신과 SDC→Archive→MPS 릴레이를 확인. [Ubuntu CI 실행 #31](https://github.com/stupefyKR/PADO_SAT_Ground_Station/actions/runs/39891674446)에서 GCC Release, Clang ASan+UBSan, clang-tidy, Python·비밀정보 및 격리 컨테이너 시험 전체 성공
 - 경계: 외부 Space-Track·발사체 연동, Java/Orekit 궤도 계산, FDS 산출물 본문, NAS 영속 저장, VM 계정·방화벽 설정은 아직 구현되지 않음
 - 결정: DECISIONS.md #15, `interfaces/stage6/test_contract.md`
 
