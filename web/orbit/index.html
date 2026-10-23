@@ -8,6 +8,11 @@
   <link rel="stylesheet" href="/assets/orbit.css">
 </head>
 <body data-page="orbit">
+<div class="global-clock" role="group" aria-label="현재 시각">
+  <div class="global-clock-zone"><span class="global-clock-label">UTC</span><time id="utc-clock">---- -- -- --:--:--</time></div>
+  <span class="global-clock-divider" aria-hidden="true"></span>
+  <div class="global-clock-zone"><span class="global-clock-label">한국 시각 · KST (UTC+9)</span><time id="kst-clock">---- -- -- --:--:--</time></div>
+</div>
 <div class="shell">
   <aside class="sidebar">
     <a class="brand" href="/ops"><span class="brand-mark">P<span>·</span></span><span>PADO-SAT<small>GROUND CONTROL</small></span></a>
@@ -22,7 +27,7 @@
   <div class="main-area">
     <header class="topbar">
       <div><span class="eyebrow">OPERATIONS / ORBIT VIEW</span><h1>위성 위치</h1></div>
-      <div class="top-right"><span class="top-clock" id="utc-clock">UTC --:--:--</span><span id="user-badge" class="user-badge">확인 중</span><button id="logout" class="ghost">로그아웃</button></div>
+      <div class="top-right"><span id="user-badge" class="user-badge">확인 중</span><button id="logout" class="ghost">로그아웃</button></div>
     </header>
     <main class="orbit-content">
       <div class="orbit-notice"><strong id="orbit-mode-label">ISS TEST MODE</strong><span id="orbit-source-note">고정 ISS TLE로 생성한 FDS 결과를 기다리는 중입니다. 지상국 좌표는 시험용 근삿값이며 컨택은 운용 판단에 사용할 수 없습니다.</span></div>

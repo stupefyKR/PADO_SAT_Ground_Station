@@ -204,7 +204,18 @@ function setupRosExample() {
 }
 
 function setupUtcClock() {
-  const update = () => value("utc-clock", `UTC ${new Date().toISOString().slice(11, 19)}`);
+  const utcClock = document.getElementById("utc-clock");
+  const kstClock = document.getElementById("kst-clock");
+  if (!utcClock || !kstClock) return;
+  const update = () => {
+    const now = new Date();
+    const utc = now.toISOString();
+    const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000).toISOString();
+    utcClock.textContent = utc.slice(0, 19).replace("T", " ");
+    kstClock.textContent = kst.slice(0, 19).replace("T", " ");
+    utcClock.dateTime = utc;
+    kstClock.dateTime = `${kst.slice(0, 19)}+09:00`;
+  };
   update();
   setInterval(update, 1000);
 }
@@ -486,7 +497,6 @@ function renderMpsPasses(schedule, session, drafts) {
 }
 
 async function workspace(page) {
-  setupUtcClock();
   // The ROS workbench owns the explicitly test-only TM preview controls.
   let session;
   try { session = await api("/api/session"); }
@@ -544,5 +554,6 @@ async function workspace(page) {
 }
 
 const page = document.body.dataset.page;
+if (page === "login" || page === "ops" || page === "mps" || page === "orbit") setupUtcClock();
 if (page === "login") loginPage();
 if (page === "ops" || page === "mps" || page === "orbit") workspace(page);

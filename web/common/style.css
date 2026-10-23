@@ -13,3 +13,14 @@
 @media(max-width:1200px){.ros-grid,.mps-grid{grid-template-columns:1fr 1fr}.trend-panel,.passes-panel,.draft-panel{grid-column:1/-1}.sensor-panel{grid-row:2}.trend-panel{grid-row:1}}
 @media(max-width:800px){.sidebar{width:72px;padding:18px 7px}.brand>span:last-child,.nav-label,.side-foot,.sidebar nav a span{display:none}.sidebar nav{margin-top:45px}.sidebar nav a{justify-content:center;font-size:.68rem;padding:12px 4px}.content{padding:16px}.topbar{padding:15px 16px}.status-strip{grid-template-columns:repeat(2,1fr)}.status-strip>div:last-child{grid-column:1/-1}.ros-grid,.mps-grid{grid-template-columns:1fr}.trend-panel,.passes-panel,.draft-panel,.sensor-panel{grid-column:auto;grid-row:auto}.trend-meta{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:540px){.topbar{align-items:flex-start;flex-direction:column}.top-right{width:100%;flex-wrap:wrap}.top-clock{margin-right:auto}.notice{align-items:flex-start;flex-direction:column}.panel-head{align-items:flex-start;flex-direction:column}.chart-wrap svg{height:200px}.chart-legend{flex-wrap:wrap}.chart-legend span:last-child{margin-left:0}.control-list>div{grid-template-columns:1fr auto}.control-list span{grid-row:2;grid-column:1/-1}.demo-control{align-items:flex-start;flex-direction:column}}
+
+/* One clock for the whole ground system, above navigation and page content. */
+body[data-page="login"],body[data-page="ops"],body[data-page="mps"],body[data-page="orbit"]{display:flex;flex-direction:column;min-height:100vh}
+body[data-page="login"] .login-wrap,body[data-page="ops"] .shell,body[data-page="mps"] .shell,body[data-page="orbit"] .shell{flex:1;min-height:0}
+.global-clock{display:flex;align-items:center;justify-content:center;gap:clamp(28px,5vw,92px);min-height:106px;padding:16px 24px;border-bottom:1px solid #36586a;background:#122939}
+.global-clock-zone{display:grid;gap:7px;min-width:0}
+.global-clock-label{color:#8fc8d0;font:700 .78rem Arial,sans-serif;letter-spacing:.08em}
+.global-clock time{display:block;color:#f2f9fc;font:700 clamp(1.45rem,2.15vw,2.1rem) Consolas,"Courier New",monospace;font-variant-numeric:tabular-nums;letter-spacing:.015em;white-space:nowrap}
+.global-clock-divider{flex:none;width:1px;height:59px;background:#3a5b6c}
+@media(max-width:750px){.global-clock{gap:20px}.global-clock time{font-size:clamp(1.1rem,3.1vw,1.45rem)}}
+@media(max-width:540px){.global-clock{align-items:stretch;flex-direction:column;gap:12px;padding:14px 18px}.global-clock-zone{gap:4px}.global-clock time{font-size:clamp(1.23rem,5.2vw,1.65rem)}.global-clock-divider{width:100%;height:1px}}

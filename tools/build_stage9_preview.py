@@ -34,8 +34,8 @@ def build() -> list[Path]:
         banner = ('<div style="position:relative;z-index:10;background:#fef3c7;'
                   'color:#78350f;text-align:center;padding:10px;font:600 14px system-ui">'
                   '화면 미리보기 · 합성 예시 · 서버/API 연결 없음 · 명령 실행 불가</div>')
-        html = html.replace(f'<body data-page="{source}">',
-                            f'<body data-page="{source}">{banner}')
+        html = html.replace('<div class="shell">',
+                            f'{banner}<div class="shell">', 1)
         if source == "ops":
             html = html.replace('id="ros-mode">확인 중', 'id="ros-mode">SIM_ONLY')
             html = html.replace('id="ros-tm">확인 중', 'id="ros-tm">시험 규격')

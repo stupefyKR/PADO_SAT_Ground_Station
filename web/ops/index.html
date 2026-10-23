@@ -1,11 +1,17 @@
 <!doctype html>
 <html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>PADO-SAT · ROS 관제</title><link rel="stylesheet" href="/assets/style.css"><link rel="stylesheet" href="/assets/ros-workbench.css"></head>
-<body data-page="ops"><div class="shell"><aside class="sidebar">
+<body data-page="ops">
+<div class="global-clock" role="group" aria-label="현재 시각">
+  <div class="global-clock-zone"><span class="global-clock-label">UTC</span><time id="utc-clock">---- -- -- --:--:--</time></div>
+  <span class="global-clock-divider" aria-hidden="true"></span>
+  <div class="global-clock-zone"><span class="global-clock-label">한국 시각 · KST (UTC+9)</span><time id="kst-clock">---- -- -- --:--:--</time></div>
+</div>
+<div class="shell"><aside class="sidebar">
 <a class="brand" href="/ops"><span class="brand-mark">P<span>·</span></span><span>PADO-SAT<small>GROUND CONTROL</small></span></a>
 <div class="nav-label">WORKSPACE</div><nav aria-label="주 메뉴"><a class="active" aria-current="page" href="/ops">ROS <span>위성 관제</span></a><a href="/mps">MPS <span>임무 계획</span></a><a href="/orbit">ORBIT <span>위성 위치</span></a></nav>
 <div class="side-foot"><span class="status-dot unknown"></span> 개발 기준선 <small>실제 RF·TC 연결 없음</small></div></aside>
-<div class="main-area"><header class="topbar"><div><span class="eyebrow">OPERATIONS / ROS</span><h1>위성 관제</h1></div><div class="top-right"><span class="top-clock" id="utc-clock">UTC --:--:--</span><span id="user-badge" class="user-badge">확인 중</span><button id="logout" class="ghost">로그아웃</button></div></header>
+<div class="main-area"><header class="topbar"><div><span class="eyebrow">OPERATIONS / ROS</span><h1>위성 관제</h1></div><div class="top-right"><span id="user-badge" class="user-badge">확인 중</span><button id="logout" class="ghost">로그아웃</button></div></header>
 <main class="content"><div class="notice"><strong>SIM ONLY</strong><span>현재 TM/TC ICD가 없어 이 화면은 시험 입력과 예약 초안만 다룹니다. TC 인코딩·실행·송출은 연결되지 않았습니다.</span></div>
 <section class="status-strip ros-status" aria-label="관제 상태"><div><span>운용 모드</span><strong id="ros-mode">확인 중</strong></div><div><span>TM 정의</span><strong id="ros-tm">확인 중</strong></div><div><span>계측 소스</span><strong id="ros-data-state">연결 대기</strong></div><div><span>마지막 TM</span><strong id="ros-last-tm">수신 없음</strong></div><div><span>한계 경보</span><strong id="ros-alarm-state">평가 불가</strong></div><div><span>TC 송출</span><strong id="ros-tc">차단</strong></div></section>
 <div class="workbench-tabs" role="tablist" aria-label="ROS 작업 화면">
