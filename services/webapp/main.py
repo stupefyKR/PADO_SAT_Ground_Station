@@ -27,8 +27,7 @@ from .core import CoreUnavailable, mps_catalog, ros_summary
 
 ROOT = Path(__file__).resolve().parents[2]
 WEB = ROOT / "web"
-COMMAND_DB = ROOT / "interfaces" / "command_db" / "commands.json"
-CORE_PROBE = Path("/usr/local/bin/gs_stage9_core_probe")
+CORE_SOCKET = Path("/run/core/core.sock")
 MAX_BODY = 4096
 MAX_UPSTREAM = 65536
 ASSETS = {
@@ -52,9 +51,8 @@ class AppServer(ThreadingHTTPServer):
     def __init__(self, address: tuple[str, int], *, mode: str,
                  cert: Path, key: Path, ca: Path, auth: AuthStore | None = None,
                  ros_url: str = "", mps_url: str = "", client_cert: Path | None = None,
-                 client_key: Path | None = None, command_db: Path = COMMAND_DB,
-                 tm_record: Path = Path("/state/ros-tm.record"), static_root: Path = WEB,
-                 core_probe: Path = CORE_PROBE) -> None:
+                 client_key: Path | None = None, static_root: Path = WEB,
+                 core_socket: Path = CORE_SOCKET) -> None:
         self.mode = mode
         self.auth = auth
         self.ros_url = ros_url
@@ -62,9 +60,7 @@ class AppServer(ThreadingHTTPServer):
         self.client_cert = client_cert
         self.client_key = client_key
         self.ca = ca
-        self.command_db = command_db
-        self.tm_record = tm_record
-        self.core_probe = core_probe
+        self.core_socket = core_socket
         self.static_root = static_root
         self.login_attempts: dict[str, list[float]] = {}
         self.login_lock = threading.Lock()
@@ -301,7 +297,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.server.mode == "ros" and path == "/overview":
             try:
-                summary = ros_summary(self.server.core_probe, self.server.tm_record)
+                summary = ros_summary(self.server.core_socket)
             except CoreUnavailable:
                 self._error(HTTPStatus.SERVICE_UNAVAILABLE, "ros_core_unavailable")
                 return
@@ -313,7 +309,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.server.mode == "mps" and path == "/catalog":
             try:
-                catalog = mps_catalog(self.server.core_probe, self.server.command_db)
+                catalog = mps_catalog(self.server.core_socket)
             except CoreUnavailable:
                 self._error(HTTPStatus.SERVICE_UNAVAILABLE, "mps_core_unavailable")
                 return
@@ -350,13 +346,8 @@ def parser() -> argparse.ArgumentParser:
             service.add_argument("--client-cert", type=Path, required=True)
             service.add_argument("--client-key", type=Path, required=True)
             service.add_argument("--static-root", type=Path, default=WEB)
-        if mode == "mps":
-            service.add_argument("--command-db", type=Path, default=COMMAND_DB)
-        if mode == "ros":
-            service.add_argument("--tm-record", type=Path,
-                                 default=Path("/state/ros-tm.record"))
         if mode in ("ros", "mps"):
-            service.add_argument("--core-probe", type=Path, default=CORE_PROBE)
+            service.add_argument("--core-socket", type=Path, default=CORE_SOCKET)
     return result
 
 
@@ -387,10 +378,8 @@ def main() -> None:
                        mps_url=getattr(args, "mps_url", ""),
                        client_cert=getattr(args, "client_cert", None),
                        client_key=getattr(args, "client_key", None),
-                       command_db=getattr(args, "command_db", COMMAND_DB),
-                       tm_record=getattr(args, "tm_record", Path("/state/ros-tm.record")),
                        static_root=getattr(args, "static_root", WEB),
-                       core_probe=getattr(args, "core_probe", CORE_PROBE))
+                       core_socket=getattr(args, "core_socket", CORE_SOCKET))
     try:
         server.serve_forever(poll_interval=0.2)
     finally:

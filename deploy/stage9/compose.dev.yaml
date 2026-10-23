@@ -48,15 +48,17 @@ services:
     build:
       context: ../..
       dockerfile: docker/stage9/Dockerfile
-    command: ["python3", "-m", "services.webapp.main", "ros", "--bind", "0.0.0.0", "--port", "8443", "--cert", "/certs/ros-api.crt", "--key", "/certs/ros-api.key", "--ca", "/certs/ca.crt", "--tm-record", "/state/ros-tm.record"]
+    command: ["python3", "-m", "services.webapp.main", "ros", "--bind", "0.0.0.0", "--port", "8443", "--cert", "/certs/ros-api.crt", "--key", "/certs/ros-api.key", "--ca", "/certs/ca.crt"]
+    depends_on:
+      ros-core-read: {condition: service_healthy}
     volumes:
       - type: bind
         source: ${PADO_STAGE9_CERT_DIR:?set certificate directory}
         target: /certs
         read_only: true
       - type: volume
-        source: ros_state
-        target: /state
+        source: ros_core_socket
+        target: /run/core
         read_only: true
     networks: [portal_ros]
     read_only: true
@@ -69,10 +71,16 @@ services:
       context: ../..
       dockerfile: docker/stage9/Dockerfile
     command: ["python3", "-m", "services.webapp.main", "mps", "--bind", "0.0.0.0", "--port", "8443", "--cert", "/certs/mps-api.crt", "--key", "/certs/mps-api.key", "--ca", "/certs/ca.crt"]
+    depends_on:
+      mps-core-read: {condition: service_healthy}
     volumes:
       - type: bind
         source: ${PADO_STAGE9_CERT_DIR:?set certificate directory}
         target: /certs
+        read_only: true
+      - type: volume
+        source: mps_core_socket
+        target: /run/core
         read_only: true
     networks: [portal_mps]
     read_only: true
@@ -80,9 +88,49 @@ services:
     security_opt: ["no-new-privileges:true"]
     tmpfs: ["/tmp"]
     logging: {driver: journald}
+  ros-core-read:
+    build:
+      context: ../..
+      dockerfile: docker/stage9/Dockerfile
+    command: ["/usr/local/bin/gs_stage9_core_probe", "serve", "ros", "/run/core/core.sock", "/state/ros-tm.record"]
+    volumes:
+      - ros_core_socket:/run/core
+      - type: volume
+        source: ros_state
+        target: /state
+        read_only: true
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD-SHELL", "test -S /run/core/core.sock"]
+      interval: 2s
+      timeout: 1s
+      retries: 10
+    logging: {driver: journald}
+  mps-core-read:
+    build:
+      context: ../..
+      dockerfile: docker/stage9/Dockerfile
+    command: ["/usr/local/bin/gs_stage9_core_probe", "serve", "mps", "/run/core/core.sock", "/app/interfaces/command_db/commands.json"]
+    volumes:
+      - mps_core_socket:/run/core
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD-SHELL", "test -S /run/core/core.sock"]
+      interval: 2s
+      timeout: 1s
+      retries: 10
+    logging: {driver: journald}
 volumes:
   portal_state:
   ros_state:
+  ros_core_socket:
+  mps_core_socket:
 networks:
   entry: {driver: bridge}
   portal_ros: {driver: bridge, internal: true}

@@ -1,9 +1,10 @@
-"""Bounded read-only adapter to the non-operational C core probe."""
+"""Bounded read-only Unix-socket adapter to the resident C core readers."""
 
 from __future__ import annotations
 
 import json
-import subprocess
+import socket
+import struct
 import threading
 from pathlib import Path
 
@@ -12,31 +13,45 @@ class CoreUnavailable(Exception):
     pass
 
 
-_probe_slots = threading.BoundedSemaphore(4)
+_core_slots = threading.BoundedSemaphore(4)
+_MAX_RESPONSE = 1024
 
 
-def _probe(binary: Path, command: str, source: Path) -> dict:
-    if not _probe_slots.acquire(blocking=False):
-        raise CoreUnavailable("core probe busy")
+def _read_exact(connection: socket.socket, length: int) -> bytes:
+    result = bytearray()
+    while len(result) < length:
+        part = connection.recv(length - len(result))
+        if not part:
+            raise CoreUnavailable("core connection closed")
+        result.extend(part)
+    return bytes(result)
+
+
+def _query(socket_path: Path, operation: str) -> dict:
+    if not _core_slots.acquire(blocking=False):
+        raise CoreUnavailable("core reader busy")
     try:
-        result = subprocess.run(
-            [str(binary), command, str(source)],
-            capture_output=True, timeout=2, check=False,
-        )
-        if result.returncode != 0 or len(result.stdout) > 1024:
-            raise CoreUnavailable("core probe failed")
-        value = json.loads(result.stdout)
-        if not isinstance(value, dict):
-            raise CoreUnavailable("invalid core response")
+        request = ('{"op":"' + operation + '"}').encode("ascii")
+        with socket.socket(getattr(socket, "AF_UNIX", -1), socket.SOCK_STREAM) as connection:
+            connection.settimeout(2)
+            connection.connect(str(socket_path))
+            connection.sendall(struct.pack(">I", len(request)) + request)
+            length = struct.unpack(">I", _read_exact(connection, 4))[0]
+            if not 0 < length <= _MAX_RESPONSE:
+                raise CoreUnavailable("invalid core response size")
+            response = _read_exact(connection, length)
+        value = json.loads(response)
+        if not isinstance(value, dict) or "error" in value:
+            raise CoreUnavailable("core reader failed")
         return value
-    except (OSError, subprocess.TimeoutExpired, UnicodeError, ValueError) as exc:
-        raise CoreUnavailable("core probe unavailable") from exc
+    except (OSError, UnicodeError, ValueError, struct.error) as exc:
+        raise CoreUnavailable("core reader unavailable") from exc
     finally:
-        _probe_slots.release()
+        _core_slots.release()
 
 
-def ros_summary(binary: Path, record: Path) -> dict:
-    result = _probe(binary, "ros-summary", record)
+def ros_summary(socket_path: Path) -> dict:
+    result = _query(socket_path, "overview")
     count = result.get("sim_frame_count")
     last = result.get("last_sequence")
     state = result.get("record_state")
@@ -50,8 +65,8 @@ def ros_summary(binary: Path, record: Path) -> dict:
             "record_state": state}
 
 
-def mps_catalog(binary: Path, command_db: Path) -> dict:
-    result = _probe(binary, "mps-catalog", command_db)
+def mps_catalog(socket_path: Path) -> dict:
+    result = _query(socket_path, "catalog")
     version = result.get("version")
     count = result.get("command_count")
     if (type(version) is not int or version < 1 or version > 0xffffffff or

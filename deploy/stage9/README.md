@@ -9,9 +9,8 @@ CSRF·계정 잠금·로그인 속도 제한을 제공하고 정적 ROS/MPS 화�
 ROS는 `SIM_ONLY`와 TC 송출 차단 상태, MPS는 현재 비운용 명령 DB의 버전과 빈
 명령 목록, 미정 FDS 패스 목록을 표시한다. **TC 송출, 승인, 업링크 반입, 운용
 시퀀스 출력, TM 파라미터 조회 API는 존재하지 않는다.** 화면에 표시된 미래
-기능은 버튼이나 입력 경로로 활성화되지 않는다. 현 API는 C 코어의 실행
-서비스에 아직 연결되지 않았으며 이 기준선을 단계 9 전체 완료로 판정하지
-않는다.
+기능은 버튼이나 입력 경로로 활성화되지 않는다. 현재 API는 읽기 전용 C
+서비스에만 연결되며 이 기준선을 단계 9 전체 완료로 판정하지 않는다.
 
 ## 9-1: 비운용 C 코어 읽기 연결
 
@@ -24,13 +23,22 @@ ROS는 `SIM_ONLY`와 TC 송출 차단 상태, MPS는 현재 비운용 명령 DB�
 손상·변조·과대 파일이면 503으로 실패한다. API는 이 값을 센서 측정값이나
 실제 TM 수신 시각으로 취급하지 않는다.
 
-개발 Compose의 `ros_state` 볼륨은 ROS API에 읽기 전용으로 붙어 있다.
+## 9-2: 상주 C 읽기 서비스와 내부 통신
+
+ROS·MPS C 읽기 프로세스를 각각 별도 컨테이너에 상주시킨다. API는 요청마다
+프로세스를 실행하지 않고 길이 제한 JSON 프레임을 전용 Unix 소켓으로 보낸다.
+소켓은 서비스별 비공개 볼륨에 있으며 UID 10001만 접속하고, C 프로세스에는
+네트워크 인터페이스가 없다. C 프로세스는 매 요청마다 원본을 다시 읽어 검증해
+자료 변경과 손상을 즉시 반영한다. 연결 종료·시간 초과·잘못된 응답·손상
+원본은 정상 데이터로 대체하지 않고 오류로 반환한다.
+
+개발 Compose의 `ros_state`는 ROS C 읽기 서비스에만 읽기 전용으로 붙어 있다.
 이 Compose에는 기록을 쓰는 ROS 코어 서비스가 아직 없으므로 기본값은
-`/state/ros-tm.record` 부재·0건이다. 실제 코어 프로세스의 지속 실행,
-영속 계획·패스 모델, TM 파라미터 변환과 한계 경보는 아직 연결되지 않았다.
-프로브는 셸을 거치지 않고 2초 제한으로 실행되며 명령 DB와 시뮬레이터
-기록은 크기·파일 유형·권한·무결성을 검사한다. TLS/mTLS와 로그인 경계는
-기존 포털 경로를 유지한다.
+`/state/ros-tm.record` 부재·0건이다. 이 상주 프로세스는 **읽기 어댑터**이며
+실제 ROS TM 수신기나 MPS 계획 처리 데몬을 대체하지 않는다. 영속 계획·패스
+모델, TM 파라미터 변환과 한계 경보는 아직 연결되지 않았다. 명령 DB와
+시뮬레이터 기록은 크기·파일 유형·권한·무결성을 검사한다. TLS/mTLS와 로그인
+경계는 기존 포털 경로를 유지한다.
 
 ## ROS·MPS 화면 구조
 
@@ -50,7 +58,8 @@ UTC 수신 시각, 보정 값, 단위, 품질, 하한·상한, 경보 등급 및
 
 ## 단일 VM의 개발용 컨테이너 구성
 
-`compose.dev.yaml`은 포털·ROS API·MPS API를 분리한다. ROS와 MPS는 각자
+`compose.dev.yaml`은 포털·ROS API·MPS API·ROS C 읽기 서비스·MPS C 읽기
+서비스를 분리한다. ROS와 MPS는 각자
 포털과의 내부 브리지만 사용하고 호스트 포트를 공개하지 않는다. 포털만 VM
 루프백 `127.0.0.1:8443`에 게시한다. 관제 PC 공개는 모든 앱 개발 뒤 서버
 배포 수락에서 UFW·Docker 포트 정책과 별도 출발지 거부를 확인한 후 적용한다.
@@ -84,7 +93,8 @@ docker compose -f deploy/stage9/compose.dev.yaml up -d
 ## 검증과 남은 연결
 
 ```sh
-python3 -m unittest tests.test_stage9_auth tests.test_stage9_web -v
+python3 -m unittest tests.test_stage9_auth tests.test_stage9_core_adapter \
+  tests.test_stage9_core_probe tests.test_stage9_web -v
 docker compose -f deploy/stage9/compose.dev.yaml ps
 ```
 
@@ -98,7 +108,7 @@ Linux 시험은 Argon2id 실제 검증, TOTP 재사용 거부, 세션 만료·�
 9-1 C 프로브의 GCC·Clang ASan+UBSan 빌드, 정상·변조 기록과 명령 DB 거부,
 포털 경유 통합 시험, Stage 9 다단계 이미지 빌드도 통과했다.
 
-단계 9 전체 완료에는 C 코어의 실제 서비스·영속 데이터와 웹 API의 연결,
+단계 9 전체 완료에는 실제 ROS/MPS 운용 서비스·영속 데이터와 웹 API의 연결,
 확정된 TC/TM·FDS·Mission Request ICD에 따른 화면 기능, 재인증을 실제 승인
 함수에 결합한 증적, 관제 PC→포털의 현장 접근 및 ROS/MPS 직접 접근 거부
 시험이 남아 있다. 이 항목이 준비되기 전까지는 현재 읽기 전용 화면을

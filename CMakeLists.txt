@@ -88,8 +88,8 @@ target_link_libraries(gs_stage6_exchange PUBLIC gs)
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_executable(gs_stage9_core_probe services/webapp/core_probe.c
-        services/mps/core/inputs.c sim/tm_frame.c)
-    target_include_directories(gs_stage9_core_probe PRIVATE services/mps/core sim)
+        services/mps/core/inputs.c sim/tm_frame.c libgs/src/ipc.c)
+    target_include_directories(gs_stage9_core_probe PRIVATE services/mps/core sim libgs/include)
     target_link_libraries(gs_stage9_core_probe PRIVATE cjson gs_warnings m)
 
     add_library(gs_tm_sim STATIC sim/tm_frame.c services/common/tm_sim_support.c)

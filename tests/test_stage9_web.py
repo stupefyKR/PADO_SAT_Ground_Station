@@ -6,6 +6,7 @@ import struct
 import subprocess
 import tempfile
 import threading
+import time
 import unittest
 import zlib
 from pathlib import Path
@@ -13,7 +14,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from services.webapp.auth import AuthStore
-from services.webapp.main import AppServer, COMMAND_DB
+from services.webapp.main import AppServer, ROOT
 
 
 CORE_BIN = Path(os.environ.get(
@@ -70,14 +71,30 @@ class WebBoundaryTests(unittest.TestCase):
             cls.folder, cls.ca_cert, cls.ca_key, "pado-mps")
         cls.auth = AuthStore(cls.folder / "users.db", FakeHasher())
         cls.auth.create_user("planner01", "planner", "valid-password-123")
+        cls.core_processes = []
+        cls.core_sockets = {}
+        for mode, source in (("ros", cls.folder / "ros-tm.record"),
+                             ("mps", ROOT / "interfaces/command_db/commands.json")):
+            endpoint = cls.folder / f"{mode}.sock"
+            process = subprocess.Popen(
+                [str(CORE_BIN), "serve", mode, str(endpoint), str(source)],
+                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+            cls.core_processes.append(process)
+            cls.core_sockets[mode] = endpoint
+            until = time.monotonic() + 3
+            while not endpoint.exists() and time.monotonic() < until:
+                if process.poll() is not None:
+                    break
+                time.sleep(0.02)
+            if not endpoint.exists():
+                raise RuntimeError(f"{mode} C reader did not start")
         cls.servers = []
         cls.threads = []
         for mode, cert, key in (("ros", cls.ros_cert, cls.ros_key),
                                 ("mps", cls.mps_cert, cls.mps_key)):
             server = AppServer(("127.0.0.1", 0), mode=mode, cert=cert,
-                               key=key, ca=cls.ca_cert, command_db=COMMAND_DB,
-                               tm_record=cls.folder / "ros-tm.record",
-                               core_probe=CORE_BIN)
+                               key=key, ca=cls.ca_cert,
+                               core_socket=cls.core_sockets[mode])
             cls.servers.append(server)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
@@ -102,6 +119,9 @@ class WebBoundaryTests(unittest.TestCase):
             server.server_close()
         for thread in cls.threads:
             thread.join(timeout=3)
+        for process in cls.core_processes:
+            process.terminate()
+            process.wait(timeout=3)
         cls.auth.close()
         cls.temp.cleanup()
 

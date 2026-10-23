@@ -1,5 +1,5 @@
 import json
-import subprocess
+import struct
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -7,47 +7,78 @@ from unittest.mock import patch
 from services.webapp.core import CoreUnavailable, mps_catalog, ros_summary
 
 
+class FakeSocket:
+    def __init__(self, body, failure=None):
+        payload = json.dumps(body).encode() if isinstance(body, dict) else body
+        self.stream = bytearray(struct.pack(">I", len(payload)) + payload)
+        self.failure = failure
+        self.sent = b""
+        self.path = ""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        return None
+
+    def settimeout(self, _):
+        pass
+
+    def connect(self, path):
+        if self.failure:
+            raise self.failure
+        self.path = path
+
+    def sendall(self, data):
+        self.sent = data
+
+    def recv(self, length):
+        result = bytes(self.stream[:length])
+        del self.stream[:length]
+        return result
+
+
 class CoreAdapterTests(unittest.TestCase):
-    def result(self, body, code=0):
-        return subprocess.CompletedProcess([], code, json.dumps(body).encode(), b"")
+    @staticmethod
+    def query_with(body, function):
+        connection = FakeSocket(body)
+        with patch("services.webapp.core.socket.socket", return_value=connection):
+            result = function(Path("/core.sock"))
+        return result, connection
 
-    @patch("services.webapp.core.subprocess.run")
-    def test_ros_validated_summary(self, run):
-        run.return_value = self.result({"sim_frame_count": 2,
-                                        "last_sequence": 42,
-                                        "record_state": "validated"})
-        self.assertEqual(ros_summary(Path("/probe"), Path("/record"))["last_sequence"], 42)
-        run.assert_called_once()
-        self.assertEqual(run.call_args.args[0],
-                         [str(Path("/probe")), "ros-summary", str(Path("/record"))])
+    def test_ros_validated_summary_uses_bounded_frame(self):
+        result, connection = self.query_with(
+            {"sim_frame_count": 2, "last_sequence": 42,
+             "record_state": "validated"}, ros_summary)
+        self.assertEqual(result["last_sequence"], 42)
+        self.assertEqual(connection.path, str(Path("/core.sock")))
+        self.assertEqual(connection.sent,
+                         struct.pack(">I", 17) + b'{"op":"overview"}')
 
-    @patch("services.webapp.core.subprocess.run")
-    def test_invalid_core_result_fails_closed(self, run):
+    def test_invalid_core_result_fails_closed(self):
         for body in (
             {"sim_frame_count": True, "last_sequence": 1, "record_state": "validated"},
             {"sim_frame_count": 1, "last_sequence": None, "record_state": "validated"},
             {"sim_frame_count": 0, "last_sequence": None, "record_state": "validated"},
+            {"error": "core_unavailable"},
         ):
-            run.return_value = self.result(body)
             with self.assertRaises(CoreUnavailable):
-                ros_summary(Path("/probe"), Path("/record"))
-        run.return_value = self.result({"version": 1, "command_count": 1,
-                                        "operational": False})
-        with self.assertRaises(CoreUnavailable):
-            mps_catalog(Path("/probe"), Path("/db"))
-        run.return_value = self.result({"version": 1, "command_count": 0,
-                                        "operational": True})
-        with self.assertRaises(CoreUnavailable):
-            mps_catalog(Path("/probe"), Path("/db"))
+                self.query_with(body, ros_summary)
+        for body in (
+            {"version": 1, "command_count": 1, "operational": False},
+            {"version": 1, "command_count": 0, "operational": True},
+        ):
+            with self.assertRaises(CoreUnavailable):
+                self.query_with(body, mps_catalog)
 
-    @patch("services.webapp.core.subprocess.run")
-    def test_failed_or_unavailable_process_fails_closed(self, run):
-        run.return_value = self.result({}, code=1)
-        with self.assertRaises(CoreUnavailable):
-            mps_catalog(Path("/probe"), Path("/db"))
-        run.side_effect = subprocess.TimeoutExpired(["/probe"], 2)
-        with self.assertRaises(CoreUnavailable):
-            ros_summary(Path("/probe"), Path("/record"))
+    def test_unavailable_or_malformed_socket_fails_closed(self):
+        connection = FakeSocket({}, OSError("unavailable"))
+        with patch("services.webapp.core.socket.socket", return_value=connection):
+            with self.assertRaises(CoreUnavailable):
+                mps_catalog(Path("/core.sock"))
+        for body in (b"not-json", b"[]", b"" ):
+            with self.assertRaises(CoreUnavailable):
+                self.query_with(body, ros_summary)
 
 
 if __name__ == "__main__":
