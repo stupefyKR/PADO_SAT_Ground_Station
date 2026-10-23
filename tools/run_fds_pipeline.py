@@ -65,6 +65,8 @@ def verified_pair(body: Path | None, manifest: Path | None, route: str) -> bytes
         return None
     if body is None or manifest is None:
         raise ValueError(f"{route}: body and manifest paths must be supplied together")
+    if body.is_symlink() or manifest.is_symlink():
+        raise ValueError(f"{route}: symlink input is forbidden")
     if not body.exists() and not manifest.exists():
         return None  # A configured watch inbox has not received this route yet.
     if not body.exists() or not manifest.exists():
@@ -95,6 +97,42 @@ def verified_pair(body: Path | None, manifest: Path | None, route: str) -> bytes
     return payload
 
 
+def current_pair(root: Path | None, route: str) -> tuple[Path | None, Path | None]:
+    """Resolve one atomic ingress pointer, rejecting a blocked or broken snapshot."""
+    if root is None:
+        return None, None
+    if not root.exists() and not root.is_symlink():
+        return None, None
+    if root.is_symlink() or not root.is_dir():
+        raise ValueError(f"{route}: ingress root must be a directory")
+    if (root / "blocked.txt").exists() or (root / "blocked.txt").is_symlink():
+        raise ValueError(f"{route}: ingress blocked by invalid committed input")
+    marker = root / "current.txt"
+    if not marker.exists():
+        return None, None
+    if marker.is_symlink():
+        raise ValueError(f"{route}: current marker must not be a symlink")
+    snapshot_id = _regular_bytes(marker, 80).decode("ascii").strip()
+    if not re.fullmatch(r"[0-9a-f]{64}", snapshot_id):
+        raise ValueError(f"{route}: invalid current snapshot ID")
+    snapshot = root / snapshot_id
+    if snapshot.is_symlink() or not snapshot.is_dir():
+        raise ValueError(f"{route}: current snapshot missing")
+    names = [path.name for path in snapshot.iterdir() if path.name.endswith(".manifest.json")]
+    if len(names) != 1:
+        raise ValueError(f"{route}: snapshot must contain one manifest")
+    manifest = snapshot / names[0]
+    body = snapshot / names[0].removesuffix(".manifest.json")
+    return body, manifest
+
+
+def input_pair(args: argparse.Namespace, route: str) -> tuple[Path | None, Path | None]:
+    root = getattr(args, f"{route}_current_root", None)
+    if root is not None:
+        return current_pair(root, route)
+    return getattr(args, f"{route}_body"), getattr(args, f"{route}_manifest")
+
+
 def current_config(template: Path, instant: datetime) -> str:
     source = _regular_bytes(template, 8192).decode("utf-8").replace("\r\n", "\n")
     if source.count("start_utc=") != 1 or \
@@ -114,8 +152,8 @@ def run_cycle(args: argparse.Namespace, *, now: datetime | None = None) -> tuple
     now = now or datetime.now(timezone.utc)
     if not args.orekit_data.is_dir():
         raise ValueError("Orekit data directory required")
-    tle = verified_pair(args.tle_body, args.tle_manifest, "tle")
-    gnss = verified_pair(args.gnss_body, args.gnss_manifest, "gnss")
+    tle = verified_pair(*input_pair(args, "tle"), "tle")
+    gnss = verified_pair(*input_pair(args, "gnss"), "gnss")
     if tle is None and gnss is None:
         raise ValueError("no complete N05 TLE or N11 normalized GNSS pair")
     config = current_config(args.config, now)
@@ -152,9 +190,15 @@ def run_cycle(args: argparse.Namespace, *, now: datetime | None = None) -> tuple
 
 def signature(args: argparse.Namespace) -> tuple[str | None, str | None]:
     """Recheck both pairs on every poll; never reuse a previous validation."""
-    return tuple(hashlib.sha256(payload).hexdigest() if payload is not None else None
-                 for payload in (verified_pair(args.tle_body, args.tle_manifest, "tle"),
-                                 verified_pair(args.gnss_body, args.gnss_manifest, "gnss")))
+    digests = []
+    for route in ("tle", "gnss"):
+        body, manifest = input_pair(args, route)
+        payload = verified_pair(body, manifest, route)
+        if payload is None:
+            digests.append(None)
+        else:
+            digests.append(hashlib.sha256(payload + b"\0" + _regular_bytes(manifest, 4096)).hexdigest())
+    return tuple(digests)
 
 
 def main() -> None:
@@ -165,6 +209,10 @@ def main() -> None:
     parser.add_argument("--tle-manifest", type=Path)
     parser.add_argument("--gnss-body", type=Path)
     parser.add_argument("--gnss-manifest", type=Path)
+    parser.add_argument("--tle-current-root", type=Path,
+                        help="atomic N05 ingress root from receive_fds_inputs")
+    parser.add_argument("--gnss-current-root", type=Path,
+                        help="atomic N11 ingress root from receive_fds_inputs")
     parser.add_argument("--output-root", type=Path, default=ROOT / "out/fds-runs")
     parser.add_argument("--outbox-dir", type=Path, default=ROOT / "out/fds-outbox",
                         help="unique N13/N15 file pairs staged after each successful FDS run")
@@ -178,8 +226,11 @@ def main() -> None:
     parser.add_argument("--poll-seconds", type=int, default=60)
     parser.add_argument("--refresh-seconds", type=int, default=900)
     args = parser.parse_args()
-    if args.tle_body is None and args.tle_manifest is None and \
-            args.gnss_body is None and args.gnss_manifest is None:
+    if (args.tle_current_root and (args.tle_body or args.tle_manifest)) or \
+            (args.gnss_current_root and (args.gnss_body or args.gnss_manifest)):
+        parser.error("use either a route's current root or explicit pair paths")
+    if args.tle_body is None and args.tle_manifest is None and args.tle_current_root is None and \
+            args.gnss_body is None and args.gnss_manifest is None and args.gnss_current_root is None:
         parser.error("configure at least one complete N05 or N11 file-pair path")
     if args.poll_seconds < 5 or args.refresh_seconds < args.poll_seconds:
         parser.error("refresh-seconds must be >= poll-seconds >= 5")

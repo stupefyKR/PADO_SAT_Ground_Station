@@ -6,10 +6,12 @@ import argparse
 import hashlib
 import json
 import subprocess
+import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from tools.run_fds_pipeline import run_cycle
+from tools.receive_fds_inputs import ingest_inbox
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -27,7 +29,9 @@ def main() -> None:
     scratch.mkdir(parents=True, exist_ok=True)
     now = datetime.now(timezone.utc).replace(microsecond=0)
     epoch = (now - timedelta(seconds=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    gnss = scratch / "synthetic-gnss.properties"
+    inbox = scratch / "n11-inbox"
+    inbox.mkdir(exist_ok=True)
+    gnss = inbox / ("synthetic-" + uuid.uuid4().hex[:8] + ".properties")
     body = (ROOT / "services/fds/src/test/resources/test-gnss.properties").read_text(encoding="utf-8")
     gnss.write_text(body.replace("epoch_utc=2000-06-27T19:00:00Z", "epoch_utc=" + epoch),
                     encoding="utf-8")
@@ -37,12 +41,15 @@ def main() -> None:
         "created": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "sha256": hashlib.sha256(gnss.read_bytes()).hexdigest(),
     }), encoding="utf-8")
+    ingress = scratch / "fds-ingress" / "gnss"
+    ingest_inbox("gnss", inbox, ingress)
     config = scratch / "config.properties"
     original = (ROOT / "services/fds/src/test/resources/test-config.properties").read_text(encoding="utf-8")
     config.write_text(original.replace("horizon_hours=24", "horizon_hours=1"), encoding="utf-8")
     pipeline = argparse.Namespace(
         config=config, orekit_data=args.orekit_data.resolve(), tle_body=None, tle_manifest=None,
-        gnss_body=gnss, gnss_manifest=manifest, output_root=scratch / "runs",
+        gnss_body=None, gnss_manifest=None, gnss_current_root=ingress,
+        output_root=scratch / "runs",
         view_dir=scratch / "view", outbox_dir=scratch / "outbox",
         mps_schedule_dir=scratch / "mps-schedules",
         mvn=args.mvn, maven_repo=args.maven_repo,

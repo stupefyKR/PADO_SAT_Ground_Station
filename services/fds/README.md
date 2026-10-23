@@ -51,7 +51,7 @@ python3 tools/publish_fds_view.py /path/to/completed-fds-run out/fds-view
 export PADO_STAGE9_FDS_VIEW_DIR="$(pwd)/out/fds-view"
 ```
 
-화면은 인증된 포털의 `/orbit`에서 볼 수 있다. `/api/fds/orbit`은 게시된 파일만 읽으며 TLE 업로드·계산·TC 경로는 제공하지 않는다. 아래 로컬 파일 쌍 반복 계산기는 구현됐다. 실제 N05/N11 SFTP 수신, 안테나 실측값, 정확도 수락은 아직 별도로 연결해야 한다.
+화면은 인증된 포털의 `/orbit`에서 볼 수 있다. `/api/fds/orbit`은 게시된 파일만 읽으며 TLE 업로드·계산·TC 경로는 제공하지 않는다. 아래 수신 스냅샷 경계와 로컬 반복 계산기는 구현됐다. 실제 N11 SFTP 서버 계정, 원시 TM 해독, 안테나 실측값, 정확도 수락은 아직 별도로 연결해야 한다.
 
 ### 검증된 파일 쌍으로 반복 계산
 
@@ -68,7 +68,32 @@ python3 tools/run_fds_pipeline.py \
   --watch --poll-seconds 60 --refresh-seconds 900
 ```
 
-GNSS가 아직 없으면 N11의 두 인자를 생략한다. 아직 수신되지 않은 설정 경로의 두 파일이 모두 없으면 해당 입력을 기다린다. `--watch`를 생략하면 1회만 실행한다. Maven 경로·캐시는 `--mvn`, `--maven-repo`로 지정할 수 있다. 결과는 기본 `out/fds-runs`에 보존하고, N13/N15 출고함은 `out/fds-outbox`, 화면 파일은 **ISS 시험 화면과 분리한** `out/fds-live-view`에 원자적으로 게시한다. MPS 읽기 전용 N13 스냅샷은 `out/mps-schedules`에 실행별로 게시한다. 각 위치는 `--outbox-dir`, `--view-dir`, `--mps-schedule-dir`로 바꿀 수 있다. 배포 시 포털의 `PADO_STAGE9_FDS_VIEW_DIR`과 MPS의 `PADO_STAGE9_MPS_SCHEDULE_DIR`을 각각 맞춘다. 이 실행기는 SFTP 수신·상대 신원 인증·원시 GNSS TM 해독을 수행하지 않는다. 그 경계와 실측 설정, 서비스 컨테이너 구성은 여전히 미완료다.
+GNSS가 아직 없으면 N11의 두 인자를 생략한다. 아직 수신되지 않은 설정 경로의 두 파일이 모두 없으면 해당 입력을 기다린다. `--watch`를 생략하면 1회만 실행한다. Maven 경로·캐시는 `--mvn`, `--maven-repo`로 지정할 수 있다. 결과는 기본 `out/fds-runs`에 보존하고, N13/N15 출고함은 `out/fds-outbox`, 화면 파일은 **ISS 시험 화면과 분리한** `out/fds-live-view`에 원자적으로 게시한다. MPS 읽기 전용 N13 스냅샷은 `out/mps-schedules`에 실행별로 게시한다. 각 위치는 `--outbox-dir`, `--view-dir`, `--mps-schedule-dir`로 바꿀 수 있다. 배포 시 포털의 `PADO_STAGE9_FDS_VIEW_DIR`과 MPS의 `PADO_STAGE9_MPS_SCHEDULE_DIR`을 각각 맞춘다. 이 실행기는 SFTP 수신·상대 신원 인증·원시 GNSS TM 해독을 수행하지 않는다. 수신 스냅샷 경계는 아래 도구를 사용한다.
+
+### N05/N11 수신 스냅샷 경계
+
+Linux의 `tools/receive_fds_inputs.py`는 N05를 기존 `gs_fds_exchange pull-n05`로 받아 호스트 키 고정과 키 인증을 적용한다. N11은 ROS가 **고유 파일명**으로 SFTP push한 본문과 `.manifest.json`이 있는 전용 수신함을 읽는다. SFTP 송신은 기존 파일을 덮어쓰지 않고 매니페스트를 마지막에 완료 파일명으로 게시해야 한다. `.partial`은 입력으로 사용하지 않는다. 두 경로 모두 매니페스트의 `from`/`to`/`type`/`file`/SHA-256, 크기와 파일 유형을 검증해 `out/fds-ingress/tle` 또는 `gnss`의 불변 해시 디렉터리에 게시한다. `current.txt`는 완료된 스냅샷으로만 원자적으로 바뀐다.
+
+```sh
+python3 tools/receive_fds_inputs.py \
+  --destination out/fds-ingress \
+  --exchange-bin build-linux-release/gs_fds_exchange \
+  --n05-host DGS_NET_HOST --n05-port 2222 --n05-user FDS_READ_ACCOUNT \
+  --n05-key /run/secrets/n05-read.key \
+  --n05-host-key-sha256 64_LOWERCASE_HEX_DIGITS \
+  --n05-remote-dir /outbox/to_fds --n05-filename current.tle \
+  --n11-inbox /srv/fds/inbox/from_ros \
+  --watch --poll-seconds 60
+
+python3 tools/run_fds_pipeline.py \
+  --config /path/to/approved-fds.properties \
+  --orekit-data /path/to/pinned-orekit-data \
+  --tle-current-root out/fds-ingress/tle \
+  --gnss-current-root out/fds-ingress/gnss \
+  --watch --poll-seconds 60 --refresh-seconds 900
+```
+
+실제 호스트·계정·호스트 키·수신함 경로는 배포 설정에서 지정한다. N05가 아직 구성되지 않았다면 N11 수신함만 지정해 실행할 수 있다. N11의 최신 완료 파일이 손상되면 `blocked.txt`가 생기고 FDS 계산이 중단된다. 유효한 새 파일이 들어오면 차단이 해제된다. N05 접속 장애는 기존의 검증된 TLE를 보존하며 그 사용 가능 여부는 FDS의 72시간 신선도 검사로 결정한다. 이 경계는 **정규화된 시험 GNSS 상태만** 받아들이며 PADO-SAT의 원시 GNSS TM 패킷 형식을 추정하거나 변환하지 않는다. N11 SFTP 서버 계정과 실제 상대 연결 시험은 아직 남아 있다.
 
 ### N13/N15 전송용 출고함
 
