@@ -11,7 +11,7 @@ FDS, DGS-Archive, DGS-GS, DGS-NET, Portal을 별도 Docker 컨테이너로 둔�
 python3 tools/check_flows.py render
 python3 tools/check_flows.py check
 python3 -m unittest discover -s tests -p 'test_*.py' -v
-python3 tests/container/run_stage7_topology.py
+python3 tests/container/run_stage7_topology.py --build
 sudo python3 tools/stage7_host_audit.py --admin-ip 192.168.45.1
 ```
 

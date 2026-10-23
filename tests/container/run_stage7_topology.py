@@ -31,7 +31,7 @@ CLIENT = (
 )
 
 
-def run(*args, capture=False):
+def run(*args):
     return subprocess.run(args, check=True, text=True,
                           capture_output=True, timeout=30)
 
@@ -72,8 +72,7 @@ def main():
         time.sleep(1)
         inspected = {}
         for role, name in containers.items():
-            inspected[role] = json.loads(run("docker", "inspect", name,
-                                             capture=True).stdout)[0]
+            inspected[role] = json.loads(run("docker", "inspect", name).stdout)[0]
             if inspected[role]["NetworkSettings"]["Ports"]:
                 raise RuntimeError(f"published ports on {role}")
             if inspected[role]["HostConfig"]["LogConfig"]["Type"] != "journald":
