@@ -1,0 +1,47 @@
+"""Test-only MPS candidate drafts remain bound to one validated schedule."""
+
+import tempfile
+import unittest
+from pathlib import Path
+
+from services.webapp.mps_workbench import CandidateError, MpsCandidateStore
+from tools.stage_fds_outbox import ROOT
+
+
+def schedule(digest="a" * 64):
+    return {"schedule_state": "validated", "schedule_sha256": digest,
+            "passes": [{"pass_id": "yonsei-001", "aos_utc_s": 100,
+                        "los_utc_s": 200}]}
+
+
+class MpsCandidateStoreTest(unittest.TestCase):
+    def test_persists_only_revision_bound_candidate_ids(self):
+        (ROOT / "out").mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=ROOT / "out") as folder:
+            path = Path(folder) / "candidates.db"
+            store = MpsCandidateStore(path)
+            first = store.save(schedule(), "yonsei-001", "a" * 64, 0,
+                               ["SAFE_MODE", "PING_1"], "planner01")
+            self.assertEqual(first["revision"], 1)
+            self.assertFalse(first["operational"])
+            with self.assertRaisesRegex(CandidateError, "revision_conflict"):
+                store.save(schedule(), "yonsei-001", "a" * 64, 0,
+                           ["PING_1"], "planner01")
+            with self.assertRaisesRegex(CandidateError, "invalid_candidate_draft"):
+                store.save(schedule(), "yonsei-001", "a" * 64, 1,
+                           ["unsafe command"], "planner01")
+            with self.assertRaisesRegex(CandidateError, "stale_schedule"):
+                store.save(schedule("b" * 64), "yonsei-001", "a" * 64, 1,
+                           ["PING_1"], "planner01")
+            self.assertEqual(store.save(schedule(), "yonsei-001", "a" * 64, 1,
+                                        ["PING_1"], "planner01")["revision"], 2)
+            store.close()
+            reopened = MpsCandidateStore(path)
+            self.assertEqual(reopened.list_current(schedule())[0]["candidate_ids"], ["PING_1"])
+            self.assertEqual(reopened.list_current(schedule("b" * 64)), [])
+            self.assertEqual(reopened.list_current({"schedule_state": "absent"}), [])
+            reopened.close()
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from services.webapp.core import CoreUnavailable, mps_catalog, ros_summary
+from services.webapp.core import CoreUnavailable, mps_catalog, mps_passes, ros_summary
 
 
 class FakeSocket:
@@ -70,6 +70,23 @@ class CoreAdapterTests(unittest.TestCase):
         ):
             with self.assertRaises(CoreUnavailable):
                 self.query_with(body, mps_catalog)
+        for body in (
+            {"passes": [], "schedule_state": "validated", "schedule_sha256": None,
+             "operational": False},
+            {"passes": [], "schedule_state": "absent", "schedule_sha256": None,
+             "operational": True},
+            {"passes": [{"pass_id": "bad"}], "schedule_state": "validated",
+             "schedule_sha256": "a" * 64, "operational": False},
+        ):
+            with self.assertRaises(CoreUnavailable):
+                self.query_with(body, mps_passes)
+
+    def test_mps_absent_schedule_is_explicit(self):
+        result, connection = self.query_with(
+            {"passes": [], "schedule_state": "absent", "schedule_sha256": None,
+             "operational": False}, mps_passes)
+        self.assertEqual(result["schedule_state"], "absent")
+        self.assertEqual(connection.sent, struct.pack(">I", 15) + b'{"op":"passes"}')
 
     def test_unavailable_or_malformed_socket_fails_closed(self):
         connection = FakeSocket({}, OSError("unavailable"))

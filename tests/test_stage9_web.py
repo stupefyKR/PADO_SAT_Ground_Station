@@ -1,4 +1,5 @@
 import json
+import hashlib
 import os
 import shutil
 import ssl
@@ -16,6 +17,7 @@ from urllib.request import Request, urlopen
 from services.webapp.auth import AuthStore
 from services.webapp.main import AppServer, ROOT
 from tests.test_ros_workbench import pair as test_sequence_pair
+from tools.publish_mps_schedule import publish as publish_mps_schedule
 
 
 CORE_BIN = Path(os.environ.get(
@@ -74,11 +76,14 @@ class WebBoundaryTests(unittest.TestCase):
         cls.auth.create_user("planner01", "planner", "valid-password-123")
         cls.core_processes = []
         cls.core_sockets = {}
+        cls.schedule_root = cls.folder / "mps-schedules"
+        cls.schedule_root.mkdir()
         for mode, source in (("ros", cls.folder / "ros-tm.record"),
                              ("mps", ROOT / "interfaces/command_db/commands.json")):
             endpoint = cls.folder / f"{mode}.sock"
             process = subprocess.Popen(
-                [str(CORE_BIN), "serve", mode, str(endpoint), str(source)],
+                [str(CORE_BIN), "serve", mode, str(endpoint), str(source)] +
+                ([str(cls.schedule_root)] if mode == "mps" else []),
                 stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
             cls.core_processes.append(process)
             cls.core_sockets[mode] = endpoint
@@ -96,7 +101,8 @@ class WebBoundaryTests(unittest.TestCase):
             server = AppServer(("127.0.0.1", 0), mode=mode, cert=cert,
                                key=key, ca=cls.ca_cert,
                                core_socket=cls.core_sockets[mode],
-                               draft_db=cls.folder / "ros-drafts.db" if mode == "ros" else None)
+                               draft_db=cls.folder / "ros-drafts.db" if mode == "ros" else None,
+                               candidate_db=cls.folder / "mps-candidates.db" if mode == "mps" else None)
             cls.servers.append(server)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
@@ -121,6 +127,8 @@ class WebBoundaryTests(unittest.TestCase):
             server.server_close()
             if server.drafts:
                 server.drafts.close()
+            if server.candidates:
+                server.candidates.close()
         for thread in cls.threads:
             thread.join(timeout=3)
         for process in cls.core_processes:
@@ -173,6 +181,9 @@ class WebBoundaryTests(unittest.TestCase):
         status, _, body = self.request("/api/mps/passes", headers=auth_header)
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body)["passes"], [])
+        status, _, body = self.request("/api/mps/test-candidates", headers=auth_header)
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["items"], [])
         status, _, _ = self.request("/api/ros/tc", headers=auth_header)
         self.assertEqual(status, 404)
         status, _, _ = self.request("/api/logout", method="POST", headers=auth_header)
@@ -220,6 +231,50 @@ class WebBoundaryTests(unittest.TestCase):
         status, _, _ = self.request("/api/ros/tc", method="POST", body={},
                                     headers={**auth, "X-CSRF-Token": csrf})
         self.assertEqual(status, 404)
+
+    def test_mps_candidates_require_schedule_and_csrf(self):
+        status, _, _ = self.request("/api/mps/test-candidates", method="POST", body={})
+        self.assertEqual(status, 403)
+        status, headers, body = self.request("/api/login", method="POST", body={
+            "username": "planner01", "password": "valid-password-123"})
+        self.assertEqual(status, 200)
+        auth = {"Cookie": headers["Set-Cookie"].split(";", 1)[0]}
+        csrf = json.loads(body)["csrf"]
+        payload = {"pass_id": "yonsei-001", "schedule_sha256": "a" * 64,
+                   "expected_revision": 0, "candidate_ids": ["PING_1"]}
+        status, _, _ = self.request("/api/mps/test-candidates", method="POST",
+                                    body=payload, headers=auth)
+        self.assertEqual(status, 403)
+        status, _, _ = self.request("/api/mps/test-candidates", method="POST",
+                                    body=payload, headers={**auth, "X-CSRF-Token": csrf})
+        self.assertEqual(status, 409)
+        run = self.folder / "fds-20261023T100000Z-1234abcd"
+        run.mkdir(exist_ok=True)
+        n13 = ("schema,station_id,band,pass_id,aos_utc,los_utc,peak_utc,"
+               "max_elevation_deg,minimum_elevation_deg,clipped_start,clipped_end\n"
+               "fds.contact-schedule.v1,yonsei,UHF,yonsei-001,2026-10-23T10:00:00.125Z,"
+               "2026-10-23T10:08:00.250Z,2026-10-23T10:04:00.000Z,42.5,10.0,false,false\n")
+        (run / "contact_schedule.csv").write_text(n13, encoding="ascii")
+        digest = hashlib.sha256(n13.encode("ascii")).hexdigest()
+        (run / "contact_schedule.csv.manifest.json").write_text(json.dumps({
+            "file": "contact_schedule.csv", "type": "CONTACT_SCHEDULE", "from": "fds",
+            "to": "mps", "version": 1, "created": "2026-10-23T10:00:00Z",
+            "sha256": digest}), encoding="ascii")
+        publish_mps_schedule(run, self.schedule_root)
+        payload["schedule_sha256"] = digest
+        status, _, body = self.request("/api/mps/passes", headers=auth)
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["passes"][0]["pass_id"], "yonsei-001")
+        status, _, body = self.request("/api/mps/test-candidates", method="POST",
+                                       body=payload, headers={**auth, "X-CSRF-Token": csrf})
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["revision"], 1)
+        status, _, body = self.request("/api/mps/test-candidates", headers=auth)
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["items"][0]["candidate_ids"], ["PING_1"])
+        status, _, _ = self.request("/api/mps/test-candidates", method="POST",
+                                    body=payload, headers={**auth, "X-CSRF-Token": csrf})
+        self.assertEqual(status, 409)
 
     def test_orbit_view_is_session_gated_and_read_only(self):
         status, _, _ = self.request("/api/fds/orbit")

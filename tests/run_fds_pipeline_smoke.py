@@ -44,6 +44,7 @@ def main() -> None:
         config=config, orekit_data=args.orekit_data.resolve(), tle_body=None, tle_manifest=None,
         gnss_body=gnss, gnss_manifest=manifest, output_root=scratch / "runs",
         view_dir=scratch / "view", outbox_dir=scratch / "outbox",
+        mps_schedule_dir=scratch / "mps-schedules",
         mvn=args.mvn, maven_repo=args.maven_repo,
     )
     previous_runs = {path.parent for path in (scratch / "runs").glob("fds-*/contact_schedule.csv")}
@@ -61,6 +62,10 @@ def main() -> None:
     schedule = staged / ("contact_schedule-" + runs[0].parent.name + ".csv")
     if len(list(staged.iterdir())) != 6 or not schedule.is_file():
         raise AssertionError("FDS did not publish three N13/N15 outbox file pairs")
+    current = (scratch / "mps-schedules/current.txt").read_text(encoding="ascii").strip()
+    if current != runs[0].parent.name or not (scratch / "mps-schedules" / current /
+                                             "contact_schedule.csv").is_file():
+        raise AssertionError("FDS did not publish the MPS N13 snapshot")
     if args.mps_import_exe:
         subprocess.run([str(args.mps_import_exe.resolve()), str(scratch),
                         str(schedule), str(schedule.with_name(schedule.name + ".manifest.json"))],

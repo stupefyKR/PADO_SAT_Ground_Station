@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import math
+import re
 import socket
 import struct
 import threading
@@ -14,7 +16,7 @@ class CoreUnavailable(Exception):
 
 
 _core_slots = threading.BoundedSemaphore(4)
-_MAX_RESPONSE = 1024
+_MAX_RESPONSE = 60000
 
 
 def _read_exact(connection: socket.socket, length: int) -> bytes:
@@ -74,3 +76,46 @@ def mps_catalog(socket_path: Path) -> dict:
             result.get("operational") is not False):
         raise CoreUnavailable("invalid MPS response")
     return {"version": version, "command_count": count}
+
+
+def mps_passes(socket_path: Path) -> dict:
+    result = _query(socket_path, "passes")
+    state = result.get("schedule_state")
+    digest = result.get("schedule_sha256")
+    passes = result.get("passes")
+    if (state not in ("absent", "validated") or result.get("operational") is not False or
+            not isinstance(passes, list) or len(passes) > 64 or
+            (state == "absent" and (digest is not None or passes)) or
+            (state == "validated" and
+             (not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest)))):
+        raise CoreUnavailable("invalid MPS schedule response")
+    previous = None
+    seen = set()
+    for item in passes:
+        if not isinstance(item, dict) or set(item) != {
+                "pass_id", "station_id", "band", "aos_utc_s", "los_utc_s",
+                "peak_utc_s", "max_elevation_deg", "minimum_elevation_deg",
+                "clipped_start", "clipped_end"}:
+            raise CoreUnavailable("invalid MPS pass")
+        identifier = item["pass_id"]
+        station = item["station_id"]
+        band = item["band"]
+        aos, peak, los = (item[key] for key in ("aos_utc_s", "peak_utc_s", "los_utc_s"))
+        low, high = item["minimum_elevation_deg"], item["max_elevation_deg"]
+        if (not isinstance(identifier, str) or len(identifier) > 63 or
+                not re.fullmatch(r"[A-Za-z0-9-]+", identifier) or identifier in seen or
+                (station, band) not in (("yonsei", "UHF"), ("kari", "S_BAND")) or
+                not identifier.startswith(station + "-") or
+                any(type(value) is not int for value in (aos, peak, los)) or
+                not 0 < aos < peak < los or los - aos > 72 * 3600 + 2 or
+                any(type(value) not in (int, float) for value in (low, high)) or
+                not 0 <= low <= high <= 90 or
+                not all(math.isfinite(value) for value in (low, high)) or
+                type(item["clipped_start"]) is not bool or
+                type(item["clipped_end"]) is not bool or
+                (previous is not None and aos < previous)):
+            raise CoreUnavailable("invalid MPS pass")
+        seen.add(identifier)
+        previous = aos
+    return {"passes": passes, "schedule_state": state,
+            "schedule_sha256": digest, "operational": False}

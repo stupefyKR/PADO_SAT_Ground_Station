@@ -1,8 +1,11 @@
 #define _GNU_SOURCE
 
 #include "gs/ipc.h"
+#include "gs/manifest.h"
+#include "fds_schedule.h"
 #include "inputs.h"
 #include "tm_frame.h"
+#include "cJSON.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -92,6 +95,115 @@ static int catalog(const char *path, char *output, size_t capacity)
     return result < 0 || (size_t)result >= capacity ? -1 : 0;
 }
 
+static int schedule_name(const char *name)
+{
+    size_t index;
+    size_t length = strlen(name);
+    if (length < 5u || length > 80u || strncmp(name, "fds-", 4u) != 0)
+        return 0;
+    for (index = 4u; index < length; ++index)
+        if (!((name[index] >= 'a' && name[index] <= 'z') ||
+              (name[index] >= 'A' && name[index] <= 'Z') ||
+              (name[index] >= '0' && name[index] <= '9') ||
+              name[index] == '_' || name[index] == '-')) return 0;
+    return 1;
+}
+
+static int schedule_passes(const char *root, char **output)
+{
+    char marker_path[1024];
+    char run_path[1024];
+    char csv_path[1024];
+    char manifest_path[1024];
+    unsigned char *marker = NULL, *csv = NULL, *manifest = NULL;
+    size_t marker_length = 0u, csv_length = 0u, manifest_length = 0u;
+    int absent = 0;
+    int result = -1;
+    struct stat status;
+    gs_mps_fds_schedule_t *schedule = NULL;
+    cJSON *document = NULL, *passes = NULL;
+    size_t index;
+    if (root == NULL || strlen(root) > 700u ||
+            lstat(root, &status) != 0 || !S_ISDIR(status.st_mode) ||
+            (status.st_mode & 0022) != 0 ||
+            snprintf(marker_path, sizeof(marker_path), "%s/current.txt", root) >=
+                (int)sizeof(marker_path) ||
+            read_regular(marker_path, 81u, 0, 1, &marker, &marker_length, &absent) != 0)
+        goto done;
+    document = cJSON_CreateObject();
+    passes = cJSON_CreateArray();
+    if (document == NULL || passes == NULL ||
+            !cJSON_AddItemToObject(document, "passes", passes)) goto done;
+    passes = NULL;
+    if (absent) {
+        if (!cJSON_AddStringToObject(document, "schedule_state", "absent") ||
+                !cJSON_AddNullToObject(document, "schedule_sha256")) goto done;
+    } else {
+        if (marker_length == 0u || marker[marker_length - 1u] != '\n' ||
+                memchr(marker, '\0', marker_length - 1u) != NULL ||
+                memchr(marker, '\n', marker_length - 1u) != NULL) goto done;
+        marker[marker_length - 1u] = '\0';
+        if (!schedule_name((const char *)marker) ||
+                snprintf(run_path, sizeof(run_path), "%s/%s", root, marker) >=
+                    (int)sizeof(run_path) ||
+                lstat(run_path, &status) != 0 || !S_ISDIR(status.st_mode) ||
+                (status.st_mode & 0022) != 0 ||
+                snprintf(csv_path, sizeof(csv_path), "%s/contact_schedule.csv", run_path) >=
+                    (int)sizeof(csv_path) ||
+                snprintf(manifest_path, sizeof(manifest_path),
+                         "%s/contact_schedule.csv.manifest.json", run_path) >=
+                    (int)sizeof(manifest_path) ||
+                read_regular(csv_path, GS_MPS_FDS_SCHEDULE_MAX_BYTES, 0, 0,
+                             &csv, &csv_length, &absent) != 0 ||
+                read_regular(manifest_path, GS_MANIFEST_MAX_BYTES, 0, 0,
+                             &manifest, &manifest_length, &absent) != 0) goto done;
+        schedule = calloc(1u, sizeof(*schedule));
+        if (schedule == NULL ||
+                gs_mps_fds_schedule_parse((const char *)csv, csv_length,
+                                          (const char *)manifest, manifest_length,
+                                          schedule) != 0) goto done;
+        for (index = 0u; index < schedule->passes.count; ++index) {
+            const gs_mps_pass_t *pass = &schedule->passes.passes[index];
+            const gs_mps_fds_pass_info_t *info = &schedule->info[index];
+            cJSON *item = cJSON_CreateObject();
+            if (item == NULL ||
+                    !cJSON_AddStringToObject(item, "pass_id", pass->pass_id) ||
+                    !cJSON_AddStringToObject(item, "station_id", info->station_id) ||
+                    !cJSON_AddStringToObject(item, "band", info->band) ||
+                    !cJSON_AddNumberToObject(item, "aos_utc_s", (double)pass->aos_utc_s) ||
+                    !cJSON_AddNumberToObject(item, "los_utc_s", (double)pass->los_utc_s) ||
+                    !cJSON_AddNumberToObject(item, "peak_utc_s", (double)info->peak_utc_s) ||
+                    !cJSON_AddNumberToObject(item, "max_elevation_deg", info->max_elevation_deg) ||
+                    !cJSON_AddNumberToObject(item, "minimum_elevation_deg", info->minimum_elevation_deg) ||
+                    !cJSON_AddBoolToObject(item, "clipped_start", info->clipped_start) ||
+                    !cJSON_AddBoolToObject(item, "clipped_end", info->clipped_end) ||
+                    !cJSON_AddItemToArray(cJSON_GetObjectItemCaseSensitive(document, "passes"), item)) {
+                cJSON_Delete(item);
+                goto done;
+            }
+        }
+        if (!cJSON_AddStringToObject(document, "schedule_state", "validated") ||
+                !cJSON_AddStringToObject(document, "schedule_sha256", schedule->sha256))
+            goto done;
+    }
+    if (!cJSON_AddBoolToObject(document, "operational", 0)) goto done;
+    *output = cJSON_PrintUnformatted(document);
+    if (*output == NULL || strlen(*output) > 60000u) {
+        free(*output);
+        *output = NULL;
+        goto done;
+    }
+    result = 0;
+done:
+    free(marker);
+    free(csv);
+    free(manifest);
+    free(schedule);
+    cJSON_Delete(document);
+    cJSON_Delete(passes);
+    return result;
+}
+
 static uint32_t read32(const unsigned char *data)
 {
     return ((uint32_t)data[0] << 24u) | ((uint32_t)data[1] << 16u) |
@@ -144,7 +256,8 @@ static void request_stop(int signal_number)
     stopping = 1;
 }
 
-static int serve(const char *mode, const char *socket_path, const char *source)
+static int serve(const char *mode, const char *socket_path, const char *source,
+                 const char *schedule_root)
 {
     struct sockaddr_un address = {0};
     struct stat existing;
@@ -174,6 +287,7 @@ static int serve(const char *mode, const char *socket_path, const char *source)
     while (!stopping) {
         char request[128];
         char response[256];
+        char *schedule_response = NULL;
         size_t request_length = 0u;
         struct ucred peer;
         socklen_t peer_length = sizeof(peer);
@@ -196,13 +310,19 @@ static int serve(const char *mode, const char *socket_path, const char *source)
         if (gs_ipc_recv_json(client, request, sizeof(request),
                              &request_length) == 0 &&
                 ((is_ros && strcmp(request, "{\"op\":\"overview\"}") == 0) ||
-                 (!is_ros && strcmp(request, "{\"op\":\"catalog\"}") == 0))) {
-            int read_result = is_ros ? ros_summary(source, response,
-                                                   sizeof(response)) :
-                                       catalog(source, response, sizeof(response));
-            const char *reply = read_result == 0 ? response :
+                 (!is_ros && (strcmp(request, "{\"op\":\"catalog\"}") == 0 ||
+                              strcmp(request, "{\"op\":\"passes\"}") == 0)))) {
+            int read_result;
+            if (is_ros) read_result = ros_summary(source, response, sizeof(response));
+            else if (strcmp(request, "{\"op\":\"catalog\"}") == 0)
+                read_result = catalog(source, response, sizeof(response));
+            else read_result = schedule_root == NULL ? -1 :
+                schedule_passes(schedule_root, &schedule_response);
+            const char *reply = read_result == 0 ?
+                                (schedule_response == NULL ? response : schedule_response) :
                                 "{\"error\":\"core_unavailable\"}";
             (void)gs_ipc_send_json(client, reply, strlen(reply));
+            free(schedule_response);
         }
         (void)close(client);
     }
@@ -221,8 +341,8 @@ int main(int argc, char **argv)
         result = catalog(argv[2], response, sizeof(response));
     else if (argc == 3 && strcmp(argv[1], "ros-summary") == 0)
         result = ros_summary(argv[2], response, sizeof(response));
-    else if (argc == 5 && strcmp(argv[1], "serve") == 0)
-        return serve(argv[2], argv[3], argv[4]) == 0 ? 0 : 1;
+    else if ((argc == 5 || argc == 6) && strcmp(argv[1], "serve") == 0)
+        return serve(argv[2], argv[3], argv[4], argc == 6 ? argv[5] : NULL) == 0 ? 0 : 1;
     if (result != 0) {
         (void)fprintf(stderr, "core probe unavailable\n");
         return 1;

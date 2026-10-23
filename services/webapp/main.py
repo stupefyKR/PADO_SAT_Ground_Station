@@ -22,7 +22,8 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from .auth import AuthError, AuthStore, ROLES
-from .core import CoreUnavailable, mps_catalog, ros_summary
+from .core import CoreUnavailable, mps_catalog, mps_passes, ros_summary
+from .mps_workbench import CandidateError, MpsCandidateStore
 from .ros_workbench import DraftError, RosDraftStore
 
 
@@ -52,6 +53,7 @@ PROXY_ROUTES = {
     "/api/ros/test-reservations": ("ros", "/test-reservations"),
     "/api/mps/catalog": ("mps", "/catalog"),
     "/api/mps/passes": ("mps", "/passes"),
+    "/api/mps/test-candidates": ("mps", "/test-candidates"),
 }
 
 
@@ -65,7 +67,8 @@ class AppServer(ThreadingHTTPServer):
                  client_key: Path | None = None, static_root: Path = WEB,
                  core_socket: Path = CORE_SOCKET,
                  orbit_view: Path | None = None,
-                 draft_db: Path | None = None) -> None:
+                 draft_db: Path | None = None,
+                 candidate_db: Path | None = None) -> None:
         self.mode = mode
         self.auth = auth
         self.ros_url = ros_url
@@ -77,6 +80,7 @@ class AppServer(ThreadingHTTPServer):
         self.static_root = static_root
         self.orbit_view = orbit_view
         self.drafts = RosDraftStore(draft_db) if mode == "ros" and draft_db else None
+        self.candidates = MpsCandidateStore(candidate_db) if mode == "mps" and candidate_db else None
         self.login_attempts: dict[str, list[float]] = {}
         self.login_lock = threading.Lock()
         super().__init__(address, Handler)
@@ -177,12 +181,14 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/logout":
                 self._logout()
             elif path in ("/api/ros/test-sequences", "/api/ros/test-reservations",
-                          "/api/ros/test-reservations/cancel"):
+                          "/api/ros/test-reservations/cancel", "/api/mps/test-candidates"):
                 self._portal_draft_post(path)
             else:
                 self._error(HTTPStatus.NOT_FOUND, "not_found")
         elif self.server.mode == "ros":
             self._backend_draft_post(path)
+        elif self.server.mode == "mps" and path == "/test-candidates":
+            self._backend_candidate_post()
         else:
             self._error(HTTPStatus.NOT_FOUND, "not_found")
 
@@ -209,7 +215,8 @@ class Handler(BaseHTTPRequestHandler):
         if body is None:
             self._error(HTTPStatus.BAD_REQUEST, "invalid_request")
             return
-        route = ("ros", path.removeprefix("/api/ros"))
+        route = ("mps", path.removeprefix("/api/mps")) if path.startswith("/api/mps/") else \
+                ("ros", path.removeprefix("/api/ros"))
         self._proxy(route, session.username, session.role, "POST", body)
 
     def _login(self) -> None:
@@ -339,7 +346,8 @@ class Handler(BaseHTTPRequestHandler):
             response = connection.getresponse()
             data = response.read(MAX_UPSTREAM + 1)
             if len(data) > MAX_UPSTREAM or (method == "GET" and path not in
-                                            ("/test-sequences", "/test-reservations") and
+                                            ("/test-sequences", "/test-reservations",
+                                             "/test-candidates") and
                                             response.status != HTTPStatus.OK):
                 self._error(HTTPStatus.BAD_GATEWAY, "backend_failure")
             else:
@@ -388,11 +396,58 @@ class Handler(BaseHTTPRequestHandler):
                 "operational": False, "status": "TBD(ICD)"})
             return
         if self.server.mode == "mps" and path == "/passes":
-            self._json(HTTPStatus.OK, {
-                "passes": [], "operational": False,
-                "status": "N13_SERVICE_NOT_CONNECTED"})
+            try:
+                schedule = mps_passes(self.server.core_socket)
+            except CoreUnavailable:
+                self._error(HTTPStatus.SERVICE_UNAVAILABLE, "mps_schedule_unavailable")
+                return
+            self._json(HTTPStatus.OK, {**schedule,
+                "status": "VALIDATED_N13" if schedule["schedule_state"] == "validated"
+                          else "N13_NOT_RECEIVED"})
+            return
+        if self.server.mode == "mps" and path == "/test-candidates":
+            if self.server.candidates is None:
+                self._error(HTTPStatus.SERVICE_UNAVAILABLE, "candidate_store_unavailable")
+                return
+            try:
+                schedule = mps_passes(self.server.core_socket)
+            except CoreUnavailable:
+                self._error(HTTPStatus.SERVICE_UNAVAILABLE, "mps_schedule_unavailable")
+                return
+            self._json(HTTPStatus.OK, {"items": self.server.candidates.list_current(schedule),
+                                       "operational": False})
             return
         self._error(HTTPStatus.NOT_FOUND, "not_found")
+
+    def _backend_candidate_post(self) -> None:
+        if not self._backend_identity() or self.server.candidates is None:
+            self._error(HTTPStatus.FORBIDDEN, "client_identity")
+            return
+        actor = self.headers.get("X-Pado-Actor", "")
+        role = self.headers.get("X-Pado-Role", "")
+        if not actor or len(actor) > 64 or role not in ("operator", "lead", "planner"):
+            self._error(HTTPStatus.FORBIDDEN, "portal_identity")
+            return
+        body = self._read_json(MAX_DRAFT_BODY)
+        if body is None or set(body) != {"pass_id", "schedule_sha256", "expected_revision",
+                                         "candidate_ids"}:
+            self._error(HTTPStatus.BAD_REQUEST, "invalid_request")
+            return
+        try:
+            schedule = mps_passes(self.server.core_socket)
+            result = self.server.candidates.save(schedule, body["pass_id"],
+                                                 body["schedule_sha256"],
+                                                 body["expected_revision"],
+                                                 body["candidate_ids"], actor)
+        except CoreUnavailable:
+            self._error(HTTPStatus.SERVICE_UNAVAILABLE, "mps_schedule_unavailable")
+            return
+        except CandidateError as exc:
+            code = str(exc)
+            self._error(HTTPStatus.CONFLICT if code in ("stale_schedule", "revision_conflict")
+                        else HTTPStatus.BAD_REQUEST, code)
+            return
+        self._json(HTTPStatus.OK, result)
 
     def _backend_draft_post(self, path: str) -> None:
         if not self._backend_identity() or self.server.drafts is None:
@@ -451,6 +506,8 @@ def parser() -> argparse.ArgumentParser:
             service.add_argument("--core-socket", type=Path, default=CORE_SOCKET)
         if mode == "ros":
             service.add_argument("--draft-db", type=Path)
+        if mode == "mps":
+            service.add_argument("--candidate-db", type=Path)
     return result
 
 
@@ -484,13 +541,16 @@ def main() -> None:
                        static_root=getattr(args, "static_root", WEB),
                        core_socket=getattr(args, "core_socket", CORE_SOCKET),
                        orbit_view=getattr(args, "orbit_view", None),
-                       draft_db=getattr(args, "draft_db", None))
+                       draft_db=getattr(args, "draft_db", None),
+                       candidate_db=getattr(args, "candidate_db", None))
     try:
         server.serve_forever(poll_interval=0.2)
     finally:
         server.server_close()
         if server.drafts:
             server.drafts.close()
+        if server.candidates:
+            server.candidates.close()
         if auth:
             auth.close()
 

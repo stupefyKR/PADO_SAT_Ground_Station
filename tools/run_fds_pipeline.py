@@ -21,9 +21,11 @@ from pathlib import Path
 
 if __package__:
     from .publish_fds_view import publish
+    from .publish_mps_schedule import publish as publish_mps_schedule
     from .stage_fds_outbox import stage
 else:
     from publish_fds_view import publish
+    from publish_mps_schedule import publish as publish_mps_schedule
     from stage_fds_outbox import stage
 
 
@@ -142,6 +144,7 @@ def run_cycle(args: argparse.Namespace, *, now: datetime | None = None) -> tuple
         subprocess.run(command, cwd=ROOT, env=environment, check=True)
     stage(run, args.outbox_dir.resolve())
     published = publish(run, args.view_dir.resolve())
+    publish_mps_schedule(run, args.mps_schedule_dir.resolve())
     metadata = dict(line.split("=", 1) for line in (run / "run.properties").read_text().splitlines()
                     if "=" in line)
     return published, metadata["source"]
@@ -167,6 +170,8 @@ def main() -> None:
                         help="unique N13/N15 file pairs staged after each successful FDS run")
     parser.add_argument("--view-dir", type=Path, default=ROOT / "out/fds-live-view",
                         help="separate operational-input view; never the fixed ISS demo by default")
+    parser.add_argument("--mps-schedule-dir", type=Path, default=ROOT / "out/mps-schedules",
+                        help="validated N13 snapshots for the MPS read-only service")
     parser.add_argument("--mvn", type=Path, default=Path("mvn"))
     parser.add_argument("--maven-repo", type=Path)
     parser.add_argument("--watch", action="store_true", help="poll validated file pairs continuously")

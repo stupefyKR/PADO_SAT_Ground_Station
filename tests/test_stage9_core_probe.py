@@ -1,6 +1,7 @@
 """Read-only Stage 9 bridge tests against the actual C parser and TM validator."""
 
 import json
+import hashlib
 import os
 import socket
 import struct
@@ -11,7 +12,8 @@ import unittest
 import zlib
 from pathlib import Path
 
-from services.webapp.core import CoreUnavailable, mps_catalog, ros_summary
+from services.webapp.core import CoreUnavailable, mps_catalog, mps_passes, ros_summary
+from tools.publish_mps_schedule import publish
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,9 +30,10 @@ class CoreProbeTests(unittest.TestCase):
         return subprocess.run([str(CORE_BIN), command, str(path)],
                               capture_output=True, timeout=2, check=False)
 
-    def start_service(self, mode, socket_path, source):
+    def start_service(self, mode, socket_path, source, schedule_root=None):
         process = subprocess.Popen(
-            [str(CORE_BIN), "serve", mode, str(socket_path), str(source)],
+            [str(CORE_BIN), "serve", mode, str(socket_path), str(source)] +
+            ([str(schedule_root)] if schedule_root is not None else []),
             stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         until = time.monotonic() + 3
         while time.monotonic() < until:
@@ -128,6 +131,49 @@ class CoreProbeTests(unittest.TestCase):
             link = Path(folder) / "link.record"
             link.symlink_to(record)
             self.assertNotEqual(self.call("ros-summary", link).returncode, 0)
+
+    def test_validated_n13_schedule_is_reloaded_and_tampering_fails_closed(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / "commands.json"
+            source.write_bytes((ROOT / "interfaces/command_db/commands.json").read_bytes())
+            schedule_root = root / "schedules"
+            schedule_root.mkdir()
+            run = root / "fds-20261023T100000Z-1234abcd"
+            run.mkdir()
+            body = (
+                "schema,station_id,band,pass_id,aos_utc,los_utc,peak_utc,"
+                "max_elevation_deg,minimum_elevation_deg,clipped_start,clipped_end\n"
+                "fds.contact-schedule.v1,yonsei,UHF,yonsei-001,2026-10-23T10:00:00.125Z,"
+                "2026-10-23T10:08:00.250Z,2026-10-23T10:04:00.000Z,42.5,10.0,false,false\n"
+            ).encode("ascii")
+            (run / "contact_schedule.csv").write_bytes(body)
+            (run / "contact_schedule.csv.manifest.json").write_text(json.dumps({
+                "file": "contact_schedule.csv", "type": "CONTACT_SCHEDULE",
+                "from": "fds", "to": "mps", "version": 1,
+                "created": "2026-10-23T10:00:00Z",
+                "sha256": hashlib.sha256(body).hexdigest(),
+            }), encoding="ascii")
+            socket_path = root / "mps.sock"
+            process = self.start_service("mps", socket_path, source, schedule_root)
+            try:
+                self.assertEqual(mps_passes(socket_path)["schedule_state"], "absent")
+                published = publish(run, schedule_root)
+                result = mps_passes(socket_path)
+                self.assertEqual(result["schedule_state"], "validated")
+                self.assertEqual(result["schedule_sha256"], hashlib.sha256(body).hexdigest())
+                self.assertEqual(result["passes"][0]["station_id"], "yonsei")
+                self.assertFalse(result["operational"])
+                (published / "contact_schedule.csv").write_bytes(b"tampered")
+                with self.assertRaises(CoreUnavailable):
+                    mps_passes(socket_path)
+                (schedule_root / "current.txt").write_text("../escape\n", encoding="ascii")
+                with self.assertRaises(CoreUnavailable):
+                    mps_passes(socket_path)
+            finally:
+                process.terminate()
+                self.assertEqual(process.wait(timeout=3), 0)
+                process.stderr.close()
 
 
 if __name__ == "__main__":

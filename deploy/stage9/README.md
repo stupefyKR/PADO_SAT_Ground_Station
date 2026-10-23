@@ -22,8 +22,8 @@ ROS는 `SIM_ONLY`와 TC 송출 차단 상태, MPS는 현재 비운용 명령 DB�
 
 ## 9-1: 비운용 C 코어 읽기 연결
 
-`gs_stage9_core_probe`는 기존 `gs_mps_command_catalog_parse`와
-`gs_sim_tm_validate`를 호출하는 제한된 읽기 전용 실행 파일이다. MPS API의
+`gs_stage9_core_probe`는 기존 `gs_mps_command_catalog_parse`,
+`gs_mps_fds_schedule_parse`, `gs_sim_tm_validate`를 호출하는 제한된 읽기 전용 실행 파일이다. MPS API의
 `/catalog`는 이제 Python의 별도 JSON 해석이 아니라 C 명령 DB 파서가
 검증한 버전과 빈 명령 수를 사용한다. ROS API의 `/overview`는 단계 3
 `ros-core --sim-only`가 남긴 **시뮬레이터 기록 파일**을 C 프레임 검증기로
@@ -43,8 +43,8 @@ ROS·MPS C 읽기 프로세스를 각각 별도 컨테이너에 상주시킨다.
 개발 Compose의 `ros_state`는 ROS C 읽기 서비스에만 읽기 전용으로 붙어 있다.
 이 Compose에는 기록을 쓰는 ROS 코어 서비스가 아직 없으므로 기본값은
 `/state/ros-tm.record` 부재·0건이다. 이 상주 프로세스는 **읽기 어댑터**이며
-실제 ROS TM 수신기나 MPS 계획 처리 데몬을 대체하지 않는다. 영속 계획·패스
-모델, TM 파라미터 변환과 한계 경보는 아직 연결되지 않았다. 명령 DB와
+실제 ROS TM 수신기나 MPS 계획 처리 데몬을 대체하지 않는다. 영속 계획,
+TM 파라미터 변환과 한계 경보는 아직 연결되지 않았다. 명령 DB와
 시뮬레이터 기록은 크기·파일 유형·권한·무결성을 검사한다. TLS/mTLS와 로그인
 경계는 기존 포털 경로를 유지한다.
 
@@ -62,8 +62,13 @@ operator/lead/planner는 패스 내부 시각의 단계별 예약 초안을 저�
 필요하다. 초안은 `DRAFT_ONLY`이며 시간 도래 시 실행하는 타이머, TC 인코더,
 signer, tc-gate, RF 송출 경로가 없다. 이는 기존 C 코어의 독립 승인·충돌·
 명령 검증을 대신하지 않는다.
-MPS는 패스 일정, 시퀀스 초안, 명령 카탈로그, 선택 항목 정보를 작업 순서에
+MPS는 검증된 N13 패스 일정, 후보 초안, 명령 카탈로그, 선택 항목 정보를 작업 순서에
 맞춰 배치했다. 아직 입력 ICD가 없는 작업 버튼은 비활성이다.
+패스를 선택하면 로그인한 planner/operator/lead가 대문자 후보 ID의 순서를
+시험용으로 저장할 수 있다. `mps_candidates` 볼륨은 일정 SHA-256·패스
+시간창·예상 리비전과 함께 이 초안을 보관한다. auditor는 조회만 가능하다.
+후보 ID는 실제 TC 코드가 아니며 명령 인코딩, 충돌 판정, 승인, 출력·송출로
+이어지지 않는다.
 
 실제 TM 연결 단계에서는 확정된 패킷/파라미터 DB를 기준으로 센서 ID,
 UTC 수신 시각, 보정 값, 단위, 품질, 하한·상한, 경보 등급 및 이력을 제공해야
@@ -88,6 +93,15 @@ UTC 수신 시각, 보정 값, 단위, 품질, 하한·상한, 경보 등급 및
 검증·원자적 게시한다. 파일이 없으면 `/api/fds/orbit`은 503을 반환하며
 화면은 빈 지구와 데이터 미연결 상태를 표시한다. 개발 Compose 자체에는
 FDS 계산 컨테이너나 N05 TLE 수집기가 포함되지 않는다.
+
+MPS C 읽기 서비스는 `PADO_STAGE9_MPS_SCHEDULE_DIR`(기본
+`out/mps-schedules`)을 읽기 전용으로 마운트한다. FDS 반복 계산기는 성공한
+실행의 N13 본문·manifest를 실행 ID별 디렉터리에 검증·게시하고 마지막에
+`current.txt`를 원자적으로 교체한다. 이미 완료된 실행은
+`python3 -m tools.publish_mps_schedule RUN_DIR out/mps-schedules`로 게시할 수
+있다. 서비스는 파일을 매 요청마다 C 파서로 다시 검증하며, 입력 부재는
+빈 일정, 변조·오류는 503으로 표시한다. MPS 화면의 패스는 예비 전파 결과이며
+승인·TC 송출에 사용하지 않는다. 이 경로는 ISS 시험 화면과 분리된다.
 
 인증서와 계정 DB는 저장소에 넣지 않는다. 개발용 인증서 디렉터리는
 `PADO_STAGE9_CERT_DIR`에 **절대 경로**로 지정한다. 필요한 파일은 `ca.crt`,

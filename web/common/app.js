@@ -256,6 +256,163 @@ async function refreshRosSummary() {
   }
 }
 
+function renderMpsCandidateEditor(pass, schedule, session, drafts) {
+  const panel = document.querySelector(".draft-panel");
+  const scroll = panel.querySelector(".table-scroll");
+  const actions = panel.querySelector(".panel-actions");
+  const tag = panel.querySelector(".panel-head .tag");
+  const existing = drafts.find((item) => item.pass_id === pass.pass_id);
+  let revision = existing?.revision ?? 0;
+  let candidates = [...(existing?.candidate_ids ?? [])];
+  const editable = ["planner", "operator", "lead"].includes(session.role);
+  actions.replaceChildren();
+  tag.textContent = "시험 초안 · 송출 차단";
+  tag.className = "tag neutral";
+  const input = document.createElement("input");
+  input.type = "text"; input.maxLength = 63;
+  input.placeholder = "시험용 TC 후보 ID (대문자·숫자·_·-)";
+  input.setAttribute("aria-label", "시험용 TC 후보 ID");
+  input.disabled = !editable;
+  const add = document.createElement("button");
+  add.type = "button"; add.textContent = "후보 추가"; add.disabled = !editable;
+  add.addEventListener("click", () => {
+    const id = input.value.trim();
+    if (!/^[A-Z0-9_-]{1,63}$/.test(id) || candidates.includes(id) || candidates.length >= 64) {
+      showError("후보 ID는 대문자·숫자·_·-만 사용하며 중복할 수 없습니다."); return;
+    }
+    candidates.push(id); input.value = ""; draw();
+  });
+  const save = document.createElement("button");
+  save.type = "button"; save.textContent = "시험 초안 저장"; save.disabled = !editable;
+  save.addEventListener("click", async () => {
+    save.disabled = true;
+    try {
+      const saved = await api("/api/mps/test-candidates", {
+        method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": session.csrf },
+        body: JSON.stringify({ pass_id: pass.pass_id, schedule_sha256: schedule.schedule_sha256,
+          expected_revision: revision, candidate_ids: candidates })
+      });
+      revision = saved.revision;
+      const position = drafts.findIndex((item) => item.pass_id === pass.pass_id);
+      if (position >= 0) drafts[position] = saved; else drafts.push(saved);
+      tag.textContent = `시험 초안 · 리비전 ${revision} 저장됨`;
+      document.getElementById("api-error").hidden = true;
+    } catch (_) { showError("초안 저장에 실패했습니다. 일정 또는 리비전 변경 여부를 확인하세요."); }
+    finally { save.disabled = false; }
+  });
+  actions.append(input, add, save);
+  const note = document.createElement("p");
+  note.className = "inspector-note";
+  note.textContent = "후보 ID와 순서만 저장합니다. 실제 TC 명령·시각·파라미터·충돌 판정·승인·송출은 사용할 수 없습니다.";
+  const table = document.createElement("table");
+  const header = document.createElement("thead");
+  header.innerHTML = "<tr><th>순서</th><th>후보 ID</th><th>상태</th><th>편집</th></tr>";
+  const body = document.createElement("tbody");
+  table.append(header, body);
+  scroll.replaceChildren(note, table);
+  const draw = () => {
+    body.replaceChildren();
+    if (!candidates.length) {
+      const row = document.createElement("tr");
+      const cell = document.createElement("td");
+      cell.colSpan = 4; cell.className = "table-empty";
+      cell.textContent = "이 패스에 등록된 시험용 TC 후보가 없습니다.";
+      row.append(cell); body.append(row); return;
+    }
+    candidates.forEach((id, index) => {
+      const row = document.createElement("tr");
+      [String(index + 1), id, "시험용"].forEach((content) => {
+        const cell = document.createElement("td"); cell.textContent = content; row.append(cell);
+      });
+      const cell = document.createElement("td");
+      for (const [label, next] of [["↑", index - 1], ["↓", index + 1]]) {
+        const move = document.createElement("button");
+        move.type = "button"; move.textContent = label;
+        move.setAttribute("aria-label", `${id} ${label === "↑" ? "위로" : "아래로"}`);
+        move.disabled = !editable || next < 0 || next >= candidates.length;
+        move.addEventListener("click", () => {
+          [candidates[index], candidates[next]] = [candidates[next], candidates[index]]; draw();
+        });
+        cell.append(move);
+      }
+      const remove = document.createElement("button");
+      remove.type = "button"; remove.textContent = "제거"; remove.disabled = !editable;
+      remove.addEventListener("click", () => { candidates.splice(index, 1); draw(); });
+      cell.append(remove); row.append(cell); body.append(row);
+    });
+  };
+  draw();
+  tag.textContent = revision ? `시험 초안 · 리비전 ${revision}` : "새 시험 초안";
+}
+
+function renderMpsPasses(schedule, session, drafts) {
+  const panel = document.querySelector(".passes-panel");
+  document.querySelector(".notice span").textContent =
+    "FDS N13 일정은 검증 후 읽기 전용으로 표시합니다. TC 명령 DB, 충돌 정책과 운용 승인·출력은 아직 연결되지 않았습니다.";
+  document.getElementById("mps-passes").previousElementSibling.textContent = "예측 패스";
+  const timeline = panel.querySelector(".timeline");
+  const tag = panel.querySelector(".panel-head .tag");
+  const toolbar = panel.querySelector(".toolbar");
+  const foot = panel.querySelector(".panel-foot");
+  toolbar.hidden = true;
+  timeline.replaceChildren();
+  value("mps-passes", schedule.passes.length);
+  if (schedule.schedule_state !== "validated") {
+    tag.textContent = "N13 입력 대기";
+    timeline.textContent = "검증된 FDS 패스 일정이 아직 게시되지 않았습니다.";
+    return;
+  }
+  tag.textContent = "N13 검증 완료 · 시험용";
+  foot.textContent = `일정 SHA-256: ${schedule.schedule_sha256} · 운용 출력 차단`;
+  if (!schedule.passes.length) {
+    timeline.textContent = "예측 구간에 지상국 패스가 없습니다.";
+    return;
+  }
+  const table = document.createElement("table");
+  const head = document.createElement("thead");
+  const header = document.createElement("tr");
+  ["지상국 / 대역", "AOS (UTC)", "LOS (UTC)", "최대 고각", "패스 ID"].forEach((label) => {
+    const cell = document.createElement("th"); cell.textContent = label; header.append(cell);
+  });
+  head.append(header);
+  const body = document.createElement("tbody");
+  for (const pass of schedule.passes) {
+    const row = document.createElement("tr");
+    row.tabIndex = 0;
+    const select = () => {
+      panel.querySelectorAll("tbody tr").forEach((item) => item.setAttribute("aria-selected", String(item === row)));
+      const inspector = document.querySelector(".inspector-panel dl");
+      const details = [
+        ["패스", pass.pass_id], ["지상국", pass.station_id === "yonsei" ? "연세대 UHF" : "대전 항우연 S-band"],
+        ["AOS / LOS", `${new Date(pass.aos_utc_s * 1000).toISOString()} / ${new Date(pass.los_utc_s * 1000).toISOString()}`],
+        ["최대 고각", `${pass.max_elevation_deg}°`], ["최소 고각", `${pass.minimum_elevation_deg}°`],
+        ["시간 경계 절단", `${pass.clipped_start ? "시작 " : ""}${pass.clipped_end ? "종료" : ""}` || "없음"],
+        ["명령 계획", "TC ICD 확정 대기"]
+      ];
+      inspector.replaceChildren(...details.map(([key, content]) => {
+        const line = document.createElement("div");
+        const term = document.createElement("dt"); term.textContent = key;
+        const desc = document.createElement("dd"); desc.textContent = content;
+        line.append(term, desc); return line;
+      }));
+      document.querySelector(".draft-meta strong").textContent = pass.pass_id;
+      renderMpsCandidateEditor(pass, schedule, session, drafts);
+    };
+    row.addEventListener("click", select);
+    row.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); select(); } });
+    const values = [
+      pass.station_id === "yonsei" ? "연세대 / UHF" : "항우연 / S-band",
+      new Date(pass.aos_utc_s * 1000).toISOString().slice(0, 19).replace("T", " "),
+      new Date(pass.los_utc_s * 1000).toISOString().slice(0, 19).replace("T", " "),
+      `${pass.max_elevation_deg}°`, pass.pass_id
+    ];
+    values.forEach((value) => { const cell = document.createElement("td"); cell.textContent = value; row.append(cell); });
+    body.append(row);
+  }
+  table.append(head, body);
+  timeline.append(table);
+}
+
 async function workspace(page) {
   setupUtcClock();
   // The ROS workbench owns the explicitly test-only TM preview controls.
@@ -279,12 +436,12 @@ async function workspace(page) {
     await initOrbitViewer();
   } else {
     try {
-      const [catalog, passes] = await Promise.all([
-        api("/api/mps/catalog"), api("/api/mps/passes")
+      const [catalog, passes, drafts] = await Promise.all([
+        api("/api/mps/catalog"), api("/api/mps/passes"), api("/api/mps/test-candidates")
       ]);
       value("mps-version", catalog.version);
       value("mps-commands", catalog.commands.length);
-      value("mps-passes", passes.passes.length);
+      renderMpsPasses(passes, session, drafts.items);
       value("mps-catalog-status", catalog.status);
     } catch (_) { showError("서브시스템 상태를 읽지 못했습니다."); }
   }

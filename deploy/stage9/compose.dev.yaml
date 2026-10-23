@@ -77,7 +77,7 @@ services:
     build:
       context: ../..
       dockerfile: docker/stage9/Dockerfile
-    command: ["python3", "-m", "services.webapp.main", "mps", "--bind", "0.0.0.0", "--port", "8443", "--cert", "/certs/mps-api.crt", "--key", "/certs/mps-api.key", "--ca", "/certs/ca.crt"]
+    command: ["python3", "-m", "services.webapp.main", "mps", "--bind", "0.0.0.0", "--port", "8443", "--cert", "/certs/mps-api.crt", "--key", "/certs/mps-api.key", "--ca", "/certs/ca.crt", "--candidate-db", "/state/mps-candidates.db"]
     depends_on:
       mps-core-read: {condition: service_healthy}
     volumes:
@@ -89,6 +89,7 @@ services:
         source: mps_core_socket
         target: /run/core
         read_only: true
+      - mps_candidates:/state
     networks: [portal_mps]
     read_only: true
     cap_drop: [ALL]
@@ -120,9 +121,13 @@ services:
     build:
       context: ../..
       dockerfile: docker/stage9/Dockerfile
-    command: ["/usr/local/bin/gs_stage9_core_probe", "serve", "mps", "/run/core/core.sock", "/app/interfaces/command_db/commands.json"]
+    command: ["/usr/local/bin/gs_stage9_core_probe", "serve", "mps", "/run/core/core.sock", "/app/interfaces/command_db/commands.json", "/mps-schedules"]
     volumes:
       - mps_core_socket:/run/core
+      - type: bind
+        source: ${PADO_STAGE9_MPS_SCHEDULE_DIR:-../../out/mps-schedules}
+        target: /mps-schedules
+        read_only: true
     network_mode: none
     read_only: true
     cap_drop: [ALL]
@@ -138,6 +143,7 @@ volumes:
   ros_state:
   ros_core_socket:
   ros_drafts:
+  mps_candidates:
   mps_core_socket:
 networks:
   entry: {driver: bridge}
