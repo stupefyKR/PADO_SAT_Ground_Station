@@ -84,7 +84,7 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     def setup(self) -> None:
-        self.connection.settimeout(5)
+        self.request.settimeout(5)
         super().setup()
 
     def _send(self, status: int, body: bytes = b"", content_type: str =
@@ -178,13 +178,20 @@ class Handler(BaseHTTPRequestHandler):
         address = self.client_address[0]
         now = time.monotonic()
         with self.server.login_lock:
+            if len(self.server.login_attempts) > 1024:
+                self.server.login_attempts = {
+                    ip: times for ip, times in self.server.login_attempts.items()
+                    if any(now - at < 60 for at in times)
+                }
             attempts = [at for at in self.server.login_attempts.get(address, [])
                         if now - at < 60]
-            if len(attempts) >= 10:
-                self._error(HTTPStatus.TOO_MANY_REQUESTS, "rate_limited")
-                return
-            attempts.append(now)
-            self.server.login_attempts[address] = attempts
+            limited = len(attempts) >= 10
+            if not limited:
+                attempts.append(now)
+                self.server.login_attempts[address] = attempts
+        if limited:
+            self._error(HTTPStatus.TOO_MANY_REQUESTS, "rate_limited")
+            return
         body = self._read_json()
         if body is None or any(not isinstance(body.get(key, ""), str)
                                for key in ("username", "password", "totp")):

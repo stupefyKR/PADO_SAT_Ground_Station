@@ -52,3 +52,9 @@ jobs:
           python3 tests/container/run_network.py --build
           python3 tests/container/run_stage7_topology.py
           python3 tests/container/run_stage7_tm.py
+      - name: Validate Stage 9 container packaging
+        env:
+          PADO_STAGE9_CERT_DIR: /tmp
+        run: |
+          docker compose -f deploy/stage9/compose.dev.yaml config --quiet
+          docker compose -f deploy/stage9/compose.dev.yaml build
