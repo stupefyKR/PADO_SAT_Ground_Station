@@ -25,13 +25,15 @@ GitHub 원격 저장소는 비공개로 설정되어 있습니다(2026-10-21 확
 | 6 | FDS·DGS-NET·아카이브·SDC 교환 | 완료(비운용 파일 교환 기준선) | N05·N08–N18 경로·유형·SFTP 시험 통과; 외부 수집·Orekit·영속 보관은 미구현 |
 | 7 | 단일 VM의 Docker·UFW 배포 기반 | 완료(개발 기준선) | N2 연결 쌍·Docker 격리·journald·UFW·시뮬레이터 앱 경계 시험 통과; 실제 서버 적용은 최종 배포 수락 절차 |
 | 8 | 백업·복구·퍼징·핵심 서비스 보안 시험 | 완료(개발 기준선) | 로컬 복원·변조 거부 및 4개 파서 ASan+UBSan 퍼징 통과; 실제 백업 매체·FlatSat 복구는 최종 배포 수락 절차 |
-| 9 | 포털 인증·ROS/MPS 웹 UI | 대기 | 관제용 PC에서 포털로 접속 |
+| 9 | 포털 인증·ROS/MPS 웹 UI | 진행 중(비운용 읽기 전용 기준선) | Argon2id·TOTP 세션, 포털→API mTLS와 상태 화면; 실제 코어 연동·관제 PC 현장 시험 대기 |
 
 ## 아키텍처
 
 이전 개발방향 4.1절의 VM 8대 구성은 [결정 #16](docs/DECISIONS.md)으로 대체했습니다. 목표 구조는 Linux VM 한 대에 Portal, ROS, MPS, FDS, DGS-Archive, DGS-GS, DGS-NET 컨테이너를 두는 것입니다. [단계 7 배포 기준선](deploy/stage7/README.md)의 Compose 파일은 네트워크 검증용이며 운용 앱 배포 파일은 아직 아닙니다. 실제 서버 적용 순서는 [서버 설정 매뉴얼](deploy/stage7/SERVER_SETUP.md)에 있습니다.
 
 단계 8의 로컬 백업·복원과 퍼징 절차는 [단계 8 시험 안내](deploy/stage8/README.md)에 정리했습니다. NAS 장비 연동은 현재 개발·배포 수락 범위에서 제외하고, 장비가 정해진 뒤 별도 과제로 추가합니다([결정 #19](docs/DECISIONS.md)). 운용 전 독립 백업·복원 방안은 별도로 검증해야 합니다.
+
+단계 9의 비운용 웹 개발 기준선과 컨테이너 실행 조건은 [단계 9 안내](deploy/stage9/README.md)에 있습니다.
 
 계획된 운용 TC 경로는 MPS 시퀀스 승인 → `ros-core` 명령 DB 재검증 → `ros-signer` 승인 확인·HMAC → TLS → `dgs-gs` `tc-gate` → `kari-adapter`입니다. 현재 단계 5는 합성 프레임을 이용한 모듈 간 시험 경로이며 실제 송출 경로는 구현되지 않았습니다. [개발방향 12장](docs/PADO-SAT_지상국_개발방향.md), [MPS 시험 계약](interfaces/mps/test_contract.md), [TC 시험 계약](interfaces/tc/test_contract.md)을 참고하세요.
 

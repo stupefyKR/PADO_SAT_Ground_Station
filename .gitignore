@@ -9,6 +9,10 @@
 *.crt
 *.cer
 *.asc
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
 secrets/
 keys/
 

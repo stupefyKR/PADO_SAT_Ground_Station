@@ -1,0 +1,84 @@
+# Development only. The sole published port is bound to the VM loopback.
+# All certificates and the private CA are supplied outside Git.
+services:
+  portal:
+    build:
+      context: ../..
+      dockerfile: docker/stage9/Dockerfile
+    command:
+      - python3
+      - -m
+      - services.webapp.main
+      - portal
+      - --bind
+      - 0.0.0.0
+      - --port
+      - "8443"
+      - --cert
+      - /certs/portal.crt
+      - --key
+      - /certs/portal.key
+      - --ca
+      - /certs/ca.crt
+      - --client-cert
+      - /certs/portal.crt
+      - --client-key
+      - /certs/portal.key
+      - --db
+      - /state/accounts.db
+      - --ros-url
+      - https://ros-api:8443
+      - --mps-url
+      - https://mps-api:8443
+    ports:
+      - "127.0.0.1:8443:8443"
+    volumes:
+      - type: bind
+        source: ${PADO_STAGE9_CERT_DIR:?set certificate directory}
+        target: /certs
+        read_only: true
+      - portal_state:/state
+    networks: [entry, portal_ros, portal_mps]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/tmp"]
+    logging: {driver: journald}
+  ros-api:
+    build:
+      context: ../..
+      dockerfile: docker/stage9/Dockerfile
+    command: ["python3", "-m", "services.webapp.main", "ros", "--bind", "0.0.0.0", "--port", "8443", "--cert", "/certs/ros-api.crt", "--key", "/certs/ros-api.key", "--ca", "/certs/ca.crt"]
+    volumes:
+      - type: bind
+        source: ${PADO_STAGE9_CERT_DIR:?set certificate directory}
+        target: /certs
+        read_only: true
+    networks: [portal_ros]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/tmp"]
+    logging: {driver: journald}
+  mps-api:
+    build:
+      context: ../..
+      dockerfile: docker/stage9/Dockerfile
+    command: ["python3", "-m", "services.webapp.main", "mps", "--bind", "0.0.0.0", "--port", "8443", "--cert", "/certs/mps-api.crt", "--key", "/certs/mps-api.key", "--ca", "/certs/ca.crt"]
+    volumes:
+      - type: bind
+        source: ${PADO_STAGE9_CERT_DIR:?set certificate directory}
+        target: /certs
+        read_only: true
+    networks: [portal_mps]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/tmp"]
+    logging: {driver: journald}
+volumes:
+  portal_state:
+networks:
+  entry: {driver: bridge}
+  portal_ros: {driver: bridge, internal: true}
+  portal_mps: {driver: bridge, internal: true}
