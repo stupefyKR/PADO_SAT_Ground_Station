@@ -44,11 +44,10 @@ class PublishFdsViewTests(unittest.TestCase):
         self.assertEqual(json.loads(final.read_text())["norad_id"], 12345)
         self.assertEqual(sorted(item.name for item in final.parent.iterdir()), ["orbit_view.json"])
 
-    def test_stale_run_requires_explicit_replay(self):
+    def test_stale_run_is_rejected(self):
         self.fixture(start_offset_hours=-100, input_offset_hours=-101)
         with self.assertRaises(ValueError):
             publish(self.run, self.root / "served")
-        self.assertTrue(publish(self.run, self.root / "served", allow_replay=True).is_file())
 
     def test_mismatched_input_cannot_replace_existing_view(self):
         payload = self.fixture()

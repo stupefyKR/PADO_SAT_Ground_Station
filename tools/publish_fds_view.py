@@ -19,7 +19,7 @@ def timestamp(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
-def publish(run: Path, destination: Path, *, allow_replay: bool = False) -> Path:
+def publish(run: Path, destination: Path) -> Path:
     source = run / "orbit_view.json"
     metadata = run / "run.properties"
     if not source.is_file() or not metadata.is_file() or source.stat().st_size > MAX_BYTES:
@@ -45,7 +45,7 @@ def publish(run: Path, destination: Path, *, allow_replay: bool = False) -> Path
             timestamp(payload["samples"][-1][0]) != end):
         raise ValueError("FDS viewer prediction range is invalid")
     now = datetime.now(timezone.utc)
-    if not allow_replay and not (start <= now <= end and now - epoch < timedelta(hours=72)):
+    if not (start <= now <= end and now - epoch < timedelta(hours=72)):
         raise ValueError("prediction does not cover now with an input younger than 72 hours")
     destination.mkdir(parents=True, exist_ok=True)
     final = destination / "orbit_view.json"
@@ -71,9 +71,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("run", type=Path, help="completed FDS output directory")
     parser.add_argument("destination", type=Path, help="read-only portal bind source directory")
-    parser.add_argument("--allow-replay", action="store_true", help="publish an old result for review only")
     args = parser.parse_args()
-    print(publish(args.run, args.destination, allow_replay=args.allow_replay))
+    print(publish(args.run, args.destination))
 
 
 if __name__ == "__main__":

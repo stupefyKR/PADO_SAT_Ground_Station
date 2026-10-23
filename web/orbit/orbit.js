@@ -2,11 +2,11 @@
 
 // The browser interpolates FDS Earth-fixed samples. It never propagates a TLE.
 const ORBIT_EARTH_RADIUS_M = 6378137;
+const ORBIT_FIXED_ISS_SHA256 = "80e9879d78792b0c61ac8fa3d38f3de1001cbdef0ef6cb33e531475678c18cac";
 const orbitState = {
-  data: null, samples: [], stations: [], time: Date.now(), live: false,
-  playing: false, speed: 300, view: "3d", lon: 127, lat: 24, zoom: 1,
+  data: null, samples: [], stations: [], time: Date.now(), lon: 127, lat: 24, zoom: 1,
   image: new Image(), gl: null, program: null, texture: null,
-  lastFrame: 0, lastUi: 0, nightStamp: -1, nightCanvas: document.createElement("canvas")
+  lastUi: 0, nightStamp: -1, nightCanvas: document.createElement("canvas")
 };
 
 const orbitEl = (id) => document.getElementById(id);
@@ -92,23 +92,26 @@ function setOrbitData(input, label) {
   orbitState.data = parsed;
   orbitState.samples = parsed.samples;
   orbitState.stations = parsed.stations;
-  const now = Date.now();
-  orbitState.live = now >= parsed.start && now <= parsed.end &&
-    now - parsed.inputEpoch < 72 * 3600000;
-  orbitState.time = orbitState.live ? now : parsed.start;
-  orbitState.playing = false;
-  orbitEl("orbit-play").textContent = "재생";
-  orbitEl("orbit-timeline").disabled = false;
-  orbitEl("orbit-timeline").max = String(Math.round((parsed.end - parsed.start) / 1000));
+  orbitState.time = Date.now();
+  const isIssTest = input.norad_id === 25544 && input.source === "TLE" &&
+    input.input_sha256 === ORBIT_FIXED_ISS_SHA256;
+  orbitEl("orbit-mode-label").textContent = isIssTest ? "ISS TEST MODE" : "PRELIMINARY";
+  orbitEl("orbit-sidebar-mode").textContent = isIssTest ? "ISS 시험 궤도" : "예비 궤도 화면";
+  orbitEl("orbit-sidebar-note").textContent = isIssTest ? "고정 TLE · 운용 금지" : "FDS 산출물 · 운용 금지";
   orbitEl("orbit-source-note").textContent =
-    `NORAD ${input.norad_id} · ${input.source} / ${input.model} · 입력 ${formattedUtc(parsed.inputEpoch)} · 예비 계산 결과입니다. 실제 관제 판단에는 사용하지 마세요.`;
-  orbitEl("orbit-data-state").textContent = `${label} · ${orbitState.live ? "현재 위치 표시 가능" : "현재 유효한 입력·예측 범위 없음 (재생만 가능)"}`;
-  orbitEl("orbit-model").textContent = `${input.source} / ${input.model}`;
+    `${isIssTest ? "ISS (ZARYA) 고정 TLE 시험" : `NORAD ${input.norad_id}`} · ${input.source} / ${input.model} · 입력 ${formattedUtc(parsed.inputEpoch)} · ${isIssTest ? "안테나 좌표는 시험용 근삿값입니다. " : "안테나 설정을 확인하세요. "}실제 관제 판단에는 사용하지 마세요.`;
+  orbitEl("orbit-data-state").textContent = `${label} · ${isCurrentData() ? "현재 위치 표시 가능" : "현재 유효한 입력·예측 범위 없음"}`;
+  orbitEl("orbit-model").textContent = `${isIssTest ? "ISS 시험 · " : ""}${input.source} / ${input.model}`;
   orbitEl("orbit-period").textContent = `${(input.orbital_period_s / 60).toFixed(1)} 분`;
   orbitEl("orbit-coverage").textContent = `${Math.round((parsed.end - parsed.start) / 3600000)} 시간`;
-  orbitEl("orbit-window").textContent = `+3주기 ${(3 * input.orbital_period_s / 3600).toFixed(1)}h`;
   orbitEl("api-error").hidden = true;
   orbitRender(true);
+}
+
+function isCurrentData() {
+  const data = orbitState.data, now = orbitState.time;
+  return !!data && now >= data.start && now <= data.end &&
+    now >= data.inputEpoch && now - data.inputEpoch < 72 * 3600000;
 }
 
 function sampleAt(time) {
@@ -146,12 +149,16 @@ function stationEcef(station) {
     (n * (1 - e2) + station.altitude_m) * Math.sin(lat)];
 }
 
-function stationElevation(station, satellite) {
+function stationObservation(station, satellite) {
   const site = stationEcef(station), delta = satellite.map((value, index) => value - site[index]);
-  const up = [Math.cos(rad(station.latitude_deg)) * Math.cos(rad(station.longitude_deg)),
-    Math.cos(rad(station.latitude_deg)) * Math.sin(rad(station.longitude_deg)),
-    Math.sin(rad(station.latitude_deg))];
-  return Math.asin(clamp(dot(delta, up) / Math.hypot(...delta), -1, 1)) * 180 / Math.PI;
+  const lat = rad(station.latitude_deg), lon = rad(station.longitude_deg);
+  const east = [-Math.sin(lon), Math.cos(lon), 0];
+  const north = [-Math.sin(lat) * Math.cos(lon), -Math.sin(lat) * Math.sin(lon), Math.cos(lat)];
+  const up = [Math.cos(lat) * Math.cos(lon), Math.cos(lat) * Math.sin(lon), Math.sin(lat)];
+  return {
+    az: (Math.atan2(dot(delta, east), dot(delta, north)) * 180 / Math.PI + 360) % 360,
+    el: Math.asin(clamp(dot(delta, up) / Math.hypot(...delta), -1, 1)) * 180 / Math.PI
+  };
 }
 
 function orbitBasis() {
@@ -218,10 +225,13 @@ function setupGlobe() {
 }
 
 function sizeCanvases() {
-  const wrap = orbitEl("orbit-canvas-wrap"), pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
-  for (const id of ["orbit-earth", "orbit-flat", "orbit-overlay"]) {
+  const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+  for (const [id, wrapId] of [["orbit-earth", "orbit-canvas-wrap"],
+    ["orbit-overlay", "orbit-canvas-wrap"], ["orbit-flat", "orbit-flat-wrap"]]) {
     const canvas = orbitEl(id);
-    const width = Math.round(wrap.clientWidth * pixelRatio), height = Math.round(wrap.clientHeight * pixelRatio);
+    const wrap = orbitEl(wrapId);
+    const width = Math.round(wrap.clientWidth * pixelRatio);
+    const height = Math.round((id === "orbit-flat" ? canvas.clientHeight : wrap.clientHeight) * pixelRatio);
     if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
   }
 }
@@ -307,7 +317,7 @@ function projectFlat(sample, canvas) {
 }
 
 function routePoints() {
-  if (!orbitState.data) return [];
+  if (!isCurrentData()) return [];
   const end = Math.min(orbitState.data.end,
     orbitState.time + 3 * orbitState.data.info.orbital_period_s * 1000);
   const points = [sampleAt(orbitState.time)];
@@ -333,10 +343,10 @@ function drawMarker(context, point, color, label, radius = 5, labelOffset = [6, 
   context.fillText(label, point.x + radius + labelOffset[0], point.y + labelOffset[1]);
 }
 
-function drawOverlay() {
-  const canvas = orbitEl("orbit-overlay"), context = canvas.getContext("2d"), flat = orbitState.view === "2d";
-  context.clearRect(0, 0, canvas.width, canvas.height);
-  if (!orbitState.data) return;
+function drawOverlay(canvas, flat) {
+  const context = canvas.getContext("2d");
+  if (!flat) context.clearRect(0, 0, canvas.width, canvas.height);
+  if (!isCurrentData()) return;
   const points = routePoints(), current = points[0], projected = points.map((point) =>
     flat ? projectFlat(point, canvas) : project3d(point.xyz, canvas));
   const scale = Math.min(window.devicePixelRatio || 1, 2);
@@ -363,19 +373,79 @@ function drawOverlay() {
     drawMarker(context, point, color, station.id === "yonsei" ? "YONSEI / UHF" : "KARI / S",
       4 * scale, station.id === "yonsei" ? [7 * scale, -10 * scale] : [7 * scale, 14 * scale]);
   }
-  drawMarker(context, projected[0], "#f4f7fb", `NORAD ${orbitState.data.info.norad_id}`, 6 * scale);
+  drawMarker(context, projected[0], "#f4f7fb",
+    orbitState.data.info.norad_id === 25544 ? "ISS / NOW" : `NORAD ${orbitState.data.info.norad_id}`, 6 * scale);
   if (flat) {
     context.fillStyle = "#eff9fb"; context.font = `${11 * scale}px Arial`;
     context.fillText("N", 8 * scale, 15 * scale);
   }
 }
 
+function drawPolar(canvas, station, pass, now) {
+  const scale = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.width = Math.round(canvas.clientWidth * scale);
+  canvas.height = Math.round(canvas.clientHeight * scale);
+  const context = canvas.getContext("2d"), w = canvas.width, h = canvas.height;
+  const cx = w / 2, cy = h / 2, radius = Math.min(w * .37, h * .39);
+  const color = station.id === "yonsei" ? "#e5ae58" : "#8adca8";
+  context.clearRect(0, 0, w, h);
+  context.strokeStyle = "#386072"; context.lineWidth = scale;
+  for (const elevation of [0, 30, 60]) {
+    context.beginPath(); context.arc(cx, cy, radius * (90 - elevation) / 90, 0, Math.PI * 2); context.stroke();
+  }
+  context.beginPath(); context.moveTo(cx - radius, cy); context.lineTo(cx + radius, cy);
+  context.moveTo(cx, cy - radius); context.lineTo(cx, cy + radius); context.stroke();
+  context.fillStyle = "#b8d5df"; context.font = `${10 * scale}px Consolas,monospace`;
+  context.textAlign = "center"; context.textBaseline = "middle";
+  for (const [label, x, y] of [["N", cx, cy - radius - 11 * scale],
+    ["E", cx + radius + 11 * scale, cy], ["S", cx, cy + radius + 11 * scale],
+    ["W", cx - radius - 11 * scale, cy]]) context.fillText(label, x, y);
+  context.fillStyle = "#86a9b8"; context.textAlign = "left";
+  context.fillText("30°", cx + radius * 2 / 3 + 3 * scale, cy - 5 * scale);
+  context.fillText("60°", cx + radius / 3 + 3 * scale, cy - 5 * scale);
+  if (!pass) {
+    context.fillStyle = "#a9bdc6"; context.textAlign = "center";
+    context.fillText("예측 기간 내 PASS 없음", cx, cy + radius / 2);
+    return;
+  }
+  const point = (time) => {
+    const observation = stationObservation(station, sampleAt(time).xyz);
+    const distance = radius * (90 - clamp(observation.el, 0, 90)) / 90;
+    return { x: cx + Math.sin(rad(observation.az)) * distance,
+      y: cy - Math.cos(rad(observation.az)) * distance };
+  };
+  const times = [pass.aos];
+  for (let t = pass.aos + 30000; t < pass.los; t += 30000) times.push(t);
+  times.push(pass.los);
+  const points = times.map(point);
+  context.strokeStyle = color; context.lineWidth = 2.5 * scale;
+  context.beginPath(); context.moveTo(points[0].x, points[0].y);
+  for (const p of points.slice(1)) context.lineTo(p.x, p.y);
+  context.stroke();
+  for (const [label, p] of [["A", points[0]], ["L", points.at(-1)]]) {
+    context.fillStyle = color; context.beginPath(); context.arc(p.x, p.y, 3.5 * scale, 0, Math.PI * 2); context.fill();
+    context.fillStyle = "#e9f5f6"; context.textAlign = "left";
+    context.fillText(label, p.x + 5 * scale, p.y - 5 * scale);
+  }
+  if (pass.aos <= now && now < pass.los) {
+    const current = point(now);
+    context.fillStyle = "#ffffff"; context.strokeStyle = color; context.lineWidth = 2 * scale;
+    context.beginPath(); context.arc(current.x, current.y, 6 * scale, 0, Math.PI * 2);
+    context.fill(); context.stroke();
+  }
+}
+
 function updateOrbitUi() {
-  const has = !!orbitState.data, current = has ? sampleAt(orbitState.time) : null;
+  const has = isCurrentData(), current = has ? sampleAt(orbitState.time) : null;
   orbitEl("orbit-display-time").textContent = formattedUtc(orbitState.time);
-  orbitEl("orbit-time-mode").textContent = orbitState.live ? "UTC NOW" : has ? "PLAYBACK / FDS" : "EARTH / UTC";
-  if (!has) return;
-  orbitEl("orbit-timeline").value = String(Math.round((orbitState.time - orbitState.data.start) / 1000));
+  if (!has) {
+    orbitEl("orbit-coordinates").textContent = "—";
+    orbitEl("orbit-altitude").textContent = "—";
+    orbitEl("orbit-stations").textContent = "현재 유효한 FDS 입력이 없습니다.";
+    orbitEl("orbit-passes").textContent = "예측 데이터 없음";
+    if (orbitState.data) orbitEl("orbit-data-state").textContent = "현재 시각이 FDS 예측 범위 밖이거나 입력이 72시간 이상 경과했습니다.";
+    return;
+  }
   orbitEl("orbit-coordinates").textContent = `${Math.abs(current.lat).toFixed(3)}°${current.lat >= 0 ? "N" : "S"} · ${Math.abs(current.lon).toFixed(3)}°${current.lon >= 0 ? "E" : "W"}`;
   orbitEl("orbit-altitude").textContent = `${(current.alt / 1000).toFixed(1)} km`;
   const stationContainer = orbitEl("orbit-stations"); stationContainer.replaceChildren();
@@ -389,10 +459,20 @@ function updateOrbitUi() {
     badge.textContent = contact ? "CONTACT" : "NO CONTACT";
     title.append(name, badge);
     const detail = document.createElement("p");
-    detail.textContent = `표시 고각 ≈${stationElevation(station, current.xyz).toFixed(1)}° / 최소 ${station.minimum_elevation_deg.toFixed(1)}°`;
+    const observation = stationObservation(station, current.xyz);
+    detail.textContent = `현재 방위 ${observation.az.toFixed(1)}° · 고각 ≈${observation.el.toFixed(1)}° / 최소 ${station.minimum_elevation_deg.toFixed(1)}°`;
     const note = document.createElement("small");
-    note.textContent = contact ? `LOS ${formattedUtc(contact.los)}` : "FDS PASS 구간 밖";
-    section.append(title, detail, note); stationContainer.append(section);
+    const next = contact || station.passes.find((pass) => pass.aos > orbitState.time);
+    note.textContent = contact ? `현재 PASS · LOS ${formattedUtc(contact.los)}` :
+      next ? `다음 PASS · AOS ${formattedUtc(next.aos)}` : "예측 기간 내 PASS 없음";
+    const polar = document.createElement("canvas"); polar.className = "orbit-polar";
+    polar.setAttribute("aria-label", `${name.textContent} ${contact ? "현재" : "다음"} PASS 방위각·고각 polar plot`);
+    const caption = document.createElement("div"); caption.className = "orbit-polar-caption";
+    const first = document.createElement("span"); first.textContent = "A = AOS · L = LOS";
+    const second = document.createElement("span"); second.textContent = contact ? "● 현재 위치" : "다음 경로";
+    caption.append(first, second);
+    section.append(title, detail, note, polar, caption); stationContainer.append(section);
+    drawPolar(polar, station, next, orbitState.time);
   }
   const passes = orbitState.stations.flatMap((station) => station.passes
     .filter((pass) => pass.los > orbitState.time)
@@ -414,27 +494,19 @@ function updateOrbitUi() {
 
 function orbitRender(forceUi = false) {
   sizeCanvases();
-  const sample = orbitState.data ? sampleAt(orbitState.time) : null;
+  const sample = isCurrentData() ? sampleAt(orbitState.time) : null;
   const sun = sample ? sample.sun : orbitSunApprox(orbitState.time);
-  if (orbitState.view === "3d") drawGlobe(sun); else drawFlat(sun, orbitState.time);
-  drawOverlay();
+  drawGlobe(sun);
+  drawOverlay(orbitEl("orbit-overlay"), false);
+  drawFlat(sun, orbitState.time);
+  drawOverlay(orbitEl("orbit-flat"), true);
   if (forceUi || performance.now() - orbitState.lastUi > 500) {
     updateOrbitUi(); orbitState.lastUi = performance.now();
   }
 }
 
 function orbitAnimation(now) {
-  const delta = orbitState.lastFrame ? Math.min(now - orbitState.lastFrame, 1000) : 0;
-  orbitState.lastFrame = now;
-  if (orbitState.live && orbitState.data) {
-    orbitState.time = Date.now();
-    if (orbitState.time > orbitState.data.end) orbitState.live = false;
-  } else if (orbitState.playing && orbitState.data) {
-    orbitState.time = Math.min(orbitState.data.end, orbitState.time + delta * orbitState.speed);
-    if (orbitState.time >= orbitState.data.end) {
-      orbitState.playing = false; orbitEl("orbit-play").textContent = "재생";
-    }
-  } else if (!orbitState.data) orbitState.time = Date.now();
+  orbitState.time = Date.now();
   if (now - (orbitAnimation.lastPaint || 0) >= 50) {
     orbitRender(); orbitAnimation.lastPaint = now;
   }
@@ -442,7 +514,7 @@ function orbitAnimation(now) {
 }
 
 async function readOrbitServer() {
-  orbitEl("orbit-data-state").textContent = "서버 FDS 산출물 확인 중…";
+  if (!orbitState.data) orbitEl("orbit-data-state").textContent = "서버 FDS 산출물 확인 중…";
   try {
     const response = await fetch("/api/fds/orbit", { credentials: "same-origin", cache: "no-store" });
     if (response.status === 401) { window.location.assign("/login"); return; }
@@ -450,76 +522,34 @@ async function readOrbitServer() {
     if (Number(response.headers.get("content-length") || 0) > 4 * 1024 * 1024) {
       throw new Error("FDS 결과 파일이 너무 큽니다.");
     }
-    setOrbitData(await response.json(), "서버 FDS 결과");
+    const input = await response.json();
+    if (!orbitState.data || input.generated_utc !== orbitState.data.info.generated_utc ||
+        input.input_sha256 !== orbitState.data.info.input_sha256 ||
+        input.start_utc !== orbitState.data.info.start_utc) {
+      setOrbitData(input, "서버 FDS 결과");
+    }
   } catch (error) {
-    orbitEl("orbit-data-state").textContent = error.message + " 결과 파일을 선택해 확인할 수도 있습니다.";
+    orbitEl("orbit-data-state").textContent = error.message;
   }
 }
 
-function setOrbitView(mode) {
-  orbitState.view = mode;
-  orbitEl("orbit-3d").setAttribute("aria-pressed", String(mode === "3d"));
-  orbitEl("orbit-2d").setAttribute("aria-pressed", String(mode === "2d"));
-  orbitEl("orbit-earth").hidden = mode !== "3d";
-  orbitEl("orbit-flat").hidden = mode !== "2d";
-  orbitEl("orbit-center").disabled = mode !== "3d";
-  orbitEl("orbit-zoom-in").disabled = mode !== "3d";
-  orbitEl("orbit-zoom-out").disabled = mode !== "3d";
-  orbitRender(true);
-}
-
 function orbitControls() {
-  orbitEl("orbit-3d").addEventListener("click", () => setOrbitView("3d"));
-  orbitEl("orbit-2d").addEventListener("click", () => setOrbitView("2d"));
   orbitEl("orbit-center").addEventListener("click", () => {
     const sample = sampleAt(orbitState.time);
-    if (sample) { orbitState.lon = sample.lon; orbitState.lat = sample.lat; orbitRender(true); }
+    if (sample && isCurrentData()) { orbitState.lon = sample.lon; orbitState.lat = sample.lat; orbitRender(true); }
   });
   orbitEl("orbit-zoom-in").addEventListener("click", () => { orbitState.zoom = clamp(orbitState.zoom * 1.2, .7, 1.8); orbitRender(); });
   orbitEl("orbit-zoom-out").addEventListener("click", () => { orbitState.zoom = clamp(orbitState.zoom / 1.2, .7, 1.8); orbitRender(); });
-  orbitEl("orbit-now").addEventListener("click", () => {
-    if (!orbitState.data || Date.now() < orbitState.data.start || Date.now() > orbitState.data.end ||
-        Date.now() - orbitState.data.inputEpoch >= 72 * 3600000) {
-      orbitEl("orbit-data-state").textContent = "현재 시각과 72시간 이내 입력을 포함하는 FDS 결과가 없습니다.";
-      return;
-    }
-    orbitState.live = true; orbitState.playing = false;
-    orbitEl("orbit-play").textContent = "재생"; orbitRender(true);
-  });
-  orbitEl("orbit-play").addEventListener("click", () => {
-    if (!orbitState.data) return;
-    orbitState.live = false;
-    if (orbitState.time >= orbitState.data.end) orbitState.time = orbitState.data.start;
-    orbitState.playing = !orbitState.playing;
-    orbitEl("orbit-play").textContent = orbitState.playing ? "일시정지" : "재생";
-  });
-  orbitEl("orbit-speed").addEventListener("change", (event) => { orbitState.speed = Number(event.target.value); });
-  orbitEl("orbit-timeline").addEventListener("input", (event) => {
-    if (!orbitState.data) return;
-    orbitState.live = false; orbitState.playing = false;
-    orbitEl("orbit-play").textContent = "재생";
-    orbitState.time = orbitState.data.start + Number(event.target.value) * 1000;
-    orbitRender(true);
-  });
   orbitEl("orbit-reload").addEventListener("click", readOrbitServer);
-  orbitEl("orbit-file").addEventListener("change", async (event) => {
-    const file = event.target.files[0];
-    if (!file) return;
-    try {
-      if (file.size > 4 * 1024 * 1024) throw new Error("4 MB 이하의 FDS 결과만 읽을 수 있습니다.");
-      setOrbitData(JSON.parse(await file.text()), "로컬 파일");
-    } catch (error) { orbitEl("orbit-data-state").textContent = error.message; }
-    event.target.value = "";
-  });
   const wrap = orbitEl("orbit-canvas-wrap");
   let dragging = null;
   wrap.addEventListener("pointerdown", (event) => {
-    if (orbitState.view !== "3d" || event.target.tagName !== "CANVAS") return;
+    if (event.target.tagName !== "CANVAS") return;
     dragging = { x: event.clientX, y: event.clientY };
     wrap.setPointerCapture(event.pointerId);
   });
   wrap.addEventListener("pointermove", (event) => {
-    if (!dragging || orbitState.view !== "3d") return;
+    if (!dragging) return;
     orbitState.lon -= (event.clientX - dragging.x) * .27;
     orbitState.lat = clamp(orbitState.lat + (event.clientY - dragging.y) * .27, -85, 85);
     dragging = { x: event.clientX, y: event.clientY };
@@ -528,22 +558,21 @@ function orbitControls() {
   wrap.addEventListener("pointerup", () => { dragging = null; });
   wrap.addEventListener("pointercancel", () => { dragging = null; });
   wrap.addEventListener("wheel", (event) => {
-    if (orbitState.view !== "3d") return;
     event.preventDefault(); orbitState.zoom = clamp(orbitState.zoom * (event.deltaY < 0 ? 1.1 : .9), .7, 1.8);
     orbitRender();
   }, { passive: false });
   new ResizeObserver(() => orbitRender()).observe(wrap);
+  new ResizeObserver(() => orbitRender()).observe(orbitEl("orbit-flat-wrap"));
 }
 
 async function initOrbitViewer() {
   orbitControls();
   try {
     if (!setupGlobe()) {
-      orbitEl("orbit-data-state").textContent = "이 브라우저에서는 3D 그래픽을 사용할 수 없어 2D 지도로 표시합니다.";
-      setOrbitView("2d"); orbitEl("orbit-3d").disabled = true;
+      orbitEl("orbit-data-state").textContent = "이 브라우저에서는 3D 그래픽을 사용할 수 없습니다. 2D 지상궤적은 계속 표시합니다.";
     }
   } catch (_) {
-    setOrbitView("2d"); orbitEl("orbit-3d").disabled = true;
+    orbitEl("orbit-data-state").textContent = "3D 그래픽을 초기화하지 못했습니다. 2D 지상궤적은 계속 표시합니다.";
   }
   orbitState.image.onload = () => {
     if (orbitState.gl) {
@@ -556,4 +585,5 @@ async function initOrbitViewer() {
   orbitState.image.src = "/assets/earth-blue-marble-october.jpg";
   requestAnimationFrame(orbitAnimation);
   await readOrbitServer();
+  setInterval(readOrbitServer, 60000);
 }
