@@ -8,6 +8,7 @@ import tempfile
 import threading
 import time
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -136,6 +137,61 @@ class SyntheticTmReceiverTests(unittest.TestCase):
         self.receiver.ingest(self._gnss(182, STAMP + 300_000),
                              received_ms=STAMP + 300_000)
         self.assertEqual(len(list(self.inbox.glob("*.manifest.json"))), 2)
+
+    def test_ros_graph_keeps_sixty_minutes_of_five_second_samples(self):
+        def utc(milliseconds):
+            return datetime.fromtimestamp(milliseconds / 1000, timezone.utc).strftime(
+                "%Y-%m-%dT%H:%M:%SZ")
+
+        limits = load_limits(LIMITS)
+        limits["sensors"]["AOCS_STATE.control_mode"] = {
+            "id": "sim_control_mode", "name": "가상 제어 모드", "group": "AOCS",
+            "unit": "mode", "lower": 0, "upper": 4,
+        }
+        self.receiver = TmReceiver(self.snapshot, self.inbox, limits)
+        sequence = 0
+        for index in range(721):
+            stamp = STAMP + index * 5000
+            self.receiver.ingest(self._eps(sequence, stamp), received_ms=stamp)
+            sequence += 1
+            if index % 12 == 0:  # One attitude sample per minute across the hour.
+                self.receiver.ingest(self._aocs(sequence, stamp), received_ms=stamp)
+                sequence += 1
+        preview = load_snapshot(self.snapshot)
+        self.assertLessEqual(self.snapshot.stat().st_size, 1024 * 1024)
+        for sensor in preview["sensors"]:
+            self.assertEqual(len(sensor["samples"]),
+                             61 if sensor["id"] == "sim_control_mode" else 721)
+            self.assertEqual(sensor["samples"][0]["utc"],
+                             utc(STAMP))
+            self.assertEqual(sensor["samples"][-1]["utc"],
+                             utc(STAMP + 3_600_000))
+        self.assertEqual(preview["attitude"]["utc"], utc(STAMP + 3_600_000))
+        self.assertEqual(preview["attitude"]["frame"], ATTITUDE_FRAME)
+
+        self.receiver.ingest(self._eps(sequence, STAMP + 721 * 5000),
+                             received_ms=STAMP + 721 * 5000)
+        preview = load_snapshot(self.snapshot)
+        self.assertEqual(len(preview["sensors"][0]["samples"]), 721)
+        self.assertEqual(preview["sensors"][0]["samples"][0]["utc"],
+                         utc(STAMP + 5000))
+        self.assertLessEqual(len(self.receiver.sensor_history["EPS_PDU1"]), 721)
+
+    def test_ros_graph_expires_old_samples_and_restarts_with_new_history(self):
+        self.receiver.ingest(self._eps(0, STAMP), received_ms=STAMP)
+        self.receiver.ingest(self._eps(1, STAMP + 5000),
+                             received_ms=STAMP + 5000)
+        after_gap = STAMP + 3_600_000 + 10_000
+        self.receiver.ingest(self._eps(2, after_gap), received_ms=after_gap)
+        preview = load_snapshot(self.snapshot)
+        self.assertEqual(len(preview["sensors"][0]["samples"]), 1)
+
+        restarted = TmReceiver(self.snapshot, self.inbox, load_limits(LIMITS))
+        restarted.ingest(self._eps(0, after_gap + 5000),
+                         received_ms=after_gap + 5000)
+        preview = load_snapshot(self.snapshot)
+        self.assertEqual(len(preview["sensors"][0]["samples"]), 1)
+        self.assertEqual(len(restarted.sensor_history["EPS_PDU1"]), 1)
 
     def test_replay_wrong_identity_bad_crc_and_tc_are_rejected(self):
         first = self._eps(65535)

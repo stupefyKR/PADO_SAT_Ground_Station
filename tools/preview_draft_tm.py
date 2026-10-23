@@ -28,9 +28,14 @@ def _iso(milliseconds: int) -> str:
     return datetime.fromtimestamp(milliseconds / 1000, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def build_snapshot(packets: list[bytes], limits: dict[str, Any], *, received_ms: int) -> dict:
-    if not isinstance(packets, list) or not 1 <= len(packets) <= 256 or \
-            type(received_ms) is not int:
+MAX_SIM_HISTORY_PDUS = 3 * 721 + 1  # Up to one hour at the simulator's five-second cadence.
+
+
+def build_snapshot(packets: list[bytes], limits: dict[str, Any], *, received_ms: int,
+                   max_packets: int = 256) -> dict:
+    if (type(max_packets) is not int or not 1 <= max_packets <= MAX_SIM_HISTORY_PDUS or
+            not isinstance(packets, list) or not 1 <= len(packets) <= max_packets or
+            type(received_ms) is not int):
         raise ValueError("bounded packet list and received UTC required")
     if not isinstance(limits, dict) or set(limits) != {"sensors"} or \
             not isinstance(limits["sensors"], dict) or \

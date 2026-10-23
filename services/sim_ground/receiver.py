@@ -28,7 +28,8 @@ from typing import Any
 
 from tools.bridge_draft_gnss import bridge
 from tools.pado_packet_codec import PacketError, decode, gnss_to_fds_properties
-from tools.preview_draft_tm import build_snapshot, publish_snapshot
+from tools.preview_draft_tm import (MAX_SIM_HISTORY_PDUS, build_snapshot,
+                                    publish_snapshot)
 from tools.run_fds_pipeline import verified_pair
 
 
@@ -36,7 +37,8 @@ FRAME_LENGTH = struct.Struct(">I")
 MIN_PDU_BYTES = 24
 MAX_PDU_BYTES = 200
 MAX_AGE_MS = 120_000
-MAX_BUFFERED_PDUS = 180
+HISTORY_WINDOW_MS = 60 * 60 * 1000
+MAX_HISTORY_PER_SOURCE = 721  # 60 minutes inclusive at the simulator's 5 s cadence.
 GNSS_BRIDGE_PERIOD_MS = 300_000
 MAX_N11_PAIRS = 288  # 24 hours at the five-minute bridge cadence.
 SATELLITE_NORAD_ID = 99999
@@ -166,7 +168,13 @@ class TmReceiver:
         self.snapshot = snapshot
         self.n11_inbox = n11_inbox
         self.limits = limits
-        self.packets: deque[bytes] = deque(maxlen=MAX_BUFFERED_PDUS)
+        # Keep only packet families used by the explicitly configured sensors.
+        # GNSS can still feed N11 without consuming the graph history budget.
+        self.sensor_sources = {key.split(".", 1)[0] for key in limits["sensors"]}
+        self.sensor_history: dict[str, deque[tuple[int, bytes]]] = {
+            name: deque(maxlen=MAX_HISTORY_PER_SOURCE) for name in self.sensor_sources
+        }
+        self.latest_attitude: tuple[int, bytes] | None = None
         self.last_sequence: int | None = None
         self.last_stamp_ms: int | None = None
         self.last_stamp_by_name: dict[str, int] = {}
@@ -281,16 +289,36 @@ class TmReceiver:
             if abs(math.hypot(*q) - 1.0) > 0.02:
                 raise ReceiverError("non-unit synthetic attitude quaternion")
 
-        candidate = list(self.packets) + [packet]
-        candidate = candidate[-MAX_BUFFERED_PDUS:]
-        if self._has_all_sensor_sources(candidate):
-            preview = build_snapshot(candidate, self.limits,
-                                     received_ms=received_second_ms)
-            if preview["attitude"] is not None:
-                preview["attitude"]["frame"] = ATTITUDE_FRAME
-            publish_snapshot(preview, self.snapshot)
+        if decoded["name"] in self.sensor_sources or decoded["name"] == "AOCS_STATE":
+            cutoff = stamp - HISTORY_WINDOW_MS
+            candidate_by_source = {
+                name: [(time_ms, pdu) for time_ms, pdu in history
+                       if time_ms >= cutoff]
+                for name, history in self.sensor_history.items()
+            }
+            if decoded["name"] in self.sensor_sources:
+                rows = candidate_by_source[decoded["name"]]
+                rows.append((stamp, packet))
+                candidate_by_source[decoded["name"]] = rows[-MAX_HISTORY_PER_SOURCE:]
+            attitude = ((stamp, packet) if decoded["name"] == "AOCS_STATE" else
+                        self.latest_attitude)
+            candidate = [pdu for rows in candidate_by_source.values()
+                         for _, pdu in rows]
+            if attitude is not None and attitude[0] >= cutoff and \
+                    "AOCS_STATE" not in self.sensor_sources:
+                candidate.append(attitude[1])
+            if all(candidate_by_source.values()):
+                preview = build_snapshot(candidate, self.limits,
+                                         received_ms=received_second_ms,
+                                         max_packets=MAX_SIM_HISTORY_PDUS)
+                if preview["attitude"] is not None:
+                    preview["attitude"]["frame"] = ATTITUDE_FRAME
+                publish_snapshot(preview, self.snapshot)
+            for name, rows in candidate_by_source.items():
+                self.sensor_history[name] = deque(rows, maxlen=MAX_HISTORY_PER_SOURCE)
+            self.latest_attitude = attitude if attitude is not None and \
+                attitude[0] >= cutoff else None
 
-        self.packets.append(packet)
         self.last_sequence = decoded["sequence"]
         self.last_stamp_ms = stamp
         self.last_stamp_by_name[decoded["name"]] = stamp
@@ -304,11 +332,6 @@ class TmReceiver:
             prune_simulator_n11(self.n11_inbox, manifest, keep=MAX_N11_PAIRS)
             self.last_gnss_bridge_ms = stamp
         return decoded
-
-    def _has_all_sensor_sources(self, packets: list[bytes]) -> bool:
-        required = {name.split(".", 1)[0] for name in self.limits["sensors"]}
-        present = {decode(packet)["name"] for packet in packets}
-        return required <= present
 
     def process_connection(self, connection: socket.socket) -> int:
         """Process one duplex stream until clean EOF; invalid streams close."""

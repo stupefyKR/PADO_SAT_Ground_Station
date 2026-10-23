@@ -96,8 +96,9 @@ PDR의 `sp_burn`은 CDHS 명령 후보 목록에만 남아 있고 인자가 미�
 | --- | --- |
 | [초안 카탈로그](../../interfaces/pado_packets/draft_v0.json), [오프라인 코덱](../../tools/pado_packet_codec.py) | 비운용 encode/decode·길이·CRC·full HK 분할 및 GNSS→FDS 변환 |
 | [GNSS 시험 브리지](../../tools/bridge_draft_gnss.py) | 검증된 초안 `GNSS_PVT` 바이너리 1개를 N11 시험 수신함의 본문+manifest로 게시. 실제 RF/OBC 디코더 아님 |
-| [ROS 시험 TM 변환기](../../tools/preview_draft_tm.py) | 초안 TM 바이너리와 명시적 시험 한계표로 `TEST_ONLY_TM_SNAPSHOT` 생성·원자적 게시. ROS API 재검증 뒤 화면 자동 갱신. 임의 운용 한계 추정 없음 |
-| MPS 웹·후보 저장소 | 초안 58종 검색, 필드가 정의된 36종만 PASS별 이름과 순서를 시험 초안으로 저장. 인자·충돌·승인·송신 없음 |
+| [ROS 시험 TM 변환기](../../tools/preview_draft_tm.py) | 초안 TM 바이너리와 명시적 시험 한계표로 `TEST_ONLY_TM_SNAPSHOT` 생성·원자적 게시. 시뮬레이터는 그래프 대상 PDU를 최근 UTC 60분·계열별 최대 721개까지 메모리에 보관하고 ROS API 재검증 뒤 화면을 갱신. 임의 운용 한계 추정이나 장기 이력 보존 없음 |
+| MPS 웹·시험 시퀀스 | 초안 58종 검색. 필드가 정의된 명령의 이름·순서·인자·PASS AOS 기준 시각 오프셋을 연세대 UHF PASS별 비운용 시퀀스로 저장. 미래 PASS의 저장본은 포털 재검증 후 ROS `SIM ONLY`로 명시적으로 전달 가능. 충돌 판정·운용 승인 없음 |
+| ROS·가상 위성 TC/ACK | ROS의 별도 `SIM ONLY` 예약이 시각에 맞춰 허용된 읽기 전용 초안 TC를 비공개 Unix socket과 Docker 내부 TCP로 한 번 전송. 가상 위성 `COMMAND_RESULT` TM의 명령 ID·순번·결과를 확인해 예약 상태로 표시. 실제 승인·인증·RF 송출이나 자동 재전송 없음 |
 | MPS/ROS 운용 명령·TM DB | 비어 있음. 실제 TC 송신과 미검증 TM 표시를 차단 |
 | FDS | 검증된 GNSS N11 및 TLE 기반 궤도 예측 기능 존재; 기동 기능 없음. 실제 위성 GNSS TM 추출 경로는 미연결 |
 | DGS-GS/AX100/FlatSat | 초안 PDU의 실제 링크·인증·ACK 검증 전 |

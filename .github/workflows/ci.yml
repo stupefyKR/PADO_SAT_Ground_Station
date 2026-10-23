@@ -79,8 +79,14 @@ jobs:
     steps:
       - name: Check out exact commit
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-      - name: Install Java and Maven
-        run: sudo apt-get update && sudo apt-get install -y openjdk-17-jdk-headless maven unzip libssl-dev
+      - name: Verify runner Java, Maven, and native dependencies
+        run: |
+          set -euo pipefail
+          java -version
+          javac -version
+          mvn -version
+          command -v unzip
+          test -f /usr/include/openssl/sha.h
       - name: Fetch pinned offline physical data
         run: |
           set -euo pipefail
