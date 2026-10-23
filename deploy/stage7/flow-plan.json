@@ -1,0 +1,242 @@
+{
+  "version": 1,
+  "scope": "single-linux-vm-disposable-docker-probes",
+  "n2_connections": [
+    {
+      "id": "N03",
+      "reference": "F08",
+      "source": "dgs-net",
+      "destination": "space-track",
+      "port": 443,
+      "transport": "HTTPS"
+    },
+    {
+      "id": "N05",
+      "reference": "F07",
+      "source": "fds",
+      "destination": "dgs-net",
+      "port": 2222,
+      "transport": "SFTP_PULL"
+    },
+    {
+      "id": "N06",
+      "reference": "F04",
+      "source": "ros",
+      "destination": "dgs-gs",
+      "port": 7001,
+      "transport": "TLS_STREAM"
+    },
+    {
+      "id": "N07",
+      "reference": "F04",
+      "source": "ros",
+      "destination": "dgs-gs",
+      "port": 7001,
+      "transport": "TLS_STREAM"
+    },
+    {
+      "id": "N08",
+      "reference": "F06",
+      "source": "fds",
+      "destination": "dgs-gs",
+      "port": 2222,
+      "transport": "SFTP_PUSH"
+    },
+    {
+      "id": "N09",
+      "reference": "F19",
+      "source": "dgs-archive",
+      "destination": "dgs-gs",
+      "port": 2222,
+      "transport": "SFTP_PULL"
+    },
+    {
+      "id": "N10",
+      "reference": "F10",
+      "source": "ros",
+      "destination": "mps",
+      "port": 2222,
+      "transport": "SFTP_PUSH"
+    },
+    {
+      "id": "N11",
+      "reference": "F10",
+      "source": "ros",
+      "destination": "fds",
+      "port": 2222,
+      "transport": "SFTP_PUSH"
+    },
+    {
+      "id": "N12",
+      "reference": "F10",
+      "source": "mps",
+      "destination": "ros",
+      "port": 2222,
+      "transport": "SFTP_PUSH"
+    },
+    {
+      "id": "N13",
+      "reference": "F10",
+      "source": "fds",
+      "destination": "mps",
+      "port": 2222,
+      "transport": "SFTP_PUSH"
+    },
+    {
+      "id": "N14",
+      "reference": "F10",
+      "source": "ros",
+      "destination": "dgs-archive",
+      "port": 2222,
+      "transport": "SFTP_PUSH"
+    },
+    {
+      "id": "N15",
+      "reference": "F10",
+      "source": "fds",
+      "destination": "dgs-archive",
+      "port": 2222,
+      "transport": "SFTP_PUSH"
+    },
+    {
+      "id": "N16",
+      "reference": "F12",
+      "source": "sdc",
+      "destination": "dgs-archive",
+      "port": 2222,
+      "transport": "SFTP_PUSH"
+    },
+    {
+      "id": "N17",
+      "reference": "F12",
+      "source": "sdc",
+      "destination": "dgs-archive",
+      "port": 2222,
+      "transport": "SFTP_PULL"
+    },
+    {
+      "id": "N18",
+      "reference": "F10",
+      "source": "dgs-archive",
+      "destination": "mps",
+      "port": 2222,
+      "transport": "SFTP_PUSH"
+    },
+    {
+      "id": "N19",
+      "reference": "F11",
+      "source": "ros",
+      "destination": "dgs-archive",
+      "port": 2222,
+      "transport": "SFTP_PUSH"
+    },
+    {
+      "id": "N20",
+      "reference": "F11",
+      "source": "mps",
+      "destination": "dgs-archive",
+      "port": 2222,
+      "transport": "SFTP_PUSH"
+    },
+    {
+      "id": "N21",
+      "reference": "F11",
+      "source": "fds",
+      "destination": "dgs-archive",
+      "port": 2222,
+      "transport": "SFTP_PUSH"
+    }
+  ],
+  "probe_networks": [
+    {
+      "name": "pair_dgs_archive__dgs_gs",
+      "members": [
+        "dgs-archive",
+        "dgs-gs"
+      ]
+    },
+    {
+      "name": "pair_dgs_archive__fds",
+      "members": [
+        "dgs-archive",
+        "fds"
+      ]
+    },
+    {
+      "name": "pair_dgs_archive__mps",
+      "members": [
+        "dgs-archive",
+        "mps"
+      ]
+    },
+    {
+      "name": "pair_dgs_archive__ros",
+      "members": [
+        "dgs-archive",
+        "ros"
+      ]
+    },
+    {
+      "name": "pair_dgs_gs__fds",
+      "members": [
+        "dgs-gs",
+        "fds"
+      ]
+    },
+    {
+      "name": "pair_dgs_gs__ros",
+      "members": [
+        "dgs-gs",
+        "ros"
+      ]
+    },
+    {
+      "name": "pair_dgs_net__fds",
+      "members": [
+        "dgs-net",
+        "fds"
+      ]
+    },
+    {
+      "name": "pair_fds__mps",
+      "members": [
+        "fds",
+        "mps"
+      ]
+    },
+    {
+      "name": "pair_fds__ros",
+      "members": [
+        "fds",
+        "ros"
+      ]
+    },
+    {
+      "name": "pair_mps__portal",
+      "members": [
+        "mps",
+        "portal"
+      ]
+    },
+    {
+      "name": "pair_mps__ros",
+      "members": [
+        "mps",
+        "ros"
+      ]
+    },
+    {
+      "name": "pair_portal__ros",
+      "members": [
+        "portal",
+        "ros"
+      ]
+    }
+  ],
+  "publications": [],
+  "limitations": [
+    "A shared bridge permits both peers to initiate connections; direction requires service and peer policy.",
+    "The Docker host and privileged containers can reach or alter bridge networks.",
+    "No external ICD, SDC, NAS, registry or portal service is deployed by this probe."
+  ]
+}

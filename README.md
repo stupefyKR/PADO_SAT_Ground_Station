@@ -2,7 +2,7 @@
 
 ## 개요
 
-경희대학교 PWNLAB의 PADO-SAT 큐브위성 지상국 소프트웨어 저장소입니다. 작업 폴더 안의 `pado-gs/`가 Git 저장소 루트입니다. 개발방향은 온프레미스 VM과 컨테이너를 배포 단위로 삼고, VM을 보안 경계로 사용합니다. 단계 1의 인터페이스 기준선, 단계 2의 공통 통신 라이브러리, 단계 3의 시험용 TM 수신 경로, 단계 4의 비운용 MPS 모델, 단계 5의 시험용 TC 경로와 단계 6의 내부 파일 교환 기준선이 있습니다. 위성에 송신하거나 실제 외부 지상국에 연결하는 실행 기능은 없습니다.
+경희대학교 PWNLAB의 PADO-SAT 큐브위성 지상국 소프트웨어 저장소입니다. 작업 폴더 안의 `pado-gs/`가 Git 저장소 루트입니다. 2026-10-23 사용자 결정에 따라 실제 운영은 **Linux VM 한 대에서 서브시스템별 Docker 컨테이너**로 구성합니다. 단계 1의 인터페이스 기준선부터 단계 6의 비운용 파일 교환 기준선까지 있으며, 단계 7의 Docker 연결·로그 검증을 진행 중입니다. 위성에 송신하거나 실제 외부 지상국에 연결하는 실행 기능은 없습니다.
 
 GitHub 원격 저장소는 비공개로 설정되어 있습니다(2026-10-21 확인). 초기 푸시 뒤 공개 설정을 발견해 즉시 비공개로 전환한 기록은 [진행 기록](docs/PROGRESS.md)에 남겼습니다.
 
@@ -14,7 +14,7 @@ GitHub 원격 저장소는 비공개로 설정되어 있습니다(2026-10-21 확
 |---|---|---|---|
 | 초기 구성 | 저장소·빌드·시험 골격 | 완료 | Windows 일반·ASan 시험 통과; 이후 단계 1에서 Linux CI 검증 |
 | 1 | `interfaces/`, `libgs/` | 완료(기준선) | N2 21개 원본 화살표, 승인 흐름 21개, Windows·Linux 매니페스트·로그·파일 교환 시험 통과; TC/TM 실값은 ICD 대기 |
-| 2 | VM 간 통신 기반 | 완료(개발 기준선) | VMware Linux VM의 Docker 격리 네트워크에서 mTLS·SFTP 송수신/거부 시험 통과; 실제 VM 배포 검증은 단계 7 |
+| 2 | 서브시스템 간 통신 기반 | 완료(개발 기준선) | VMware Linux VM의 Docker 격리 네트워크에서 mTLS·SFTP 송수신/거부 시험 통과 |
 | 3 | TM 수신 경로 | 완료(시뮬레이터 기준선) | `fake_kari` → `dgs-gs` → `ros-core`; 실제 ICD·TM 해석 대기 |
 | 4-1 | MPS 입력·카탈로그 기준선 | 완료(비운용 기준선) | 빈 명령 DB만 판독; 내부 패스 모델 검증, 실제 FDS 형식 대기 |
 | 4-2 | 시퀀스 초안·버전 이력 | 완료(비운용 기준선) | 패스·DB 버전 결합, 불변 이력, 동시 수정 거부; 영속 저장소 미연결 |
@@ -23,13 +23,13 @@ GitHub 원격 저장소는 비공개로 설정되어 있습니다(2026-10-21 확
 | 4-5 | Mission Request·업링크 반입 | 완료(비운용 시험 기준선) | 두 단계 출처 체인·해시·버전·권한·FlatSat 기록 ID 검사; 외부 본문 형식 대기 |
 | 5 | TC 검증→승인→signer→tc-gate→`fake_sat` ACK | 완료(비운용 시험 기준선) | 위험 TC 별도 lead 승인·게이트 차단 시험 통과; 실제 명령·프레임·HMAC 사양 대기 |
 | 6 | FDS·DGS-NET·아카이브·SDC 교환 | 완료(비운용 파일 교환 기준선) | N05·N08–N18 경로·유형·SFTP 시험 통과; 외부 수집·Orekit·영속 보관은 미구현 |
-| 7 | 실제 서버·VM 배포 기반 | 대기 | 장비·네트워크 확정 후 검증 |
+| 7 | 단일 VM의 Docker·UFW 배포 기반 | 진행 중 | N2 기반 연결 쌍·Docker 격리·journald·호스트 UFW 시험 통과; 운용 서비스 배포와 연결 시작 방향 검증 남음 |
 | 8 | 백업·복구·퍼징·핵심 서비스 보안 시험 | 대기 | |
 | 9 | 포털 인증·ROS/MPS 웹 UI | 대기 | 관제용 PC에서 포털로 접속 |
 
 ## 아키텍처
 
-개발방향 4.1절의 VM은 `vm-portal`, `vm-ros`, `vm-mps`, `vm-fds`, `vm-dgs-archive`, `vm-dgs-gs`, `vm-dgs-net`, `vm-mgmt`입니다. 이 저장소에는 아직 VM 배포 설정이 없습니다.
+이전 개발방향 4.1절의 VM 8대 구성은 [결정 #16](docs/DECISIONS.md)으로 대체했습니다. 목표 구조는 Linux VM 한 대에 Portal, ROS, MPS, FDS, DGS-Archive, DGS-GS, DGS-NET 컨테이너를 두는 것입니다. [단계 7 배포 기준선](deploy/stage7/README.md)의 Compose 파일은 네트워크 검증용이며 운용 앱 배포 파일은 아직 아닙니다.
 
 계획된 운용 TC 경로는 MPS 시퀀스 승인 → `ros-core` 명령 DB 재검증 → `ros-signer` 승인 확인·HMAC → TLS → `dgs-gs` `tc-gate` → `kari-adapter`입니다. 현재 단계 5는 합성 프레임을 이용한 모듈 간 시험 경로이며 실제 송출 경로는 구현되지 않았습니다. [개발방향 12장](docs/PADO-SAT_지상국_개발방향.md), [MPS 시험 계약](interfaces/mps/test_contract.md), [TC 시험 계약](interfaces/tc/test_contract.md)을 참고하세요.
 
@@ -42,10 +42,10 @@ GitHub 원격 저장소는 비공개로 설정되어 있습니다(2026-10-21 확
 | `third_party/` | cJSON v1.7.19 소스·라이선스·해시 |
 | `services/` | 서브시스템 서비스 |
 | `web/` | 로컬 웹 리소스 |
-| `docker/`, `deploy/` | 컨테이너 및 VM 배포 설정 |
+| `docker/`, `deploy/` | 컨테이너 및 단일 VM 배포 설정 |
 | `sim/` | 외부 연동 시뮬레이터 |
 | `tests/` | 단위·통합 시험 |
-| `tools/` | 검사·운영 도구; 현재 비밀정보 검사만 있음 |
+| `tools/` | 인터페이스·비밀정보·배포 흐름 검사 및 호스트 감사 도구 |
 
 ## 빌드와 시험
 
@@ -104,7 +104,7 @@ python3 tools/check_secrets.py --staged
 python3 tests/container/run_network.py --build
 ```
 
-이 시험은 VMware의 단일 Linux VM 안에서 수행했습니다. 서브시스템별 실제 VM 분리, 호스트 UFW, 물리 네트워크 및 운영 배포 설정의 검증은 단계 7에서 수행합니다.
+이 시험은 VMware의 단일 Linux VM 안에서 수행했습니다. 운영도 단일 VM으로 변경했으며, 단계 7에서는 컨테이너 연결 쌍·호스트 UFW·로그를 별도로 검증합니다. [단계 7 절차](deploy/stage7/README.md)를 참고하세요.
 
 ## 보안 주의 사항
 
