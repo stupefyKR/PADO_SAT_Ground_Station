@@ -91,3 +91,5 @@ jobs:
             -Dexec.mainClass=kr.ac.khu.padosat.fds.FdsSelfTest \
             -Dexec.classpathScope=test \
             "-Dexec.args=$PWD/services/fds/src/test/resources $PWD/out/orekit-data-2422a7d06ee2cc3b5a503a47271203b0706f3e82 $PWD/out"
+      - name: Verify staged GNSS to published FDS view
+        run: python3 -m tests.run_fds_pipeline_smoke out/orekit-data-2422a7d06ee2cc3b5a503a47271203b0706f3e82

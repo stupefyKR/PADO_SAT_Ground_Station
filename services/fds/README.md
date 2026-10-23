@@ -53,6 +53,23 @@ export PADO_STAGE9_FDS_VIEW_DIR="$(pwd)/out/fds-view"
 
 화면은 인증된 포털의 `/orbit`에서 볼 수 있다. `/api/fds/orbit`은 게시된 파일만 읽으며 TLE 업로드·계산·TC 경로는 제공하지 않는다. FDS 자동 실행과 N05 실제 TLE 수신, 안테나 실측값, 정확도 수락은 아직 별도로 연결해야 한다.
 
+### 검증된 파일 쌍으로 반복 계산
+
+`tools/run_fds_pipeline.py`는 개발 단계의 **로컬 파일 경계 실행기**다. N05 `NORAD_TLE`와 N11 정규화 `GNSS`의 본문·매니페스트를 각각 확인한다. 매니페스트의 파일명·유형·송신자·수신자·버전·SHA-256을 검증하고 크기 제한된 입력을 별도 스냅샷으로 복사한 뒤, 현재 UTC를 계획 시작 시각으로 넣어 기존 Java FDS를 실행한다. GNSS가 유효하면 GNSS를 우선 선택하고, 없거나 72시간 이상이면 TLE로 전환하는 판단은 `OrbitInput`이 맡는다. GNSS 파일 또는 매니페스트가 손상되면 TLE로 조용히 넘어가지 않는다.
+
+```sh
+python3 tools/run_fds_pipeline.py \
+  --config /path/to/approved-fds.properties \
+  --orekit-data /path/to/pinned-orekit-data \
+  --tle-body /path/to/staged/n05.tle \
+  --tle-manifest /path/to/staged/n05.tle.manifest.json \
+  --gnss-body /path/to/staged/n11.properties \
+  --gnss-manifest /path/to/staged/n11.properties.manifest.json \
+  --watch --poll-seconds 60 --refresh-seconds 900
+```
+
+GNSS가 아직 없으면 N11의 두 인자를 생략한다. 아직 수신되지 않은 설정 경로의 두 파일이 모두 없으면 해당 입력을 기다린다. `--watch`를 생략하면 1회만 실행한다. Maven 경로·캐시는 `--mvn`, `--maven-repo`로 지정할 수 있다. 결과는 기본 `out/fds-runs`에 보존하고, 화면 파일은 **ISS 시험 화면과 분리한** `out/fds-live-view`에 원자적으로 게시한다. 실제 화면을 이 결과에 연결하려면 배포 시 `PADO_STAGE9_FDS_VIEW_DIR`을 해당 디렉터리로 명시해야 한다. 이 실행기는 SFTP 수신·상대 신원 인증·원시 GNSS TM 해독을 수행하지 않는다. 그 경계와 실측 설정, 서비스 컨테이너 구성은 여전히 미완료다. 생성된 N13/N15 본문·매니페스트도 아직 SFTP 송신기에 연결되지 않았다.
+
 ### 고정 ISS TLE 화면 시험
 
 PADO-SAT 운용 TLE가 아직 없으므로 사용자 제공 ISS (ZARYA) TLE를 `services/fds/demo/iss-fixed.tle`에 **변경 없이** 보관한다. 69자 길이와 두 줄의 체크섬을 확인했다. 이 입력은 시험 도구 `tools/build_iss_demo.py`에서만 사용하며 운용 N05/N11 입력 선택 경로의 대체값으로 자동 등록하지 않는다. TLE epoch는 **2026-10-22 22:03:10 UTC**이며 72시간을 넘으면 FDS가 새 계산을 거부하고 화면도 현재 위치를 표시하지 않는다. 당시에는 새로운 시험 TLE나 실제 PADO-SAT 입력이 필요하다.

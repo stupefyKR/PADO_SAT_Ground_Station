@@ -16,7 +16,7 @@ ROS는 `SIM_ONLY`와 TC 송출 차단 상태, MPS는 현재 비운용 명령 DB�
 동시에 보이는 3D 지구와 2D 지상궤적, 주야간, 향후 3주기 궤적과 두 지상국의 PASS polar plot을
 표시한다. 지도에서는 TLE나 GNSS 상태를 다시 전파하지 않는다. 지구 텍스처는
 로컬 NASA Blue Marble이며 출처는 `web/assets/README.md`에 있다. FDS 실행·
-산출물 게시 자동화는 아직 없으므로 파일이 없거나 낡으면 현재 위치로
+개발용 `tools/run_fds_pipeline.py`가 검증된 로컬 입력 쌍의 반복 계산·게시를 제공하지만 Compose에는 FDS 실행 서비스와 실제 N05/N11 수신기가 아직 없다. 파일이 없거나 낡으면 현재 위치로
 표시하지 않는다. 시간 이동과 재생 기능은 없으며 화면은 현재 UTC 기준으로만 그린다.
 현재 고정 ISS TLE 화면 시험 도구는 `services/fds/README.md`에 별도로 기록했다.
 
