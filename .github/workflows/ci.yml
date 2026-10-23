@@ -66,3 +66,28 @@ jobs:
             python3 -c 'from pathlib import Path; from services.webapp.core import ros_summary; assert ros_summary(Path("/run/core/core.sock"))["record_state"] == "absent"'
           docker compose -f deploy/stage9/compose.dev.yaml run --rm --no-deps mps-api \
             python3 -c 'from pathlib import Path; from services.webapp.core import mps_catalog; assert mps_catalog(Path("/run/core/core.sock"))["version"] == 1'
+
+  fds-orbit-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out exact commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - name: Install Java and Maven
+        run: sudo apt-get update && sudo apt-get install -y openjdk-17-jdk-headless maven unzip
+      - name: Fetch pinned offline physical data
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          curl --fail --location --retry 3 --silent --show-error \
+            'https://gitlab.orekit.org/orekit/orekit-data/-/archive/2422a7d06ee2cc3b5a503a47271203b0706f3e82/orekit-data-2422a7d06ee2cc3b5a503a47271203b0706f3e82.zip' \
+            --output out/fds-orekit-data.zip
+          printf '%s  %s\n' '3f1cdf30d802f5e3cbeaaf22cadf02e6f30c8ba6c0d9ef865c57c83e2532761e' 'out/fds-orekit-data.zip' | sha256sum --check
+          unzip -q out/fds-orekit-data.zip -d out
+      - name: Compile and exercise FDS propagation
+        run: |
+          set -euo pipefail
+          mvn --batch-mode --no-transfer-progress -f services/fds/pom.xml test-compile exec:java \
+            -Dexec.mainClass=kr.ac.khu.padosat.fds.FdsSelfTest \
+            -Dexec.classpathScope=test \
+            "-Dexec.args=$PWD/services/fds/src/test/resources $PWD/out/orekit-data-2422a7d06ee2cc3b5a503a47271203b0706f3e82 $PWD/out"

@@ -26,9 +26,12 @@ rechecks the source hash. The upstream manifest is preserved separately;
 the downstream manifest has Archive as sender. The in-memory catalog and
 synthetic file bodies are test data, not a durable retention or audit store.
 
-FDS currently participates at the file boundary: it initiates N05 pull
-and is sender/receiver on N08, N11, N13 and N15. No Java/Orekit propagation,
-contact schedule or pointing-file producer is present. Their body schemas,
-source credentials and generation rules need mission ICDs. The present
-tests establish transport and manifest routing only; a manifest type does
-not certify the orbital or mission meaning of the bytes.
+FDS participates at the file boundary: it initiates N05 pull and is
+sender/receiver on N08, N11, N13 and N15. A separate offline Java/Orekit
+calculation core now produces preliminary Contact Schedule, Pass Information
+with Doppler and Orbit Ephemeris bodies plus manifests. It is not yet called
+by the N05/N11 exchange receiver or wired to N13/N15 SFTP senders. The
+operational GNSS TM decoder, N08 antenna pointing body, source credentials
+and mission acceptance rules need ICDs. These Stage 6 tests establish
+transport and manifest routing only; a manifest type does not certify the
+orbital or mission meaning of the bytes.
