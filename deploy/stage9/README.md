@@ -1,5 +1,14 @@
 # 단계 9 웹 개발 기준선
 
+## Windows에서 화면만 빠르게 확인
+
+저장소 루트에서 `python tools/build_stage9_preview.py`를 실행한 뒤
+`out/stage9-preview/ros-preview.html` 또는 `mps-preview.html`을 브라우저로 연다.
+CSS와 합성 예시는 HTML에 포함되어 있어 Docker·계정·인증서 없이 볼 수 있다.
+이 미리보기는 레이아웃 확인 전용이며 서버 API, FDS 일정, 실제 TM·TC와
+연결되지 않는다. 아래 Compose 절차는 로그인과 내부 API를 포함하는 별도의
+Linux 개발 환경이다.
+
 현재는 **비운용 수직 경로**다. `portal`은 Argon2id 계정·TOTP·세션·
 CSRF·계정 잠금·로그인 속도 제한을 제공하고 정적 ROS/MPS 화면을 제공한다.
 `ros-api`와 `mps-api`는 별도 프로세스/컨테이너에서 mTLS 클라이언트 인증서를
