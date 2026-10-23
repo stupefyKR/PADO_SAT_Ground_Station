@@ -1,4 +1,4 @@
-"""TLS portal and mutually authenticated subsystem APIs.
+"""Development portal and isolated subsystem APIs over local HTTP or TLS.
 
 This is a non-operational development boundary. No TC, approval or upload
 endpoint exists. Run each mode as a separate process/container.
@@ -11,8 +11,10 @@ import getpass
 import http.client
 import json
 import os
+import re
 import secrets
 import ssl
+import stat
 import threading
 import time
 from http import HTTPStatus
@@ -62,20 +64,64 @@ PROXY_ROUTES = {
 }
 
 
+def initialize_internal_token(path: Path) -> None:
+    """Create one private development-only portal-to-backend token, idempotently."""
+    if path.is_symlink():
+        raise ValueError("internal_token_symlink")
+    if path.exists():
+        mode = path.stat().st_mode
+        if not stat.S_ISREG(mode) or (os.name == "posix" and mode & 0o077):
+            raise ValueError("internal_token_not_private")
+        token = path.read_text(encoding="ascii").strip()
+        if not re.fullmatch(r"[0-9a-f]{64}", token):
+            raise ValueError("invalid_internal_token")
+        return
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    descriptor = os.open(path, flags, 0o600)
+    try:
+        with os.fdopen(descriptor, "w", encoding="ascii") as target:
+            target.write(secrets.token_hex(32) + "\n")
+            target.flush()
+            os.fsync(target.fileno())
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
+
+
 class AppServer(ThreadingHTTPServer):
     daemon_threads = True
     request_queue_size = 16
 
     def __init__(self, address: tuple[str, int], *, mode: str,
-                 cert: Path, key: Path, ca: Path, auth: AuthStore | None = None,
+                 cert: Path | None = None, key: Path | None = None,
+                 ca: Path | None = None, auth: AuthStore | None = None,
                  ros_url: str = "", mps_url: str = "", client_cert: Path | None = None,
                  client_key: Path | None = None, static_root: Path = WEB,
                  core_socket: Path = CORE_SOCKET,
                  orbit_view: Path | None = None,
                  tm_preview: Path | None = None,
                  draft_db: Path | None = None,
-                 candidate_db: Path | None = None) -> None:
+                 candidate_db: Path | None = None,
+                 transport: str = "tls", internal_token_file: Path | None = None) -> None:
+        if transport not in ("tls", "http"):
+            raise ValueError("invalid_transport")
+        if transport == "tls" and (cert is None or key is None or ca is None or
+                                    (mode == "portal" and
+                                     (client_cert is None or client_key is None))):
+            raise ValueError("tls_certificates_required")
+        if transport == "http":
+            if internal_token_file is None:
+                raise ValueError("internal_token_file_required")
+            token = internal_token_file.read_text(encoding="ascii").strip()
+            if not re.fullmatch(r"[0-9a-f]{64}", token):
+                raise ValueError("invalid_internal_token")
+        else:
+            token = ""
         self.mode = mode
+        self.transport = transport
+        self.internal_token = token
         self.auth = auth
         self.ros_url = ros_url
         self.mps_url = mps_url
@@ -91,13 +137,14 @@ class AppServer(ThreadingHTTPServer):
         self.login_attempts: dict[str, list[float]] = {}
         self.login_lock = threading.Lock()
         super().__init__(address, Handler)
-        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        context.minimum_version = ssl.TLSVersion.TLSv1_2
-        context.load_cert_chain(str(cert), str(key))
-        if mode != "portal":
-            context.verify_mode = ssl.CERT_REQUIRED
-            context.load_verify_locations(cafile=str(ca))
-        self.socket = context.wrap_socket(self.socket, server_side=True)
+        if transport == "tls":
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            context.minimum_version = ssl.TLSVersion.TLSv1_2
+            context.load_cert_chain(str(cert), str(key))
+            if mode != "portal":
+                context.verify_mode = ssl.CERT_REQUIRED
+                context.load_verify_locations(cafile=str(ca))
+            self.socket = context.wrap_socket(self.socket, server_side=True)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -122,7 +169,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "no-referrer")
-        self.send_header("Strict-Transport-Security", "max-age=31536000")
+        if self.server.transport == "tls":
+            self.send_header("Strict-Transport-Security", "max-age=31536000")
         self.send_header("Content-Security-Policy",
                          "default-src 'self'; object-src 'none'; frame-ancestors 'none'; "
                          "form-action 'self'; base-uri 'none'")
@@ -161,6 +209,10 @@ class Handler(BaseHTTPRequestHandler):
         return self.server.auth.session(self._cookie_token()) if self.server.auth else None
 
     def _backend_identity(self) -> bool:
+        if self.server.transport == "http":
+            provided = self.headers.get("X-Pado-Internal-Token", "")
+            return len(provided) == 64 and secrets.compare_digest(
+                provided, self.server.internal_token)
         cert = self.connection.getpeercert()
         if not cert:
             return False
@@ -265,7 +317,9 @@ class Handler(BaseHTTPRequestHandler):
                    {"username": session.username, "role": session.role,
                     "csrf": session.csrf, "operational": False},
                    {"Set-Cookie": "pado_session=" + session.token +
-                    "; Path=/; HttpOnly; Secure; SameSite=Strict"})
+                   "; Path=/; HttpOnly; " +
+                   ("Secure; " if self.server.transport == "tls" else "") +
+                   "SameSite=Strict"})
 
     def _logout(self) -> None:
         session = self._session()
@@ -276,7 +330,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         self.server.auth.logout(token)
         self._json(HTTPStatus.OK, {"logged_out": True},
-                   {"Set-Cookie": "pado_session=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Strict"})
+                   {"Set-Cookie": "pado_session=; Path=/; Max-Age=0; HttpOnly; " +
+                    ("Secure; " if self.server.transport == "tls" else "") +
+                    "SameSite=Strict"})
 
     def _portal_get(self, path: str) -> None:
         if path == "/":
@@ -335,17 +391,24 @@ class Handler(BaseHTTPRequestHandler):
         service, path = route
         base = self.server.ros_url if service == "ros" else self.server.mps_url
         address = urlsplit(base)
-        if address.scheme != "https" or not address.hostname or not address.port:
+        expected_scheme = "https" if self.server.transport == "tls" else "http"
+        if address.scheme != expected_scheme or not address.hostname or not address.port:
             self._error(HTTPStatus.SERVICE_UNAVAILABLE, "backend_configuration")
             return
-        context = ssl.create_default_context(cafile=str(self.server.ca))
-        context.minimum_version = ssl.TLSVersion.TLSv1_2
-        context.load_cert_chain(str(self.server.client_cert),
-                                str(self.server.client_key))
         try:
-            connection = http.client.HTTPSConnection(address.hostname, address.port,
-                                                     context=context, timeout=3)
+            if self.server.transport == "tls":
+                context = ssl.create_default_context(cafile=str(self.server.ca))
+                context.minimum_version = ssl.TLSVersion.TLSv1_2
+                context.load_cert_chain(str(self.server.client_cert),
+                                        str(self.server.client_key))
+                connection = http.client.HTTPSConnection(address.hostname, address.port,
+                                                         context=context, timeout=3)
+            else:
+                connection = http.client.HTTPConnection(address.hostname, address.port,
+                                                        timeout=3)
             headers = {"X-Pado-Actor": username, "X-Pado-Role": role}
+            if self.server.transport == "http":
+                headers["X-Pado-Internal-Token"] = self.server.internal_token
             payload = None
             if body is not None:
                 headers["Content-Type"] = "application/json"
@@ -358,7 +421,7 @@ class Handler(BaseHTTPRequestHandler):
             data = response.read(maximum + 1)
             if len(data) > maximum or (method == "GET" and path not in
                                             ("/test-sequences", "/test-reservations",
-                                             "/test-candidates", "/test-sequences",
+                                             "/test-candidates",
                                              "/test-tm-snapshot") and
                                             response.status != HTTPStatus.OK):
                 self._error(HTTPStatus.BAD_GATEWAY, "backend_failure")
@@ -521,19 +584,23 @@ def parser() -> argparse.ArgumentParser:
     user.add_argument("--db", type=Path, required=True)
     user.add_argument("--username", required=True)
     user.add_argument("--role", choices=sorted(ROLES), required=True)
+    token = sub.add_parser("init-internal-token", help="create local HTTP backend token")
+    token.add_argument("--path", type=Path, required=True)
     for mode in ("portal", "ros", "mps"):
         service = sub.add_parser(mode)
         service.add_argument("--bind", default="127.0.0.1")
         service.add_argument("--port", type=int, required=True)
-        service.add_argument("--cert", type=Path, required=True)
-        service.add_argument("--key", type=Path, required=True)
-        service.add_argument("--ca", type=Path, required=True)
+        service.add_argument("--transport", choices=("tls", "http"), default="tls")
+        service.add_argument("--internal-token-file", type=Path)
+        service.add_argument("--cert", type=Path)
+        service.add_argument("--key", type=Path)
+        service.add_argument("--ca", type=Path)
         if mode == "portal":
             service.add_argument("--db", type=Path, required=True)
             service.add_argument("--ros-url", required=True)
             service.add_argument("--mps-url", required=True)
-            service.add_argument("--client-cert", type=Path, required=True)
-            service.add_argument("--client-key", type=Path, required=True)
+            service.add_argument("--client-cert", type=Path)
+            service.add_argument("--client-key", type=Path)
             service.add_argument("--static-root", type=Path, default=WEB)
             service.add_argument("--orbit-view", type=Path)
         if mode in ("ros", "mps"):
@@ -549,6 +616,9 @@ def parser() -> argparse.ArgumentParser:
 def main() -> None:
     args = parser().parse_args()
     os.umask(0o077)
+    if args.mode == "init-internal-token":
+        initialize_internal_token(args.path)
+        return
     if args.mode == "add-user":
         entered = getpass.getpass("Password (minimum 12 characters): ")
         repeat = getpass.getpass("Repeat password: ")
@@ -578,7 +648,9 @@ def main() -> None:
                        orbit_view=getattr(args, "orbit_view", None),
                        tm_preview=getattr(args, "tm_preview", None),
                        draft_db=getattr(args, "draft_db", None),
-                       candidate_db=getattr(args, "candidate_db", None))
+                       candidate_db=getattr(args, "candidate_db", None),
+                       transport=args.transport,
+                       internal_token_file=args.internal_token_file)
     try:
         server.serve_forever(poll_interval=0.2)
     finally:

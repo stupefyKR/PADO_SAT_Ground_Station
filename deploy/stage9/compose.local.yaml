@@ -1,0 +1,133 @@
+# Windows operator PC -> VMware Linux server, development only.
+# HTTP is bound to the VM's host-only address; subsystem APIs have no host ports.
+services:
+  init-token:
+    build:
+      context: ../..
+      dockerfile: docker/stage9/Dockerfile
+    command: ["python3", "-m", "services.webapp.main", "init-internal-token", "--path", "/internal/token"]
+    volumes: [internal_token:/internal]
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: "no"
+  portal:
+    build:
+      context: ../..
+      dockerfile: docker/stage9/Dockerfile
+    command: ["python3", "-m", "services.webapp.main", "portal", "--transport", "http", "--internal-token-file", "/internal/token", "--bind", "0.0.0.0", "--port", "8080", "--db", "/state/accounts.db", "--ros-url", "http://ros-api:8081", "--mps-url", "http://mps-api:8081", "--orbit-view", "/fds-view/orbit_view.json"]
+    depends_on:
+      init-token: {condition: service_completed_successfully}
+    ports: ["${PADO_LOCAL_BIND_IP:-192.168.45.128}:8080:8080"]
+    volumes:
+      - internal_token:/internal:ro
+      - portal_state:/state
+      - fds_view:/fds-view:ro
+    networks: [entry, portal_ros, portal_mps]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/tmp"]
+    logging: {driver: journald}
+  ros-api:
+    build:
+      context: ../..
+      dockerfile: docker/stage9/Dockerfile
+    command: ["python3", "-m", "services.webapp.main", "ros", "--transport", "http", "--internal-token-file", "/internal/token", "--bind", "0.0.0.0", "--port", "8081", "--core-socket", "/run/core/core.sock", "--draft-db", "/state/ros-drafts.db", "--tm-preview", "/tm-preview/test_tm_snapshot.json"]
+    depends_on:
+      init-token: {condition: service_completed_successfully}
+      ros-core-read: {condition: service_healthy}
+    volumes:
+      - internal_token:/internal:ro
+      - ros_core_socket:/run/core:ro
+      - ros_drafts:/state
+      - ros_tm_preview:/tm-preview:ro
+    networks: [portal_ros]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/tmp"]
+    logging: {driver: journald}
+  mps-api:
+    build:
+      context: ../..
+      dockerfile: docker/stage9/Dockerfile
+    command: ["python3", "-m", "services.webapp.main", "mps", "--transport", "http", "--internal-token-file", "/internal/token", "--bind", "0.0.0.0", "--port", "8081", "--core-socket", "/run/core/core.sock", "--candidate-db", "/state/mps-candidates.db"]
+    depends_on:
+      init-token: {condition: service_completed_successfully}
+      mps-core-read: {condition: service_healthy}
+    volumes:
+      - internal_token:/internal:ro
+      - mps_core_socket:/run/core:ro
+      - mps_candidates:/state
+    networks: [portal_mps]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/tmp"]
+    logging: {driver: journald}
+  ros-core-read:
+    build:
+      context: ../..
+      dockerfile: docker/stage9/Dockerfile
+    command: ["/usr/local/bin/gs_stage9_core_probe", "serve", "ros", "/run/core/core.sock", "/state/ros-tm.record"]
+    volumes:
+      - ros_core_socket:/run/core
+      - ros_state:/state:ro
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD-SHELL", "test -S /run/core/core.sock"]
+      interval: 2s
+      timeout: 1s
+      retries: 10
+    logging: {driver: journald}
+  mps-core-read:
+    build:
+      context: ../..
+      dockerfile: docker/stage9/Dockerfile
+    command: ["/usr/local/bin/gs_stage9_core_probe", "serve", "mps", "/run/core/core.sock", "/app/interfaces/command_db/commands.json", "/mps-schedules"]
+    volumes:
+      - mps_core_socket:/run/core
+      - mps_schedules:/mps-schedules:ro
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD-SHELL", "test -S /run/core/core.sock"]
+      interval: 2s
+      timeout: 1s
+      retries: 10
+    logging: {driver: journald}
+  fds-iss-demo:
+    build:
+      context: ../..
+      dockerfile: docker/stage9/FdsDemo.Dockerfile
+    volumes:
+      - fds_runs:/app/out
+      - fds_view:/app/out/fds-view
+      - mps_schedules:/app/out/mps-schedules
+    network_mode: none
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    logging: {driver: journald}
+volumes:
+  internal_token:
+  portal_state:
+  ros_state:
+  ros_core_socket:
+  ros_drafts:
+  ros_tm_preview:
+  mps_core_socket:
+  mps_candidates:
+  mps_schedules:
+  fds_view:
+  fds_runs:
+networks:
+  entry: {driver: bridge}
+  portal_ros: {driver: bridge, internal: true}
+  portal_mps: {driver: bridge, internal: true}

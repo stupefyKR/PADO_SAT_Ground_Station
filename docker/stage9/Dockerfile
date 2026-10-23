@@ -21,8 +21,8 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -g 10001 pado-web \
     && useradd -u 10001 -g 10001 -M -s /usr/sbin/nologin pado-web \
-    && mkdir -p /app /state /run/core \
-    && chown pado-web:pado-web /state /run/core
+    && mkdir -p /app /state /run/core /internal \
+    && chown pado-web:pado-web /state /run/core /internal
 
 COPY --from=core-builder /build/gs_stage9_core_probe /usr/local/bin/gs_stage9_core_probe
 WORKDIR /app

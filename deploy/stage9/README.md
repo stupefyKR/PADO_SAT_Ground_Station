@@ -1,6 +1,56 @@
 # 단계 9 웹 개발 기준선
 
-## Windows에서 화면만 빠르게 확인
+## Windows 관제 PC에서 VMware 서버 HTTP로 확인
+
+사용자 검증 환경은 Windows 관제 PC와 VMware Linux 서버가 같은 시험용 사설망에
+있는 구성이다. `compose.local.yaml`은 이 환경에서 **HTTP** 포털을 VM 주소
+`192.168.45.128:8080`에 게시한다. ROS·MPS API는 Docker 내부망에서만
+접속되며, Compose가 생성한 비공개 토큰을 가진 포털 요청만 받는다. 로그인,
+역할 검사, 세션과 CSRF 검사는 HTTP 시험에서도 유지된다. 기존 TLS 시험 구성인
+`compose.dev.yaml`과는 별개다.
+
+VM에 Docker Compose가 설치돼 있다면 저장소를 clone하고 이번 작업 브랜치를
+선택한 후 다음 명령을 실행한다. 첫 빌드는 고정된 Orekit 데이터와 Maven 의존성을
+받으므로 VM의 빌드 네트워크가 필요하다. 실행 중 FDS 컨테이너는 외부
+네트워크에 연결되지 않는다. 로그인 계정은 직접 한 번 만든다.
+
+```sh
+git clone https://github.com/stupefyKR/PADO_SAT_Ground_Station.git pado-gs
+cd pado-gs
+git switch feat/fds-core
+docker compose -f deploy/stage9/compose.local.yaml build
+docker compose -f deploy/stage9/compose.local.yaml run --rm --no-deps portal \
+  python3 -m services.webapp.main add-user --db /state/accounts.db \
+  --username planner01 --role planner
+docker compose -f deploy/stage9/compose.local.yaml up -d
+docker compose -f deploy/stage9/compose.local.yaml ps
+```
+
+VM의 IP가 바뀌었다면 `PADO_LOCAL_BIND_IP`를 해당 VM의 **관제 PC 전용 사설망
+주소**로 설정하고 실행한다. Windows에서 별도 SSH 포워딩 없이
+`http://192.168.45.128:8080/login`에 접속해 로그인한다. ROS는 `/ops`,
+MPS는 `/mps`, 현재 ISS 위치는 `/orbit`이다. 화면은 동일 출처의 인증된 API를
+호출한다. `fds-iss-demo`가 15분마다 고정 ISS TLE를 계산해 ORBIT 보기와 N13
+PASS 일정을 공유 Docker 볼륨에 게시한다. MPS의 선택 PASS 지도·polar plot과
+시험 시퀀스는 이 API 자료를 사용한다. 초안 저장은 테스트 전용이다.
+
+VM의 사설망 인터페이스가 Windows에서 접속 가능한지와 Docker 포트 `8080`이
+해당 인터페이스에만 게시됐는지 확인한다. Docker 게시 포트는 호스트 UFW의
+일반 입력 규칙만으로 제한된다고 가정하지 않는다. 이 Compose는 외부망에
+연결된 인터페이스에서 사용하지 않는다. 고정 ISS TLE는 2026-10-25 22:03 UTC
+이후 신선도 조건을 충족하지 못하므로 그 뒤에는 새 시험 입력 또는 실제 위성
+입력이 필요하다. 만료 뒤 ORBIT는 현재 위치를 표시하지 않고 MPS 패스 경로도
+일치하는 유효 자료가 없다고 표시한다.
+
+```sh
+docker compose -f deploy/stage9/compose.local.yaml logs --tail=50 fds-iss-demo
+docker compose -f deploy/stage9/compose.local.yaml logs --tail=50 portal mps-api
+docker compose -f deploy/stage9/compose.local.yaml down
+```
+
+`down`은 계정·시퀀스·FDS 게시 결과를 담은 이름 있는 Docker 볼륨을 보존한다.
+
+## Windows에서 화면 배치만 빠르게 확인
 
 저장소 루트에서 `python tools/build_stage9_preview.py`를 실행한 뒤
 `out/stage9-preview/ros-preview.html` 또는 `mps-preview.html`을 브라우저로 연다.
