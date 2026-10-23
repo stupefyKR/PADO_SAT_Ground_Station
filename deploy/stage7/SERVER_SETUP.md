@@ -112,6 +112,7 @@ MaxRetentionSec=14day
 | 판정 항목 | 현재 상태 |
 |---|---|
 | 단일 VM·컨테이너 연결 쌍과 비연결 차단 | VMware VM 및 Linux CI에서 probe 시험 통과 |
+| DGS-GS·ROS 시뮬레이터의 컨테이너 간 TM·상대 IP 검사 | Linux CI #38에서 통과; 실제 운용 데몬 시험은 대기 |
 | UFW 입력·라우팅 차단, 관리 PC 전용 SSH | VMware VM에서 적용·관리 PC 연결 확인 |
 | 다른 출발지 SSH 차단 | 별도 출발지 시험 대기 |
 | 운용 서비스 7종 이미지·권한·영속 데이터 | 운용 데몬과 이미지 미구현 |
