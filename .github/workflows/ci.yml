@@ -29,6 +29,7 @@ jobs:
           cmake -S . -B build-linux-release -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc
           cmake --build build-linux-release --parallel 2
           ctest --test-dir build-linux-release --output-on-failure
+          python3 -m tests.run_stage8_recovery --build build-linux-release
       - name: Build and test Clang ASan and UBSan
         run: |
           cmake -S . -B build-linux-sanitized -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_COMPILER=clang -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DGS_ENABLE_SANITIZERS=ON
@@ -36,6 +37,11 @@ jobs:
           ctest --test-dir build-linux-sanitized --output-on-failure
       - name: Analyze first-party C sources
         run: clang-tidy -p build-linux-sanitized -checks='clang-analyzer-*' -warnings-as-errors='*' libgs/src/exchange.c libgs/src/hash.c libgs/src/log.c libgs/src/manifest.c libgs/src/framing.c libgs/src/ipc.c libgs/src/sftp.c sim/tm_frame.c sim/fake_kari.c sim/fake_sat.c services/common/tm_sim_support.c services/common/test_tc_wire.c services/common/stage6_routes.c services/dgs-net/tle.c services/dgs-archive/catalog.c services/dgs-gs/main.c services/dgs-gs/tc_gate.c services/ros/core/main.c services/ros/core/sequence_verify.c services/ros/core/tc_workflow.c services/ros/signer/test_signer.c services/mps/core/inputs.c services/mps/core/plan_store.c services/mps/core/conflict.c services/mps/core/sequence_export.c services/mps/core/intake.c
+      - name: Fuzz external input parsers with ASan and UBSan
+        run: |
+          cmake -S . -B build-linux-fuzz -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_COMPILER=clang -DGS_ENABLE_SANITIZERS=ON -DGS_BUILD_MANIFEST_FUZZER=ON -DGS_BUILD_MPS_CATALOG_FUZZER=ON -DGS_BUILD_TM_FUZZER=ON -DGS_BUILD_TLE_FUZZER=ON
+          cmake --build build-linux-fuzz --parallel 2 --target gs_manifest_fuzzer gs_mps_catalog_fuzzer gs_tm_fuzzer gs_tle_fuzzer
+          python3 tests/run_stage8_fuzz.py --build build-linux-fuzz
       - name: Check interface and secret rules
         run: |
           python3 -m unittest discover -s tests -p 'test_*.py' -v
