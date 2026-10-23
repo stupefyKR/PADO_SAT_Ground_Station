@@ -94,6 +94,9 @@ Linux 시험은 Argon2id 실제 검증, TOTP 재사용 거부, 세션 만료·�
 건너뛰어지며 Ubuntu CI에서 실행한다.
 [Ubuntu CI #44](https://github.com/stupefyKR/PADO_SAT_Ground_Station/actions/runs/39899833305)에서
 이 시험과 Compose 구성·이미지 빌드가 통과했다.
+[Ubuntu CI #47](https://github.com/stupefyKR/PADO_SAT_Ground_Station/actions/runs/39902404739)에서는
+9-1 C 프로브의 GCC·Clang ASan+UBSan 빌드, 정상·변조 기록과 명령 DB 거부,
+포털 경유 통합 시험, Stage 9 다단계 이미지 빌드도 통과했다.
 
 단계 9 전체 완료에는 C 코어의 실제 서비스·영속 데이터와 웹 API의 연결,
 확정된 TC/TM·FDS·Mission Request ICD에 따른 화면 기능, 재인증을 실제 승인
