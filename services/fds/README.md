@@ -51,7 +51,7 @@ python3 tools/publish_fds_view.py /path/to/completed-fds-run out/fds-view
 export PADO_STAGE9_FDS_VIEW_DIR="$(pwd)/out/fds-view"
 ```
 
-화면은 인증된 포털의 `/orbit`에서 볼 수 있다. `/api/fds/orbit`은 게시된 파일만 읽으며 TLE 업로드·계산·TC 경로는 제공하지 않는다. FDS 자동 실행과 N05 실제 TLE 수신, 안테나 실측값, 정확도 수락은 아직 별도로 연결해야 한다.
+화면은 인증된 포털의 `/orbit`에서 볼 수 있다. `/api/fds/orbit`은 게시된 파일만 읽으며 TLE 업로드·계산·TC 경로는 제공하지 않는다. 아래 로컬 파일 쌍 반복 계산기는 구현됐다. 실제 N05/N11 SFTP 수신, 안테나 실측값, 정확도 수락은 아직 별도로 연결해야 한다.
 
 ### 검증된 파일 쌍으로 반복 계산
 
@@ -78,6 +78,6 @@ PADO-SAT 운용 TLE가 아직 없으므로 사용자 제공 ISS (ZARYA) TLE를 `
 python3 tools/build_iss_demo.py --orekit-data /path/to/orekit-data
 ```
 
-도구는 현재 UTC부터 72시간을 전파하고 산출물을 `out/fds-view`에 게시한다. Maven이 PATH에 없으면 `--mvn /path/to/mvn`, 별도 캐시가 있으면 `--maven-repo /path/to/m2`를 지정한다. 화면은 이 결과를 60초마다 다시 읽고 **현재 시각만** 표시한다. 연세대 `(37.5624, 126.9389, 0 m)`, 항우연 대전 `(36.3700, 127.3600, 0 m)`, 최소 고각 `10°`, UHF `435 MHz`, S-band `2.2 GHz`는 모두 **화면 시험용 근삿값·예시값**이다. 실제 안테나의 측량 좌표·고각 마스크·주파수로 교체하기 전 컨택/도플러 시각은 운용에 사용할 수 없다. 이후 실시간 N05 TLE 또는 정규화된 N11 GNSS 입력을 수집해 FDS를 반복 실행·원자적 게시하는 자동화가 필요하다.
+도구는 현재 UTC부터 72시간을 전파하고 산출물을 `out/fds-view`에 게시한다. Maven이 PATH에 없으면 `--mvn /path/to/mvn`, 별도 캐시가 있으면 `--maven-repo /path/to/m2`를 지정한다. 화면은 이 결과를 60초마다 다시 읽고 **현재 시각만** 표시한다. 연세대 `(37.5624, 126.9389, 0 m)`, 항우연 대전 `(36.3700, 127.3600, 0 m)`, 최소 고각 `10°`, UHF `435 MHz`, S-band `2.2 GHz`는 모두 **화면 시험용 근삿값·예시값**이다. 실제 안테나의 측량 좌표·고각 마스크·주파수로 교체하기 전 컨택/도플러 시각은 운용에 사용할 수 없다. 별도 로컬 반복 계산기가 실제 N05 TLE 또는 정규화된 N11 GNSS 파일 쌍을 받아 계산·게시할 수 있지만, 수신기와 운용 화면에 연결하는 배포 작업은 남아 있다.
 
 참고 원본: [NovAtel OEM7 BESTXYZ](https://docs.novatel.com/OEM7/Content/Logs/BESTXYZ.htm), [CubeADCS ICD 1.05](https://www.cubespace.co.za/uploads/c862e5e3-eff7-4519-b67f-b0dc2d5590a0.pdf), [Vallado SGP4 검증 자료](https://celestrak.org/publications/AIAA/2006-6753/), [Orekit 데이터 설정](https://test.orekit.org/site-orekit-development/data/default-configuration.html). 모델 수락 전에는 Orekit 물리 자료 세트의 버전과 EOP 유효 기간을 고정하고 기준 궤도력과 비교해야 한다.
