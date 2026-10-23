@@ -35,14 +35,15 @@ def main() -> None:
     body = (ROOT / "services/fds/src/test/resources/test-gnss.properties").read_text(encoding="utf-8")
     gnss.write_text(body.replace("epoch_utc=2000-06-27T19:00:00Z", "epoch_utc=" + epoch),
                     encoding="utf-8")
-    manifest = scratch / "synthetic-gnss.properties.manifest.json"
+    manifest = gnss.with_name(gnss.name + ".manifest.json")
     manifest.write_text(json.dumps({
         "file": gnss.name, "type": "GNSS", "from": "ros", "to": "fds", "version": 1,
         "created": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "sha256": hashlib.sha256(gnss.read_bytes()).hexdigest(),
     }), encoding="utf-8")
     ingress = scratch / "fds-ingress" / "gnss"
-    ingest_inbox("gnss", inbox, ingress)
+    if ingest_inbox("gnss", inbox, ingress) is None:
+        raise AssertionError("N11 committed pair was not published to FDS ingress")
     config = scratch / "config.properties"
     original = (ROOT / "services/fds/src/test/resources/test-config.properties").read_text(encoding="utf-8")
     config.write_text(original.replace("horizon_hours=24", "horizon_hours=1"), encoding="utf-8")
