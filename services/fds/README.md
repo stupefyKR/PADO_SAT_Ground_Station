@@ -14,6 +14,19 @@
 
 `station.yonsei`는 연세대 이과대학 UHF 1기, `station.kari`는 대전 항우연 S-band 1기다. 각 안테나의 측량 위경도, WGS84 타원체 기준 고도, 최소 고각, 수신 중심 주파수를 `config.example.properties`에 채워야 한다. 현재 설정 파일의 435 MHz·2.2 GHz는 임의 예시값이며 `frequency_example=true`로 표시된다. PDR 별첨 46쪽의 링크 버짓 기준 주파수는 UHF 437.5 MHz·S-band 하향 2250 MHz, 기준 고각은 10°다. 이들도 실제 주파수 할당이나 안테나 horizon mask는 아니다. 별첨 43쪽의 위성 질량 CBE 5.207 kg/MEV 5.773 kg은 예비 예산이며 실측 비행 질량이 아니다. 주파수 미정 상태에서도 거리 변화율(m/s)은 계산할 수 있으나 Hz 도플러 값은 설정된 예시값에만 대응한다.
 
+### N13/N15 출고함 반복 송신
+
+`tools/stage_fds_outbox.py`가 검증해 게시한 고유 실행 디렉터리를 `tools/send_fds_outbox.py`가 순서대로 읽는다. 실제 서비스 설치 시 `outbox_peers.example.json`을 저장소 밖의 비공개 설정으로 복사해 MPS와 DGS-Archive의 SSH 호스트·계정·고정 호스트키 지문·키 파일을 입력한다. 아래는 Linux 배포 시 실행 형태이며, 현재 실제 상대 정보가 없어 현장 송신은 수행하지 않았다.
+
+```sh
+python3 tools/send_fds_outbox.py \
+  --outbox /srv/pado/fds/outbox --receipts /srv/pado/fds/transport-receipts \
+  --peers /run/secrets/fds-outbox-peers.json \
+  --exchange-bin /usr/local/bin/gs_fds_exchange --watch --poll-seconds 60
+```
+
+송신기는 파일 본문·매니페스트 SHA-256과 목적지를 재검사하고, 기존 호스트키 고정 SFTP CLI로 N13 1쌍·N15 2쌍을 전송한다. 성공한 쌍만 로컬 receipt에 기록하고 실패 후 재시도한다. receipt는 **SFTP 전송 완료**일 뿐 MPS/Archive의 해석·수락 ACK가 아니다. 수신 확인 계약이 정해지기 전에는 이 상태를 운용 전달 성공으로 간주하지 않는다.
+
 | 파일 | 내용 | N2 자료 유형 |
 |---|---|---|
 | `contact_schedule.csv` | 안테나별 AOS·LOS·최고 고각과 시각, 예측창 경계 잘림 표시 | N13 `CONTACT_SCHEDULE` |

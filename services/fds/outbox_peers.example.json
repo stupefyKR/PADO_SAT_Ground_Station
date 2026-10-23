@@ -1,0 +1,18 @@
+{
+  "mps": {
+    "host": "REPLACE_MPS_HOST",
+    "port": 2222,
+    "user": "REPLACE_MPS_USER",
+    "private_key": "/run/secrets/fds-mps.key",
+    "host_key_sha256": "REPLACE_WITH_64_LOWERCASE_HEX_DIGITS",
+    "remote_dir": "/inbox/from_fds"
+  },
+  "dgs-archive": {
+    "host": "REPLACE_ARCHIVE_HOST",
+    "port": 2222,
+    "user": "REPLACE_ARCHIVE_USER",
+    "private_key": "/run/secrets/fds-archive.key",
+    "host_key_sha256": "REPLACE_WITH_64_LOWERCASE_HEX_DIGITS",
+    "remote_dir": "/inbox/from_fds"
+  }
+}
