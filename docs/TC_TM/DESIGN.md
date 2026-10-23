@@ -27,17 +27,7 @@ PDF 쪽수는 파일 자체의 페이지 번호다. 원본 PDF는 사용자 제�
 
 명령·HK 이름은 [`draft_v0.json`](../../interfaces/pado_packets/draft_v0.json)과 [`source_inventory.json`](../../interfaces/pado_packets/source_inventory.json)에 반영했다. 원본에는 **비행용 명령 ID, 정확한 인자 인코딩, 인증·ACK 프로토콜, 비콘 전체 바이트 맵, 센서 보정·한계값**이 없다. 상세 출처 해시와 설계 근거는 [인터페이스 설명](../../interfaces/pado_packets/README.md)에 있다.
 
-### PDR에서 추가로 확인한 시험 기준값
-
-| PDR 별첨 근거 | 값 | 사용 범위 |
-| --- | --- | --- |
-| 43쪽 질량 예산 | 위성 CBE 5.207 kg, 여유 포함 MEV 5.773 kg, 3U 제한 6 kg | FDS 수치 모델 검토용 후보. 조립 후 실측 질량 아님 |
-| 46쪽 링크 버짓 | UHF 상·하향 437.5 MHz, S-band 하향 2250 MHz·상향 2075 MHz | 링크 버짓 기준 주파수. 실제 할당·설정 주파수 아님 |
-| 46쪽 링크 버짓 | 고각 10° | 버짓 계산 가정. 지상국별 실측 horizon mask 아님 |
-| 29–30쪽 CS 요구 | UHF 435–438 MHz, S-band 하향 2200–2290 MHz·상향 2025–2110 MHz | 허용 대역. 특정 운용 채널은 미정 |
-| 47쪽 장비 로그 목록 | OEM719A `BESTPOS`·`BESTVEL`·`BESTXYZ`·`TIME` 등 | 로그 이름·크기 목록. OBC의 다운링크 TM 바이트 구조는 아님 |
-
-두 안테나의 측량 위경도·타원체고, 실제 최소 고각, 위성의 항력·반사 계수/유효 면적, 정밀도 목표는 제공 PDR에서 확인되지 않았다. 따라서 이 표의 값으로 운용 설정을 자동 채우지 않는다.
+PDR 별첨 47쪽의 OEM719A `BESTPOS`·`BESTVEL`·`BESTXYZ`·`TIME`은 장비 로그 이름이며 OBC의 다운링크 TM 바이트 구조는 아니다. PDR의 예비 질량·링크 버짓 수치·고각 가정은 TC/TM 응용 패킷을 정의하는 데 필요하지 않아 이 설계의 입력으로 사용하지 않는다.
 
 ## RF에서 응용 PDU까지
 

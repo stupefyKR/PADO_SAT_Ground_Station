@@ -12,7 +12,7 @@ import java.util.Properties;
 /** Validated calculation inputs. No antenna coordinate or RF value is compiled into the service. */
 public record FdsConfig(int noradId, Instant start, int horizonHours, int ephemerisStepSeconds,
                         int profileStepSeconds, List<Station> stations, int gravityDegree,
-                        int gravityOrder, double spacecraftMassKg) {
+                        int gravityOrder) {
     public record Station(String id, String band, double latitudeDeg, double longitudeDeg,
                           double altitudeM, double minimumElevationDeg, double carrierHz,
                           boolean exampleFrequency) { }
@@ -26,7 +26,7 @@ public record FdsConfig(int noradId, Instant start, int horizonHours, int epheme
             p.load(reader);
         }
         requireKeys(p, List.of("expected_norad_id", "start_utc", "horizon_hours", "ephemeris_step_s",
-                "profile_step_s", "gravity_degree", "gravity_order", "spacecraft_mass_kg",
+                "profile_step_s", "gravity_degree", "gravity_order",
                 "station.yonsei.band", "station.yonsei.latitude_deg", "station.yonsei.longitude_deg",
                 "station.yonsei.altitude_m", "station.yonsei.minimum_elevation_deg",
                 "station.yonsei.carrier_hz", "station.yonsei.frequency_example",
@@ -42,10 +42,9 @@ public record FdsConfig(int noradId, Instant start, int horizonHours, int epheme
         int profileStep = integer(p, "profile_step_s", 1, 60);
         int degree = integer(p, "gravity_degree", 2, 100);
         int order = integer(p, "gravity_order", 0, degree);
-        double mass = number(p, "spacecraft_mass_kg", 0.01, 10000);
         return new FdsConfig(integer(p, "expected_norad_id", 1, 999999), Instant.parse(utc),
                 hours, ephemerisStep, profileStep,
-                List.of(station(p, "yonsei"), station(p, "kari")), degree, order, mass);
+                List.of(station(p, "yonsei"), station(p, "kari")), degree, order);
     }
 
     private static Station station(Properties p, String id) {

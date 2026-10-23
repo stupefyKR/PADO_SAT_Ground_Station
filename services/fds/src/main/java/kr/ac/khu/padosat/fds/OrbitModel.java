@@ -56,7 +56,7 @@ public final class OrbitModel {
                 0.01, 300.0, tolerance[0], tolerance[1]);
         NumericalPropagator propagator = new NumericalPropagator(integrator);
         propagator.setOrbitType(OrbitType.CARTESIAN);
-        propagator.setInitialState(new SpacecraftState(orbit).withMass(config.spacecraftMassKg()));
+        propagator.setInitialState(new SpacecraftState(orbit));
         propagator.addForceModel(new HolmesFeatherstoneAttractionModel(
                 FramesFactory.getITRF(IERSConventions.IERS_2010, true),
                 GravityFieldFactory.getNormalizedProvider(config.gravityDegree(), config.gravityOrder())));

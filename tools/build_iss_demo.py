@@ -43,7 +43,6 @@ ephemeris_step_s=60
 profile_step_s=10
 gravity_degree=8
 gravity_order=8
-spacecraft_mass_kg=10
 station.yonsei.band=UHF
 station.yonsei.latitude_deg=37.5624
 station.yonsei.longitude_deg=126.9389
