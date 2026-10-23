@@ -39,6 +39,8 @@ class CoreProbeTests(unittest.TestCase):
             if process.poll() is not None:
                 break
             time.sleep(0.02)
+        if process.poll() is None:
+            process.terminate()
         error = process.communicate(timeout=2)[1]
         self.fail(f"C reader did not start: {error!r}")
 
@@ -82,6 +84,8 @@ class CoreProbeTests(unittest.TestCase):
                 mps.terminate()
                 self.assertEqual(ros.wait(timeout=3), 0)
                 self.assertEqual(mps.wait(timeout=3), 0)
+                ros.stderr.close()
+                mps.stderr.close()
             with self.assertRaises(CoreUnavailable):
                 ros_summary(ros_socket)
 

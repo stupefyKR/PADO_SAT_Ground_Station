@@ -122,6 +122,7 @@ class WebBoundaryTests(unittest.TestCase):
         for process in cls.core_processes:
             process.terminate()
             process.wait(timeout=3)
+            process.stderr.close()
         cls.auth.close()
         cls.temp.cleanup()
 

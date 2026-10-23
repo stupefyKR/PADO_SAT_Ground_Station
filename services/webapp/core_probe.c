@@ -155,7 +155,8 @@ static int serve(const char *mode, const char *socket_path, const char *source)
     if (!is_ros && strcmp(mode, "mps") != 0) return -1;
     if (strlen(socket_path) >= sizeof(address.sun_path)) return -1;
     address.sun_family = AF_UNIX;
-    (void)memcpy(address.sun_path, socket_path, strlen(socket_path) + 1u);
+    if (snprintf(address.sun_path, sizeof(address.sun_path), "%s",
+                 socket_path) < 0) return -1;
     (void)umask(0077);
     if (lstat(socket_path, &existing) == 0) {
         if (!S_ISSOCK(existing.st_mode) || existing.st_uid != geteuid() ||
