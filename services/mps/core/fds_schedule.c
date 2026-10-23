@@ -125,7 +125,8 @@ static int pass_row(char *line, gs_mps_fds_schedule_t *schedule)
             (strcmp(fields[9], "true") != 0 && strcmp(fields[9], "false") != 0) ||
             (strcmp(fields[10], "true") != 0 && strcmp(fields[10], "false") != 0))
         return -1;
-    memcpy(pass.pass_id, fields[3], strlen(fields[3]) + 1u);
+    for (index = 0u; fields[3][index] != '\0'; ++index)
+        pass.pass_id[index] = fields[3][index];
     pass.aos_utc_s = aos / 1000;
     pass.los_utc_s = (los + 999) / 1000;
     if (gs_mps_pass_catalog_add(&schedule->passes, &pass) != 0) return -1;
@@ -135,9 +136,12 @@ static int pass_row(char *line, gs_mps_fds_schedule_t *schedule)
         schedule->info[index] = schedule->info[index - 1u];
     info = &schedule->info[position];
     *info = (gs_mps_fds_pass_info_t){0};
-    memcpy(info->pass_id, pass.pass_id, strlen(pass.pass_id) + 1u);
-    memcpy(info->station_id, fields[1], strlen(fields[1]) + 1u);
-    memcpy(info->band, fields[2], strlen(fields[2]) + 1u);
+    for (index = 0u; pass.pass_id[index] != '\0'; ++index)
+        info->pass_id[index] = pass.pass_id[index];
+    for (index = 0u; fields[1][index] != '\0'; ++index)
+        info->station_id[index] = fields[1][index];
+    for (index = 0u; fields[2][index] != '\0'; ++index)
+        info->band[index] = fields[2][index];
     info->peak_utc_s = peak / 1000;
     info->max_elevation_deg = maximum;
     info->minimum_elevation_deg = minimum;
@@ -157,6 +161,7 @@ int gs_mps_fds_schedule_parse(const char *csv, size_t csv_length,
     char *cursor;
     char *end;
     size_t rows = 0u;
+    size_t index;
     int result = -1;
     if (csv == NULL || manifest_json == NULL || out == NULL ||
             csv_length == 0u || csv_length > GS_MPS_FDS_SCHEDULE_MAX_BYTES ||
@@ -172,7 +177,7 @@ int gs_mps_fds_schedule_parse(const char *csv, size_t csv_length,
     copy = malloc(csv_length + 1u);
     parsed = calloc(1u, sizeof(*parsed));
     if (copy == NULL || parsed == NULL) goto done;
-    memcpy(copy, csv, csv_length);
+    for (index = 0u; index < csv_length; ++index) copy[index] = csv[index];
     copy[csv_length] = '\0';
     cursor = copy;
     end = strchr(cursor, '\n');
@@ -191,7 +196,8 @@ int gs_mps_fds_schedule_parse(const char *csv, size_t csv_length,
     if (parsed->passes.count > 1u &&
             parsed->passes.passes[parsed->passes.count - 1u].los_utc_s -
             parsed->passes.passes[0].aos_utc_s > 72LL * 3600LL + 2LL) goto done;
-    memcpy(parsed->sha256, digest, sizeof(digest));
+    for (index = 0u; index < sizeof(digest); ++index)
+        parsed->sha256[index] = digest[index];
     parsed->non_operational = 1;
     *out = *parsed;
     result = 0;
