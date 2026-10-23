@@ -63,10 +63,13 @@ git rev-parse HEAD
 python3 tools/check_flows.py check
 python3 -m unittest discover -s tests -p 'test_*.py' -v
 python3 tests/container/run_stage7_topology.py --build
+python3 tests/container/run_stage7_tm.py
 sudo python3 tools/stage7_host_audit.py --admin-ip "$ADMIN_IP"
 ```
 
 `run_stage7_topology.py`는 고유한 이름의 임시 브리지·컨테이너를 만들고 종료 시 제거한다. 성공 기준은 연결된 쌍 24개 방향의 도달, 연결되지 않은 쌍 18개 방향의 거부, 공개 포트 0개, 7개 probe 로그다. `flow-plan.json`은 승인된 N2의 연결 시작 방향 18건과 미정 3건을 반영한다. `compose.probe.yaml`은 실행 예시일 뿐 운용 배포 파일이 아니다. Docker 브리지는 같은 쌍의 **역방향 신규 연결**도 허용하므로, 운용 서비스는 허용된 상대 주소·인증서·계정·역할과 요청 방향을 별도로 검증해야 한다.
+
+`run_stage7_tm.py`는 시험 이미지를 이용해 DGS-GS·ROS 시뮬레이터 바이너리를 각 컨테이너에서 실행한다. 정상 시험 프레임 두 건 기록, 오류 다섯 건 격리, 승인되지 않은 상대 IP 거부를 확인한다. 실 운영 TM 프레임이나 지상국 장비와는 연결하지 않는다.
 
 `stage7_host_audit.py`는 읽기 전용이다. UFW 상태 조회에는 비대화식 `sudo` 권한이 필요하므로 `sudo python3 ...`로 실행한다. JSON의 `errors`가 비어 있고 `docker_inventory_complete=true`, `published_ports=[]`, UFW·NTP 항목이 통과해야 종료 코드 0이 나온다. 이 도구가 Docker 조회에 실패하면 포트가 0개인 것으로 판정하지 않는다. 실제 방화벽의 외부 차단과 서비스 수준 연결 방향까지 대신 검증하지는 않는다.
 

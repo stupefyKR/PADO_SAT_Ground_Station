@@ -14,6 +14,7 @@ python3 tools/check_flows.py render
 python3 tools/check_flows.py check
 python3 -m unittest discover -s tests -p 'test_*.py' -v
 python3 tests/container/run_stage7_topology.py --build
+python3 tests/container/run_stage7_tm.py
 sudo python3 tools/stage7_host_audit.py --admin-ip 192.168.45.1
 ```
 
@@ -23,6 +24,9 @@ Docker 시험은 서로 연결된 쌍의 도달성과 연결되지 않은 쌍의
 로그 수신을 확인한다. 브리지는 같은 쌍의 **역방향 신규 연결을 막지 못하므로**
 실제 서비스는 정해진 인터페이스에만 바인딩하고 상대 신원·역할을 검증해야 한다.
 호스트·privileged 컨테이너·Docker 관리자에 대한 격리도 제공하지 않는다.
+`run_stage7_tm.py`는 두 컨테이너에서 현재의 `--sim-only` DGS-GS·ROS
+프로세스를 실행해 mTLS TM 전달과 비허용 상대 IP 거부를 확인한다. 이것 역시
+일회용 시험 이미지이며 운용 서비스 배포가 아니다.
 
 ## 호스트 경계
 

@@ -45,3 +45,4 @@ jobs:
           python3 tools/check_flows.py check
           python3 tests/container/run_network.py --build
           python3 tests/container/run_stage7_topology.py
+          python3 tests/container/run_stage7_tm.py

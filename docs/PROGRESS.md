@@ -12,6 +12,7 @@
 
 - 서버 적용 매뉴얼: `deploy/stage7/SERVER_SETUP.md`에 현장값 기록, Docker 설치 확인, UFW·SSH 적용, N2 probe·호스트 감사, journald·NTP, 운용 서비스 배포 선행 조건, 재부팅·복구 판정 절차를 추가. 실제 서비스가 준비되기 전 probe를 운용 배포로 오인하지 않도록 구분함
 - 호스트 감사 보완: `docker ps`/`docker inspect` 실패 또는 불완전한 목록을 공개 포트 0개로 통과시키지 않고 `docker_inventory_complete=false`와 오류를 보고하도록 수정
+- 실제 앱 프로세스 경계 시험 추가: `tests/container/run_stage7_tm.py`가 제한된 DGS-GS·ROS 컨테이너 안에서 기존 `--sim-only` 실행기를 돌려 정상 TM 기록 2건, 오류 격리 5건, 비허용 상대 IP 거부를 확인하도록 구성. Linux CI에서 검증 예정이며 운용 이미지로 취급하지 않음
 - 구조 변경: 실제 운영도 Linux VM 한 대의 서브시스템별 Docker 컨테이너로 확정. 이전 다중 VM·VLAN·vm-mgmt 설계는 배포 기준에서 제외(결정 #16)
 - 구현: N2의 확정된 연결 시작 방향 18건을 검사하는 `tools/check_flows.py`, 내부 연결 쌍 12개를 별도 비공개 Docker 브리지로 만드는 일회용 probe와 호스트 읽기 전용 감사 도구 추가. 미정 외부 ICD 경로와 공개 포트는 생성하지 않음
 - 실제 VMware VM 시험: Docker 29.6.1, 시간 동기 `yes`; 연결된 컨테이너 쌍의 양방향 도달 24건, 연결되지 않은 쌍 거부 18건, 공개 포트 0개, 컨테이너 7개의 journald 시작 로그 확인. Docker 기본 로그 드라이버는 `json-file`이며 probe는 명시적으로 `journald` 사용
