@@ -137,6 +137,8 @@ public final class FdsOutput {
         String text = "schema=fds.run.v1\n" + "expected_norad_id=" + config.noradId() + "\n" +
                 "source=" + source.source() + "\n" +
                 "selection_reason=" + source.reason() + "\n" + "model=" + source.model() + "\n" +
+                "last_gnss_epoch_utc=" + (source.lastGnssEpoch() == null ? "NONE" :
+                        source.lastGnssEpoch()) + "\n" +
                 "quality=PRELIMINARY_NOT_FOR_OPERATIONS\n" + "input_epoch_utc=" + utc(source.epoch()) + "\n" +
                 "input_sha256=" + sha256(input) + "\n" + "start_utc=" + config.start() + "\n" +
                 "horizon_hours=" + config.horizonHours() + "\n" +

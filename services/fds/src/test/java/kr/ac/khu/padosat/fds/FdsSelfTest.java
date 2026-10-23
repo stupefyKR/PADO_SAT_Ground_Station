@@ -55,6 +55,8 @@ public final class FdsSelfTest {
         rejected(() -> OrbitInput.readGnss(badGnss), "invalid GNSS status");
         Files.writeString(badGnss, gnss.replace("frame=ITRF", "frame=GCRF"));
         rejected(() -> OrbitInput.readGnss(badGnss), "unsupported GNSS frame");
+        Files.writeString(badGnss, gnss + "\nframe=ITRF\n");
+        rejected(() -> OrbitInput.readGnss(badGnss), "duplicate GNSS field");
         Path badTle = temporary.resolve("bad.tle");
         String tle = Files.readString(fixture.resolve("vallado-00005.tle"));
         Files.writeString(badTle, tle.replace("  4753", "  4754"));
@@ -66,13 +68,17 @@ public final class FdsSelfTest {
         Path gnss = fixture.resolve("test-gnss.properties");
         Instant start = Instant.parse("2000-06-27T19:00:00Z");
         check(OrbitInput.select(tle, gnss, start, 5).source().equals("GNSS"), "fresh GNSS priority");
-        check(OrbitInput.select(tle, null, start, 5).source().equals("TLE"), "missing GNSS fallback");
+        var missing = OrbitInput.select(tle, null, start, 5);
+        check(missing.source().equals("TLE") && missing.reason().equals("GNSS_MISSING"),
+                "missing GNSS fallback");
         Path laterTle = temporary.resolve("later.tle");
         List<String> lines = Files.readAllLines(tle, StandardCharsets.US_ASCII);
         String changedEpoch = lines.get(0).replace("00179.78495062", "00182.78495062");
         Files.writeString(laterTle, checksum(changedEpoch) + "\n" + lines.get(1) + "\n");
         Instant later = start.plusSeconds(72L * 3600L);
-        check(OrbitInput.select(laterTle, gnss, later, 5).source().equals("TLE"),
+        var stale = OrbitInput.select(laterTle, gnss, later, 5);
+        check(stale.source().equals("TLE") && stale.reason().equals("GNSS_STALE_72H") &&
+                stale.lastGnssEpoch().equals(start),
                 "GNSS 72h boundary fallback");
         rejected(() -> OrbitInput.select(tle, gnss, start.minusSeconds(1), 5), "future GNSS");
         rejected(() -> OrbitInput.select(null, null, start, 5), "missing all sources");

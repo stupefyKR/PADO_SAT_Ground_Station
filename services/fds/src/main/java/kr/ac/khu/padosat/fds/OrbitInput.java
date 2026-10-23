@@ -1,7 +1,6 @@
 package kr.ac.khu.padosat.fds;
 
 import java.io.IOException;
-import java.io.Reader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -21,12 +20,14 @@ import org.orekit.utils.PVCoordinates;
 public final class OrbitInput {
     public record GnssState(int noradId, Instant epoch, PVCoordinates pv) { }
     public record Selected(String source, String model, AbsoluteDate epoch, TLE tle,
-                           GnssState gnss, String reason) { }
+                           GnssState gnss, String reason, Instant lastGnssEpoch) { }
 
     private OrbitInput() { }
 
     public static Selected select(Path tlePath, Path gnssPath, Instant start, int noradId)
             throws IOException {
+        String fallbackReason = "GNSS_MISSING";
+        Instant lastGnssEpoch = null;
         if (gnssPath != null && Files.exists(gnssPath)) {
             GnssState gnss = readGnss(gnssPath);
             if (gnss.noradId() != noradId) {
@@ -38,8 +39,11 @@ public final class OrbitInput {
             }
             if (ageSeconds < 72L * 3600L) {
                 return new Selected("GNSS", "NUMERICAL_GRAVITY_THIRD_BODY_PRELIMINARY",
-                        date(gnss.epoch()), null, gnss, "GNSS_RECEIVED_WITHIN_72H");
+                        date(gnss.epoch()), null, gnss, "GNSS_RECEIVED_WITHIN_72H",
+                        gnss.epoch());
             }
+            fallbackReason = "GNSS_STALE_72H";
+            lastGnssEpoch = gnss.epoch();
         }
         if (tlePath == null) {
             throw new IllegalArgumentException("TLE required when GNSS is missing or >=72h old");
@@ -54,7 +58,7 @@ public final class OrbitInput {
             throw new IllegalArgumentException("TLE epoch outside allowed 72h age");
         }
         return new Selected("TLE", "SGP4", tle.getDate(), tle, null,
-                "GNSS_MISSING_OR_STALE");
+                fallbackReason, lastGnssEpoch);
     }
 
     public static TLE readTle(Path path) throws IOException {
@@ -84,10 +88,7 @@ public final class OrbitInput {
         if (Files.size(path) > 4096) {
             throw new IllegalArgumentException("GNSS state body too large");
         }
-        Properties p = new Properties();
-        try (Reader reader = Files.newBufferedReader(path, StandardCharsets.UTF_8)) {
-            p.load(reader);
-        }
+        Properties p = strictProperties(path);
         if (!"fds.gnss-state.v1".equals(p.getProperty("schema")) ||
                 !"ITRF".equals(p.getProperty("frame"))) {
             throw new IllegalArgumentException("GNSS schema or frame unsupported");
@@ -123,6 +124,27 @@ public final class OrbitInput {
             throw new IllegalArgumentException("invalid GNSS satellite ID");
         }
         return new GnssState(id, Instant.parse(utc), new PVCoordinates(position, velocity));
+    }
+
+    private static Properties strictProperties(Path path) throws IOException {
+        Properties result = new Properties();
+        for (String raw : Files.readAllLines(path, StandardCharsets.UTF_8)) {
+            if (raw.isBlank() || raw.startsWith("#")) {
+                continue;
+            }
+            int separator = raw.indexOf('=');
+            if (separator < 1 || raw.indexOf('=', separator + 1) >= 0) {
+                throw new IllegalArgumentException("malformed GNSS state field");
+            }
+            String key = raw.substring(0, separator);
+            String value = raw.substring(separator + 1);
+            if (!key.matches("[a-z_]+") || value.isEmpty() ||
+                    value.chars().anyMatch(character -> character < 33 || character > 126) ||
+                    result.putIfAbsent(key, value) != null) {
+                throw new IllegalArgumentException("invalid or repeated GNSS state field");
+            }
+        }
+        return result;
     }
 
     private static double number(Properties p, String key) {
