@@ -15,7 +15,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parents[1]
 CATALOG = json.loads((ROOT / "interfaces/pado_packets/draft_v0.json").read_text(encoding="utf-8"))
-OUT = ROOT / "docs/figures/tc_tm"
+OUT = ROOT / "docs/TC_TM"
 OUT.mkdir(parents=True, exist_ok=True)
 
 FONT_REGULAR = Path("C:/Windows/Fonts/malgun.ttf")
