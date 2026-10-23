@@ -13,6 +13,7 @@
 - Argon2id 계정, lead TOTP, 재사용 거부, 잠금, 유휴·절대 세션 만료, HttpOnly/Secure/SameSite 쿠키와 CSRF 로그아웃을 구현했다. 초기 계정이나 비밀번호는 저장소에 두지 않는다.
 - 별도 ROS/MPS HTTPS API는 포털의 mTLS 클라이언트 인증서를 요구한다. 포털은 로그인한 사용자·역할만 내부로 전달한다. 개발용 Compose에서 백엔드는 내부 브리지에만 연결하고 포털은 VM 루프백만 게시한다.
 - ROS/MPS 화면은 비운용 상태·빈 명령·미정 FDS 일정을 읽기 전용으로 보여준다. 현재 C 코어 운용 서비스가 없으므로 실제 승인·송출·업링크·시퀀스 출력 API는 없다. 단계 9 전체 완료로 판정하지 않는다(결정 #20).
+- 검증: [Ubuntu CI #44](https://github.com/stupefyKR/PADO_SAT_Ground_Station/actions/runs/39899833305)에서 GCC/Clang·기존 CTest, Argon2id·TOTP·세션·TLS/mTLS·직접 API 거부 Python 시험, 단계 7 컨테이너 시험, 단계 9 Compose 구성·이미지 빌드 전체 성공. Windows 루프백 HTTPS 통합 시험도 통과했다.
 
 ### 2026-10-23 — NAS 연동 현 개발 범위에서 제외
 

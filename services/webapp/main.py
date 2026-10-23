@@ -334,7 +334,6 @@ def parser() -> argparse.ArgumentParser:
     user.add_argument("--db", type=Path, required=True)
     user.add_argument("--username", required=True)
     user.add_argument("--role", choices=sorted(ROLES), required=True)
-    user.add_argument("--totp-secret", default="")
     for mode in ("portal", "ros", "mps"):
         service = sub.add_parser(mode)
         service.add_argument("--bind", default="127.0.0.1")
@@ -362,7 +361,7 @@ def main() -> None:
         repeat = getpass.getpass("Repeat password: ")
         if entered != repeat:
             raise SystemExit("passwords differ")
-        totp_seed = args.totp_secret or (secrets.token_bytes(20) if args.role == "lead" else None)
+        totp_seed = secrets.token_bytes(20) if args.role == "lead" else None
         if isinstance(totp_seed, bytes):
             import base64
             totp_seed = base64.b32encode(totp_seed).decode("ascii")

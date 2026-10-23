@@ -57,6 +57,8 @@ Linux 시험은 Argon2id 실제 검증, TOTP 재사용 거부, 세션 만료·�
 로그인·로그아웃·CSRF, 포털→ROS/MPS mTLS와 백엔드 직접 접속 거부를 확인한다.
 로컬 Windows에는 libsodium/openssl 명령이 없으면 해당 환경 의존 시험이
 건너뛰어지며 Ubuntu CI에서 실행한다.
+[Ubuntu CI #44](https://github.com/stupefyKR/PADO_SAT_Ground_Station/actions/runs/39899833305)에서
+이 시험과 Compose 구성·이미지 빌드가 통과했다.
 
 단계 9 전체 완료에는 C 코어의 실제 서비스·영속 데이터와 웹 API의 연결,
 확정된 TC/TM·FDS·Mission Request ICD에 따른 화면 기능, 재인증을 실제 승인
