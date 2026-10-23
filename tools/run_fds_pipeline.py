@@ -21,8 +21,10 @@ from pathlib import Path
 
 if __package__:
     from .publish_fds_view import publish
+    from .stage_fds_outbox import stage
 else:
     from publish_fds_view import publish
+    from stage_fds_outbox import stage
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -138,6 +140,7 @@ def run_cycle(args: argparse.Namespace, *, now: datetime | None = None) -> tuple
                    "-Dexec.classpathScope=test",
                    "-Dexec.args=" + " ".join(_maven_token(value) for value in fds_args)]
         subprocess.run(command, cwd=ROOT, env=environment, check=True)
+    stage(run, args.outbox_dir.resolve())
     published = publish(run, args.view_dir.resolve())
     metadata = dict(line.split("=", 1) for line in (run / "run.properties").read_text().splitlines()
                     if "=" in line)
@@ -160,6 +163,8 @@ def main() -> None:
     parser.add_argument("--gnss-body", type=Path)
     parser.add_argument("--gnss-manifest", type=Path)
     parser.add_argument("--output-root", type=Path, default=ROOT / "out/fds-runs")
+    parser.add_argument("--outbox-dir", type=Path, default=ROOT / "out/fds-outbox",
+                        help="unique N13/N15 file pairs staged after each successful FDS run")
     parser.add_argument("--view-dir", type=Path, default=ROOT / "out/fds-live-view",
                         help="separate operational-input view; never the fixed ISS demo by default")
     parser.add_argument("--mvn", type=Path, default=Path("mvn"))

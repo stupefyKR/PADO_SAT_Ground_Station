@@ -10,7 +10,6 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from tools.run_fds_pipeline import run_cycle
-from tools.stage_fds_outbox import stage
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -44,7 +43,8 @@ def main() -> None:
     pipeline = argparse.Namespace(
         config=config, orekit_data=args.orekit_data.resolve(), tle_body=None, tle_manifest=None,
         gnss_body=gnss, gnss_manifest=manifest, output_root=scratch / "runs",
-        view_dir=scratch / "view", mvn=args.mvn, maven_repo=args.maven_repo,
+        view_dir=scratch / "view", outbox_dir=scratch / "outbox",
+        mvn=args.mvn, maven_repo=args.maven_repo,
     )
     previous_runs = {path.parent for path in (scratch / "runs").glob("fds-*/contact_schedule.csv")}
     published, source = run_cycle(pipeline)
@@ -57,8 +57,10 @@ def main() -> None:
             if path.parent not in previous_runs]
     if len(runs) != 1:
         raise AssertionError("FDS did not write exactly one new contact schedule")
-    staged = stage(runs[0].parent, scratch / "outbox")
+    staged = scratch / "outbox" / runs[0].parent.name
     schedule = staged / ("contact_schedule-" + runs[0].parent.name + ".csv")
+    if len(list(staged.iterdir())) != 6 or not schedule.is_file():
+        raise AssertionError("FDS did not publish three N13/N15 outbox file pairs")
     if args.mps_import_exe:
         subprocess.run([str(args.mps_import_exe.resolve()), str(scratch),
                         str(schedule), str(schedule.with_name(schedule.name + ".manifest.json"))],

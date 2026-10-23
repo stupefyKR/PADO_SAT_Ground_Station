@@ -68,11 +68,11 @@ python3 tools/run_fds_pipeline.py \
   --watch --poll-seconds 60 --refresh-seconds 900
 ```
 
-GNSS가 아직 없으면 N11의 두 인자를 생략한다. 아직 수신되지 않은 설정 경로의 두 파일이 모두 없으면 해당 입력을 기다린다. `--watch`를 생략하면 1회만 실행한다. Maven 경로·캐시는 `--mvn`, `--maven-repo`로 지정할 수 있다. 결과는 기본 `out/fds-runs`에 보존하고, 화면 파일은 **ISS 시험 화면과 분리한** `out/fds-live-view`에 원자적으로 게시한다. 실제 화면을 이 결과에 연결하려면 배포 시 `PADO_STAGE9_FDS_VIEW_DIR`을 해당 디렉터리로 명시해야 한다. 이 실행기는 SFTP 수신·상대 신원 인증·원시 GNSS TM 해독을 수행하지 않는다. 그 경계와 실측 설정, 서비스 컨테이너 구성은 여전히 미완료다.
+GNSS가 아직 없으면 N11의 두 인자를 생략한다. 아직 수신되지 않은 설정 경로의 두 파일이 모두 없으면 해당 입력을 기다린다. `--watch`를 생략하면 1회만 실행한다. Maven 경로·캐시는 `--mvn`, `--maven-repo`로 지정할 수 있다. 결과는 기본 `out/fds-runs`에 보존하고, N13/N15 출고함은 `out/fds-outbox`, 화면 파일은 **ISS 시험 화면과 분리한** `out/fds-live-view`에 원자적으로 게시한다. 출고함은 `--outbox-dir`로 바꿀 수 있다. 실제 화면을 이 결과에 연결하려면 배포 시 `PADO_STAGE9_FDS_VIEW_DIR`을 해당 디렉터리로 명시해야 한다. 이 실행기는 SFTP 수신·상대 신원 인증·원시 GNSS TM 해독을 수행하지 않는다. 그 경계와 실측 설정, 서비스 컨테이너 구성은 여전히 미완료다.
 
 ### N13/N15 전송용 출고함
 
-완료된 FDS 실행 디렉터리의 N13/N15 CSV 세 개와 매니페스트를 `tools/stage_fds_outbox.py`로 다시 검증한다. 도구는 각 파일에 실행 ID를 붙여 고유 이름의 불변 파일 쌍 3개를 원자적으로 출고함에 게시한다. 원본 FDS 결과와 ISS 시험 화면은 수정하지 않는다. 예를 들어 `out/fds-runs/fds-20261023T100000Z-1234abcd`를 지정하면 `out/fds-outbox/fds-20261023T100000Z-1234abcd/`에 `contact_schedule-fds-20261023T100000Z-1234abcd.csv`와 해당 매니페스트 등이 생긴다. MPS는 원본 고정 파일명과 출고함의 고유 파일명을 모두 검증할 수 있다.
+완료된 FDS 실행 디렉터리의 N13/N15 CSV 세 개와 매니페스트를 `tools/stage_fds_outbox.py`로 다시 검증한다. 반복 계산 실행기는 계산 성공 후 이를 자동 호출한다. 도구는 각 파일에 실행 ID를 붙여 고유 이름의 불변 파일 쌍 3개를 원자적으로 출고함에 게시한다. 원본 FDS 결과와 ISS 시험 화면은 수정하지 않는다. 예를 들어 `out/fds-runs/fds-20261023T100000Z-1234abcd`를 지정하면 `out/fds-outbox/fds-20261023T100000Z-1234abcd/`에 `contact_schedule-fds-20261023T100000Z-1234abcd.csv`와 해당 매니페스트 등이 생긴다. MPS는 원본 고정 파일명과 출고함의 고유 파일명을 모두 검증할 수 있다.
 
 ```sh
 python3 tools/stage_fds_outbox.py out/fds-runs/fds-20261023T100000Z-1234abcd
