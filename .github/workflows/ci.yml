@@ -45,6 +45,7 @@ jobs:
           python3 tests/run_stage8_fuzz.py --build build-linux-fuzz
       - name: Check interface and secret rules
         run: |
+          bash -n pado-gs.sh
           python3 -m unittest discover -s tests -p 'test_*.py' -v
           python3 tools/check_secrets.py --staged
       - name: Test isolated container network

@@ -1,6 +1,8 @@
 import base64
 import ctypes.util
 import hashlib
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -74,6 +76,18 @@ class AuthTests(unittest.TestCase):
         self.assertTrue(encoded.startswith("$argon2id$"))
         self.assertTrue(hasher.verify(encoded, "valid-password-123"))
         self.assertFalse(hasher.verify(encoded, "wrong"))
+
+    @unittest.skipUnless(ctypes.util.find_library("sodium"),
+                         "libsodium not installed on this host")
+    def test_account_status_cli_reports_first_user(self):
+        command = [sys.executable, "-m", "services.webapp.main", "account-status",
+                   "--db", str(Path(self.temp.name) / "accounts.db")]
+        root = Path(__file__).resolve().parents[1]
+        self.assertEqual(subprocess.check_output(command, cwd=root, text=True).strip(),
+                         "empty")
+        self.store.create_user("planner01", "planner", "valid-password-123")
+        self.assertEqual(subprocess.check_output(command, cwd=root, text=True).strip(),
+                         "configured")
 
 
 if __name__ == "__main__":

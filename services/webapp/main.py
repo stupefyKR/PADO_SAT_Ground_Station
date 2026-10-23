@@ -584,6 +584,8 @@ def parser() -> argparse.ArgumentParser:
     user.add_argument("--db", type=Path, required=True)
     user.add_argument("--username", required=True)
     user.add_argument("--role", choices=sorted(ROLES), required=True)
+    account = sub.add_parser("account-status", help="report whether any portal user exists")
+    account.add_argument("--db", type=Path, required=True)
     token = sub.add_parser("init-internal-token", help="create local HTTP backend token")
     token.add_argument("--path", type=Path, required=True)
     for mode in ("portal", "ros", "mps"):
@@ -618,6 +620,14 @@ def main() -> None:
     os.umask(0o077)
     if args.mode == "init-internal-token":
         initialize_internal_token(args.path)
+        return
+    if args.mode == "account-status":
+        store = AuthStore(args.db)
+        try:
+            print("configured" if store.db.execute("SELECT 1 FROM users LIMIT 1").fetchone()
+                  else "empty")
+        finally:
+            store.close()
         return
     if args.mode == "add-user":
         entered = getpass.getpass("Password (minimum 12 characters): ")

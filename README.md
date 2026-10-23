@@ -8,6 +8,27 @@ GitHub 원격 저장소는 비공개로 설정되어 있습니다(2026-10-21 확
 
 기준 문서: [원본 N2 포함 제안서](docs/지상국.pdf), [개발방향](docs/PADO-SAT_지상국_개발방향.md), [보안 계획서](docs/PADO-SAT_지상국_보안설계_개발방향계획서.md), [진행 기록](docs/PROGRESS.md), [결정 기록](docs/DECISIONS.md)
 
+## VMware 시험 웹 실행
+
+Windows 관제 PC(`192.168.45.1`)와 VMware Linux VM(`192.168.45.128`)의
+사설망 시험 환경에서는 저장소를 clone한 뒤 다음처럼 시작한다. Docker Engine,
+Compose 플러그인, `curl`이 필요하며, 첫 실행 때 웹 로그인 계정 비밀번호를 묻는다.
+
+```sh
+git clone https://github.com/stupefyKR/PADO_SAT_Ground_Station.git pado-gs
+cd pado-gs
+git switch feat/fds-core
+./pado-gs.sh start
+```
+
+Windows 브라우저에서 `http://192.168.45.128:8080/login`에 접속한다. VM 또는
+관제 PC 주소가 다르면 각각 `PADO_LOCAL_BIND_IP`와 `PADO_OPERATOR_CIDR`로
+지정한다. `./pado-gs.sh stop`은 데이터 볼륨을 보존하며,
+`./pado-gs.sh cleanup`은 삭제 확인 뒤 계정·시험 시퀀스·FDS 결과를 포함한 프로젝트
+볼륨과 로컬 이미지를 제거한다. 방화벽 접근 범위와 상세 절차는
+[단계 9 안내](deploy/stage9/README.md)를 참고한다. 이 스택은 실제 TC를
+송출하지 않는 비운용 시험 구성이다.
+
 ## 진행 상태
 
 | 단계 | 내용 | 상태 | 비고 |
@@ -25,7 +46,7 @@ GitHub 원격 저장소는 비공개로 설정되어 있습니다(2026-10-21 확
 | 6 | FDS·DGS-NET·아카이브·SDC 교환 | 완료(비운용 파일 교환 기준선) | N05·N08–N18 경로·유형·SFTP 시험 통과; FDS N13/N15 출고함·단발 송수신 CLI 추가, 실제 상대·상주 서비스 연결 대기 |
 | 7 | 단일 VM의 Docker·UFW 배포 기반 | 완료(개발 기준선) | N2 연결 쌍·Docker 격리·journald·UFW·시뮬레이터 앱 경계 시험 통과; 실제 서버 적용은 최종 배포 수락 절차 |
 | 8 | 백업·복구·퍼징·핵심 서비스 보안 시험 | 완료(개발 기준선) | 로컬 복원·변조 거부 및 4개 파서 ASan+UBSan 퍼징 통과; 실제 백업 매체·FlatSat 복구는 최종 배포 수락 절차 |
-| 9 | 포털 인증·ROS/MPS 웹 UI | 진행 중(비운용 기준선) | Argon2id·TOTP 세션, 포털→API mTLS, 상주 C 읽기 서비스, ROS 시험 TM·자세 뷰와 MPS 시험 시퀀스 검토·예약 초안; 운용 코어·ICD·관제 PC 현장 시험 대기 |
+| 9 | 포털 인증·ROS/MPS 웹 UI | 진행 중(비운용 기준선) | Argon2id·TOTP 세션, 로컬 HTTP 시험의 내부 토큰/별도 개발 구성의 mTLS, 상주 C 읽기 서비스, ROS 시험 TM·자세 뷰와 MPS 시험 시퀀스 검토·예약 초안; 운용 코어·ICD·관제 PC 현장 시험 대기 |
 | FDS 코어 | TLE SGP4·GNSS 예비 수치 전파 | 진행 중(비운용 계산 기준선) | 두 안테나 최대 72시간 산출, N05 인증 SFTP pull·N11 수신함 스냅샷·반복 계산, N13/N15 출고함과 MPS 일정 반입. 실제 GNSS TM ICD·정밀도 검증·SFTP 서버·서비스 배포 연결 대기 |
 
 ## 아키텍처

@@ -9,25 +9,34 @@
 역할 검사, 세션과 CSRF 검사는 HTTP 시험에서도 유지된다. 기존 TLS 시험 구성인
 `compose.dev.yaml`과는 별개다.
 
-VM에 Docker Compose가 설치돼 있다면 저장소를 clone하고 이번 작업 브랜치를
-선택한 후 다음 명령을 실행한다. 첫 빌드는 고정된 Orekit 데이터와 Maven 의존성을
-받으므로 VM의 빌드 네트워크가 필요하다. 실행 중 FDS 컨테이너는 외부
-네트워크에 연결되지 않는다. 로그인 계정은 직접 한 번 만든다.
+VM에 Docker Engine, Compose 플러그인, `curl`이 설치돼 있다면 저장소를 clone하고
+이번 작업 브랜치를 선택한 뒤 저장소 루트에서 실행한다. 스크립트의 `start`는
+이미지를 빌드하고, 관제 PC에서 포털로 오는 트래픽에만 접근 규칙을 설정하고,
+컨테이너를 올리고 포털 응답을 확인한다. 처음 실행해 계정 DB가 비어 있으면 사용자 이름
+`planner01`·역할 `planner`의 비밀번호를 대화식으로 두 번 입력받는다. 비밀번호를
+명령행 인자나 Git 파일에 넣지 않는다. 이후 `start`에서는 저장된 계정을 유지한다.
+첫 빌드는 고정된 Orekit 데이터와 Maven 의존성을 받으므로 VM의 빌드 네트워크가
+필요하다. 실행 중 FDS 컨테이너는 외부 네트워크에 연결되지 않는다.
 
 ```sh
 git clone https://github.com/stupefyKR/PADO_SAT_Ground_Station.git pado-gs
 cd pado-gs
 git switch feat/fds-core
-docker compose -f deploy/stage9/compose.local.yaml build
-docker compose -f deploy/stage9/compose.local.yaml run --rm --no-deps portal \
-  python3 -m services.webapp.main add-user --db /state/accounts.db \
-  --username planner01 --role planner
-docker compose -f deploy/stage9/compose.local.yaml up -d
-docker compose -f deploy/stage9/compose.local.yaml ps
+./pado-gs.sh start
 ```
 
-VM의 IP가 바뀌었다면 `PADO_LOCAL_BIND_IP`를 해당 VM의 **관제 PC 전용 사설망
-주소**로 설정하고 실행한다. Windows에서 별도 SSH 포워딩 없이
+기본 바인드 주소는 VM의 `PADO_LOCAL_BIND_IP=192.168.45.128`, 허용할 관제 PC
+주소 범위는 `PADO_OPERATOR_CIDR=192.168.45.1/32`이다. VM 주소 또는 관제 PC의
+**VM에서 보이는 출발지 주소**가 다르면 실행 전에 각각 실제 값으로 지정한다.
+`PADO_LOCAL_BIND_IP`는 VM에 할당된 관제망 IPv4여야 한다. 예를 들어:
+
+```sh
+PADO_LOCAL_BIND_IP=192.168.45.128 \
+PADO_OPERATOR_CIDR=192.168.45.1/32 \
+./pado-gs.sh start
+```
+
+Windows에서 별도 SSH 포워딩 없이
 `http://192.168.45.128:8080/login`에 접속해 로그인한다. ROS는 `/ops`,
 MPS는 `/mps`, 현재 ISS 위치는 `/orbit`이다. 화면은 동일 출처의 인증된 API를
 호출한다. `fds-iss-demo`가 15분마다 고정 ISS TLE를 계산해 ORBIT 보기와 N13
@@ -36,19 +45,32 @@ PASS 일정을 공유 Docker 볼륨에 게시한다. MPS의 선택 PASS 지도·
 
 VM의 사설망 인터페이스가 Windows에서 접속 가능한지와 Docker 포트 `8080`이
 해당 인터페이스에만 게시됐는지 확인한다. Docker 게시 포트는 호스트 UFW의
-일반 입력 규칙만으로 제한된다고 가정하지 않는다. 이 Compose는 외부망에
-연결된 인터페이스에서 사용하지 않는다. 고정 ISS TLE는 2026-10-25 22:03 UTC
+일반 입력 규칙을 우회할 수 있다. `start`는 Docker의 `DOCKER-USER` 체인에
+이 프로젝트 전용 제한 규칙을 설치해 지정한 관제 PC 주소 범위만 포털 포트로
+들어오게 한다. 이 규칙을 적용할 수 없으면 안전하게 기동을 중단한다.
+컨테이너 간 연결은 Compose의 분리된 네트워크로 제한한다. 포털만 ROS·MPS API
+네트워크에 연결되고, 두 API는 호스트 포트를 게시하지 않는다. FDS와 C 읽기
+서비스에는 네트워크 인터페이스가 없다. 스크립트는 UFW의 기존 규칙과 SSH
+접속 정책을 변경하지 않는다. 이 Compose는 외부망에 연결된 인터페이스에서
+사용하지 않는다. 고정 ISS TLE는 2026-10-25 22:03 UTC
 이후 신선도 조건을 충족하지 못하므로 그 뒤에는 새 시험 입력 또는 실제 위성
 입력이 필요하다. 만료 뒤 ORBIT는 현재 위치를 표시하지 않고 MPS 패스 경로도
 일치하는 유효 자료가 없다고 표시한다.
 
 ```sh
-docker compose -f deploy/stage9/compose.local.yaml logs --tail=50 fds-iss-demo
-docker compose -f deploy/stage9/compose.local.yaml logs --tail=50 portal mps-api
-docker compose -f deploy/stage9/compose.local.yaml down
+./pado-gs.sh stop
+./pado-gs.sh start
+./pado-gs.sh status
+./pado-gs.sh cleanup
 ```
 
-`down`은 계정·시퀀스·FDS 게시 결과를 담은 이름 있는 Docker 볼륨을 보존한다.
+`stop`은 이 프로젝트의 컨테이너를 멈추고 스크립트가 만든 포털 접근 규칙만
+제거한다. 계정, 시퀀스 초안, FDS 결과 등 이름 있는 Docker 볼륨과 이미지는
+남으므로 다음 `start`에서 재사용한다. `cleanup`은 `DELETE` 입력을 확인한 뒤 프로젝트
+`pado-stage9-local`의 컨테이너·네트워크·이름 있는 볼륨·로컬 빌드 이미지를
+제거한다. **계정 DB, 저장한 초안, 내부 토큰, 게시된 궤도·PASS 결과와 ROS
+시험 기록도 삭제된다.** 비대화식 실행이 필요한 경우 `cleanup --yes`를 사용할
+수 있다. 저장소 파일과 Git 이력은 삭제하지 않는다.
 
 ## Windows에서 화면 배치만 빠르게 확인
 
@@ -61,28 +83,30 @@ Linux 개발 환경이다.
 
 현재는 **비운용 수직 경로**다. `portal`은 Argon2id 계정·TOTP·세션·
 CSRF·계정 잠금·로그인 속도 제한을 제공하고 정적 ROS/MPS 화면을 제공한다.
-`ros-api`와 `mps-api`는 별도 프로세스/컨테이너에서 mTLS 클라이언트 인증서를
-요구한다. 포털이 로그인한 사용자와 역할을 내부 헤더로 전달하며, 백엔드
-인증서의 SAN도 검증한다. 클라이언트가 보낸 동일한 헤더는 전달하지 않는다.
+`compose.local.yaml`에서 `ros-api`와 `mps-api`는 각각 별도 내부 네트워크의
+HTTP 서비스를 제공하고, 포털이 보유한 내부 토큰을 검사한다. 포털은 로그인한
+사용자와 역할을 전달하고 클라이언트가 보낸 동일한 헤더는 전달하지 않는다.
+별도 `compose.dev.yaml` 구성에서는 내부 API에 mTLS와 인증서 SAN 검증을 쓴다.
 
-ROS는 `SIM_ONLY`와 TC 송출 차단 상태, MPS는 현재 비운용 명령 DB의 버전과 빈
-명령 목록을 표시한다. FDS N13 일정 파일은 C 코어에서 검증해 메모리 계획에
+ROS는 `SIM_ONLY`와 TC 송출 차단 상태를 표시하고, MPS는 비운용 명령 초안과
+FDS PASS를 이용해 시험 시퀀스를 구성한다. FDS N13 일정 파일은 C 코어에서 검증해 메모리 계획에
 가져와 검증하고 이 개발 Compose의 MPS 웹 서비스에 읽기 전용으로 제공한다.
 **TC 송출, 승인, 업링크 반입, 운용 시퀀스 출력, 실제 TM 파라미터 조회 API는
 존재하지 않는다.** 단계 9 전체 완료로 판정하지 않는다.
 
-`/orbit`은 FDS 독립 프로세스가 만든 `orbit_view.json`을 세션 인증 뒤 읽어
+`/orbit`은 FDS 계산 프로세스가 만든 `orbit_view.json`을 세션 인증 뒤 읽어
 동시에 보이는 3D 지구와 2D 지상궤적, 주야간, 향후 3주기 궤적과 두 지상국의 PASS polar plot을
 표시한다. 지도에서는 TLE나 GNSS 상태를 다시 전파하지 않는다. 지구 텍스처는
-로컬 NASA Blue Marble이며 출처는 `web/assets/README.md`에 있다. 시험 중에는
-`python3 tools/build_iss_demo.py --orekit-data /path/to/orekit-data --watch --refresh-seconds 900`
-을 저장소 루트에서 별도 프로세스로 실행한다. 동일한 실행에서 ORBIT 파일과
-N13 PASS 파일을 게시하며, 포털과 MPS는 각각의 읽기 API를 통해 표시한다.
-이 프로세스는 Compose 밖에서 실행하고 두 게시 경로를 Compose의
-`PADO_STAGE9_FDS_VIEW_DIR`, `PADO_STAGE9_MPS_SCHEDULE_DIR`에 맞춘다.
+로컬 NASA Blue Marble이며 출처는 `web/assets/README.md`에 있다.
+`compose.local.yaml`의 `fds-iss-demo`가 15분마다 시험 계산을 수행하고 동일한
+실행에서 ORBIT 파일과 N13 PASS 파일을 이름 있는 Docker 볼륨에 게시한다.
+포털과 MPS는 각각의 읽기 API를 통해 표시한다.
 고정 TLE의 유효 기간이 지나면 FDS는 계산을 중단하고 ORBIT/MPS 경로 화면은
-유효한 현재 자료가 없다고 표시한다. FDS 실행·
-개발용 `tools/receive_fds_inputs.py`가 N05 인증 SFTP pull·N11 완료 파일 수신함을 검증된 스냅샷으로 게시하고 `tools/run_fds_pipeline.py`가 이를 반복 계산할 수 있다. Compose에는 이 수신기·FDS 실행 서비스를 아직 추가하지 않았다. 파일이 없거나 낡으면 현재 위치로
+유효한 현재 자료가 없다고 표시한다.
+별도 개발용 `tools/receive_fds_inputs.py`는 N05 인증 SFTP pull·N11 완료 파일
+수신함을 검증된 스냅샷으로 게시하고 `tools/run_fds_pipeline.py`는 이를 반복
+계산할 수 있다. 이 실제 입력 경로의 수신기·FDS 서비스는 아직 Compose에
+연결되지 않았다. 파일이 없거나 낡으면 현재 위치로
 표시하지 않는다. 시간 이동과 재생 기능은 없으며 화면은 현재 UTC 기준으로만 그린다.
 현재 고정 ISS TLE 화면 시험 도구는 `services/fds/README.md`에 별도로 기록했다.
 
@@ -111,8 +135,8 @@ ROS·MPS C 읽기 프로세스를 각각 별도 컨테이너에 상주시킨다.
 `/state/ros-tm.record` 부재·0건이다. 이 상주 프로세스는 **읽기 어댑터**이며
 실제 ROS TM 수신기나 MPS 계획 처리 데몬을 대체하지 않는다. 운용 계획,
 실제 TM 파라미터 변환과 경보 증적은 아직 연결되지 않았다. 명령 DB와
-시뮬레이터 기록은 크기·파일 유형·권한·무결성을 검사한다. TLS/mTLS와 로그인
-경계는 기존 포털 경로를 유지한다.
+시뮬레이터 기록은 크기·파일 유형·권한·무결성을 검사한다. 로그인과 내부 API의
+토큰 또는 mTLS 경계는 각 Compose 구성에 따라 유지한다.
 
 ## ROS·MPS 화면 구조
 
@@ -126,7 +150,8 @@ ROS는 상단 상태 요약, 센서 목록, 선택 센서의 추세·상하한, 
 MPS `TEST_ONLY_SEQUENCE` 본문과 매니페스트를 업로드하면 ROS API가 SHA-256,
 비운용 표시, 단계와 패스 시간 형식을 확인해 초안 DB에 보존한다. 로그인한
 operator/lead/planner는 패스 내부 시각의 단계별 예약 초안을 저장·취소할 수
-있으며 auditor는 읽기만 가능하다. POST에는 포털 세션·CSRF와 내부 mTLS가
+있으며 auditor는 읽기만 가능하다. POST에는 포털 세션·CSRF와 내부 토큰
+(`compose.local.yaml`) 또는 mTLS(`compose.dev.yaml`)가
 필요하다. 초안은 `DRAFT_ONLY`이며 시간 도래 시 실행하는 타이머, TC 인코더,
 signer, tc-gate, RF 송출 경로가 없다. 이는 기존 C 코어의 독립 승인·충돌·
 명령 검증을 대신하지 않는다.
@@ -136,7 +161,7 @@ MPS는 검증된 N13 패스 일정, 선택 패스의 ground view/polar plot, 초
 일치하지 않거나 TLE가 만료되면 표시를 차단한다. 화면은 60초마다 두 API를
 다시 읽는다. 연세대 UHF 패스에서 planner/operator/lead는 카탈로그에 인자가
 정의된 초안 명령의 인자와 AOS 기준 실행 오프셋을 순서대로 저장한다.
-`/api/mps/test-sequences` POST는 포털 세션·CSRF·내부 mTLS를 거치며,
+`/api/mps/test-sequences` POST는 포털 세션·CSRF·해당 Compose의 내부 인증을 거치며,
 MPS API는 인자 형식과 패스 범위·일정 SHA-256·예상 리비전을 검증한다.
 `mps_candidates` 볼륨의 별도 `sequence_drafts` 테이블이 초안을 보관한다.
 auditor는 조회만 가능하다. 대전 S-band는 패스 경로 조회만 제공한다.
