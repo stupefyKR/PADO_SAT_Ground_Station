@@ -1,16 +1,25 @@
 import json
+import os
 import shutil
 import ssl
+import struct
 import subprocess
 import tempfile
 import threading
 import unittest
+import zlib
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from services.webapp.auth import AuthStore
 from services.webapp.main import AppServer, COMMAND_DB
+
+
+CORE_BIN = Path(os.environ.get(
+    "PADO_STAGE9_CORE_PROBE_TEST",
+    Path(__file__).resolve().parents[1] / "build-linux-release" / "gs_stage9_core_probe",
+))
 
 
 class FakeHasher:
@@ -41,7 +50,8 @@ def make_cert(folder, ca_cert, ca_key, name):
     return cert, key
 
 
-@unittest.skipUnless(shutil.which("openssl"), "openssl command unavailable")
+@unittest.skipUnless(shutil.which("openssl") and CORE_BIN.is_file(),
+                     "openssl or Linux C core probe unavailable")
 class WebBoundaryTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -65,7 +75,9 @@ class WebBoundaryTests(unittest.TestCase):
         for mode, cert, key in (("ros", cls.ros_cert, cls.ros_key),
                                 ("mps", cls.mps_cert, cls.mps_key)):
             server = AppServer(("127.0.0.1", 0), mode=mode, cert=cert,
-                               key=key, ca=cls.ca_cert, command_db=COMMAND_DB)
+                               key=key, ca=cls.ca_cert, command_db=COMMAND_DB,
+                               tm_record=cls.folder / "ros-tm.record",
+                               core_probe=CORE_BIN)
             cls.servers.append(server)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
@@ -128,9 +140,11 @@ class WebBoundaryTests(unittest.TestCase):
         status, _, body = self.request("/api/ros/overview", headers=auth_header)
         self.assertEqual(status, 200)
         self.assertFalse(json.loads(body)["tc_send_available"])
+        self.assertEqual(json.loads(body)["sim_frame_count"], 0)
         status, _, body = self.request("/api/mps/catalog", headers=auth_header)
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body)["commands"], [])
+        self.assertEqual(json.loads(body)["version"], 1)
         status, _, body = self.request("/api/mps/passes", headers=auth_header)
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body)["passes"], [])
@@ -149,6 +163,28 @@ class WebBoundaryTests(unittest.TestCase):
                       headers={"X-Pado-Actor": "planner01", "X-Pado-Role": "planner"})
         with self.assertRaises((URLError, ConnectionError, ssl.SSLError)):
             urlopen(req, context=self.context, timeout=3)
+
+    def test_validated_ros_record_reaches_portal_and_corruption_fails_closed(self):
+        status, headers, _ = self.request("/api/login", method="POST", body={
+            "username": "planner01", "password": "valid-password-123"})
+        self.assertEqual(status, 200)
+        auth = {"Cookie": headers["Set-Cookie"].split(";", 1)[0]}
+        source = self.folder / "ros-tm.record"
+        header = (b"PSTSIM03" + bytes([1, 1, 0x7e, 0x57]) +
+                  struct.pack(">H", 3) + struct.pack(">I", 77) + b"abc")
+        frame = header + struct.pack(">I", zlib.crc32(header))
+        record = bytes([1]) + struct.pack(">I", len(frame)) + frame
+        try:
+            source.write_bytes(record)
+            source.chmod(0o600)
+            status, _, body = self.request("/api/ros/overview", headers=auth)
+            self.assertEqual(status, 200)
+            self.assertEqual(json.loads(body)["last_sequence"], 77)
+            source.write_bytes(record[:-1] + bytes([record[-1] ^ 1]))
+            status, _, _ = self.request("/api/ros/overview", headers=auth)
+            self.assertEqual(status, 502)
+        finally:
+            source.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

@@ -8,3 +8,14 @@ build*
 .env
 .env.*
 docs/
+out/
+__pycache__/
+*.pyc
+*.crt
+*.cer
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+secrets/
+keys/

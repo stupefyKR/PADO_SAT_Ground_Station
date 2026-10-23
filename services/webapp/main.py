@@ -22,11 +22,13 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from .auth import AuthError, AuthStore, ROLES
+from .core import CoreUnavailable, mps_catalog, ros_summary
 
 
 ROOT = Path(__file__).resolve().parents[2]
 WEB = ROOT / "web"
 COMMAND_DB = ROOT / "interfaces" / "command_db" / "commands.json"
+CORE_PROBE = Path("/usr/local/bin/gs_stage9_core_probe")
 MAX_BODY = 4096
 MAX_UPSTREAM = 65536
 ASSETS = {
@@ -51,7 +53,8 @@ class AppServer(ThreadingHTTPServer):
                  cert: Path, key: Path, ca: Path, auth: AuthStore | None = None,
                  ros_url: str = "", mps_url: str = "", client_cert: Path | None = None,
                  client_key: Path | None = None, command_db: Path = COMMAND_DB,
-                 tm_record: Path | None = None, static_root: Path = WEB) -> None:
+                 tm_record: Path = Path("/state/ros-tm.record"), static_root: Path = WEB,
+                 core_probe: Path = CORE_PROBE) -> None:
         self.mode = mode
         self.auth = auth
         self.ros_url = ros_url
@@ -61,6 +64,7 @@ class AppServer(ThreadingHTTPServer):
         self.ca = ca
         self.command_db = command_db
         self.tm_record = tm_record
+        self.core_probe = core_probe
         self.static_root = static_root
         self.login_attempts: dict[str, list[float]] = {}
         self.login_lock = threading.Lock()
@@ -296,24 +300,22 @@ class Handler(BaseHTTPRequestHandler):
             self._error(HTTPStatus.FORBIDDEN, "portal_identity")
             return
         if self.server.mode == "ros" and path == "/overview":
+            try:
+                summary = ros_summary(self.server.core_probe, self.server.tm_record)
+            except CoreUnavailable:
+                self._error(HTTPStatus.SERVICE_UNAVAILABLE, "ros_core_unavailable")
+                return
             self._json(HTTPStatus.OK, {
                 "mode": "SIM_ONLY", "operational": False,
                 "tm_icd": "TBD(ICD)", "tc_send_available": False,
-                "message": "Actual TM parameters and TC sending are unavailable."})
+                "message": "Actual TM parameters and TC sending are unavailable.",
+                **summary})
             return
         if self.server.mode == "mps" and path == "/catalog":
             try:
-                raw = self.server.command_db.read_bytes()
-                if len(raw) > 4096:
-                    raise ValueError("oversized command DB")
-                catalog = json.loads(raw)
-                if (catalog.get("operational") is not False or
-                        catalog.get("commands") != [] or
-                        type(catalog.get("version")) is not int or
-                        catalog["version"] < 1):
-                    raise ValueError("unsupported command DB")
-            except (OSError, ValueError, UnicodeError, AttributeError, TypeError):
-                self._error(HTTPStatus.SERVICE_UNAVAILABLE, "command_db_unavailable")
+                catalog = mps_catalog(self.server.core_probe, self.server.command_db)
+            except CoreUnavailable:
+                self._error(HTTPStatus.SERVICE_UNAVAILABLE, "mps_core_unavailable")
                 return
             self._json(HTTPStatus.OK, {
                 "version": catalog["version"], "commands": [],
@@ -350,6 +352,11 @@ def parser() -> argparse.ArgumentParser:
             service.add_argument("--static-root", type=Path, default=WEB)
         if mode == "mps":
             service.add_argument("--command-db", type=Path, default=COMMAND_DB)
+        if mode == "ros":
+            service.add_argument("--tm-record", type=Path,
+                                 default=Path("/state/ros-tm.record"))
+        if mode in ("ros", "mps"):
+            service.add_argument("--core-probe", type=Path, default=CORE_PROBE)
     return result
 
 
@@ -381,7 +388,9 @@ def main() -> None:
                        client_cert=getattr(args, "client_cert", None),
                        client_key=getattr(args, "client_key", None),
                        command_db=getattr(args, "command_db", COMMAND_DB),
-                       static_root=getattr(args, "static_root", WEB))
+                       tm_record=getattr(args, "tm_record", Path("/state/ros-tm.record")),
+                       static_root=getattr(args, "static_root", WEB),
+                       core_probe=getattr(args, "core_probe", CORE_PROBE))
     try:
         server.serve_forever(poll_interval=0.2)
     finally:

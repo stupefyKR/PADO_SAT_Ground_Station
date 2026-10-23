@@ -48,11 +48,15 @@ services:
     build:
       context: ../..
       dockerfile: docker/stage9/Dockerfile
-    command: ["python3", "-m", "services.webapp.main", "ros", "--bind", "0.0.0.0", "--port", "8443", "--cert", "/certs/ros-api.crt", "--key", "/certs/ros-api.key", "--ca", "/certs/ca.crt"]
+    command: ["python3", "-m", "services.webapp.main", "ros", "--bind", "0.0.0.0", "--port", "8443", "--cert", "/certs/ros-api.crt", "--key", "/certs/ros-api.key", "--ca", "/certs/ca.crt", "--tm-record", "/state/ros-tm.record"]
     volumes:
       - type: bind
         source: ${PADO_STAGE9_CERT_DIR:?set certificate directory}
         target: /certs
+        read_only: true
+      - type: volume
+        source: ros_state
+        target: /state
         read_only: true
     networks: [portal_ros]
     read_only: true
@@ -78,6 +82,7 @@ services:
     logging: {driver: journald}
 volumes:
   portal_state:
+  ros_state:
 networks:
   entry: {driver: bridge}
   portal_ros: {driver: bridge, internal: true}

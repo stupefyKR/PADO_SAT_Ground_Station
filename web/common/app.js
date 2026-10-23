@@ -31,6 +31,15 @@ const svgNS = "http://www.w3.org/2000/svg";
 let exampleActive = false;
 let selectedExample = exampleSensors[1];
 let exampleRange = 30;
+let latestRosOverview = null;
+let rosSummaryUnavailable = false;
+
+function renderRosCoreStatus() {
+  if (latestRosOverview === null || exampleActive) return;
+  const count = latestRosOverview.sim_frame_count;
+  value("ros-data-state", count > 0 ? `시험 프레임 ${count}건` : "수신 없음");
+  value("ros-last-tm", count > 0 ? `순번 ${latestRosOverview.last_sequence} · 시각 없음` : "수신 없음");
+}
 
 function svgNode(name, attributes = {}, label = "") {
   const node = document.createElementNS(svgNS, name);
@@ -163,6 +172,11 @@ function resetExample() {
   td.textContent = "TM 정의 및 실시간 데이터가 연결되면 경보 이력이 표시됩니다.";
   tr.append(td);
   rows.replaceChildren(tr);
+  if (rosSummaryUnavailable) {
+    value("ros-data-state", "조회 실패");
+    value("ros-last-tm", "확인 불가");
+  }
+  renderRosCoreStatus();
 }
 
 function setupRosExample() {
@@ -221,6 +235,27 @@ async function loginPage() {
   });
 }
 
+async function refreshRosSummary() {
+  try {
+    const overview = await api("/api/ros/overview");
+    value("ros-mode", overview.mode);
+    value("ros-tm", overview.tm_icd);
+    value("ros-tc", overview.tc_send_available ? "사용 가능" : "차단");
+    latestRosOverview = overview;
+    rosSummaryUnavailable = false;
+    renderRosCoreStatus();
+    document.getElementById("api-error").hidden = true;
+  } catch (_) {
+    latestRosOverview = null;
+    rosSummaryUnavailable = true;
+    if (!exampleActive) {
+      value("ros-data-state", "조회 실패");
+      value("ros-last-tm", "확인 불가");
+    }
+    showError("ROS 시험 기록을 읽지 못했습니다.");
+  }
+}
+
 async function workspace(page) {
   setupUtcClock();
   if (page === "ops") setupRosExample();
@@ -235,13 +270,13 @@ async function workspace(page) {
       window.location.assign("/login");
     } catch (_) { showError("로그아웃에 실패했습니다."); }
   });
-  try {
-    if (page === "ops") {
-      const overview = await api("/api/ros/overview");
-      value("ros-mode", overview.mode);
-      value("ros-tm", overview.tm_icd);
-      value("ros-tc", overview.tc_send_available ? "사용 가능" : "차단");
-    } else {
+  if (page === "ops") {
+    await refreshRosSummary();
+    setInterval(() => {
+      if (document.visibilityState === "visible") refreshRosSummary();
+    }, 5000);
+  } else {
+    try {
       const [catalog, passes] = await Promise.all([
         api("/api/mps/catalog"), api("/api/mps/passes")
       ]);
@@ -249,8 +284,8 @@ async function workspace(page) {
       value("mps-commands", catalog.commands.length);
       value("mps-passes", passes.passes.length);
       value("mps-catalog-status", catalog.status);
-    }
-  } catch (_) { showError("서브시스템 상태를 읽지 못했습니다."); }
+    } catch (_) { showError("서브시스템 상태를 읽지 못했습니다."); }
+  }
 }
 
 const page = document.body.dataset.page;
