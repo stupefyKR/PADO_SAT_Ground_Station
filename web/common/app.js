@@ -35,7 +35,7 @@ let latestRosOverview = null;
 let rosSummaryUnavailable = false;
 
 function renderRosCoreStatus() {
-  if (latestRosOverview === null || exampleActive) return;
+  if (latestRosOverview === null || exampleActive || window.rosTestPreviewActive) return;
   const count = latestRosOverview.sim_frame_count;
   value("ros-data-state", count > 0 ? `시험 프레임 ${count}건` : "수신 없음");
   value("ros-last-tm", count > 0 ? `순번 ${latestRosOverview.last_sequence} · 시각 없음` : "수신 없음");
@@ -248,7 +248,7 @@ async function refreshRosSummary() {
   } catch (_) {
     latestRosOverview = null;
     rosSummaryUnavailable = true;
-    if (!exampleActive) {
+    if (!exampleActive && !window.rosTestPreviewActive) {
       value("ros-data-state", "조회 실패");
       value("ros-last-tm", "확인 불가");
     }
@@ -258,7 +258,7 @@ async function refreshRosSummary() {
 
 async function workspace(page) {
   setupUtcClock();
-  if (page === "ops") setupRosExample();
+  // The ROS workbench owns the explicitly test-only TM preview controls.
   let session;
   try { session = await api("/api/session"); }
   catch (_) { return; }

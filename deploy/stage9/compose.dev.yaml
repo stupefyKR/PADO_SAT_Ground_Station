@@ -54,7 +54,7 @@ services:
     build:
       context: ../..
       dockerfile: docker/stage9/Dockerfile
-    command: ["python3", "-m", "services.webapp.main", "ros", "--bind", "0.0.0.0", "--port", "8443", "--cert", "/certs/ros-api.crt", "--key", "/certs/ros-api.key", "--ca", "/certs/ca.crt"]
+    command: ["python3", "-m", "services.webapp.main", "ros", "--bind", "0.0.0.0", "--port", "8443", "--cert", "/certs/ros-api.crt", "--key", "/certs/ros-api.key", "--ca", "/certs/ca.crt", "--draft-db", "/state/ros-drafts.db"]
     depends_on:
       ros-core-read: {condition: service_healthy}
     volumes:
@@ -66,6 +66,7 @@ services:
         source: ros_core_socket
         target: /run/core
         read_only: true
+      - ros_drafts:/state
     networks: [portal_ros]
     read_only: true
     cap_drop: [ALL]
@@ -136,6 +137,7 @@ volumes:
   portal_state:
   ros_state:
   ros_core_socket:
+  ros_drafts:
   mps_core_socket:
 networks:
   entry: {driver: bridge}

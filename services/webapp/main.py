@@ -1,4 +1,4 @@
-"""TLS portal and mutually authenticated read-only subsystem APIs.
+"""TLS portal and mutually authenticated subsystem APIs.
 
 This is a non-operational development boundary. No TC, approval or upload
 endpoint exists. Run each mode as a separate process/container.
@@ -23,12 +23,14 @@ from urllib.parse import urlsplit
 
 from .auth import AuthError, AuthStore, ROLES
 from .core import CoreUnavailable, mps_catalog, ros_summary
+from .ros_workbench import DraftError, RosDraftStore
 
 
 ROOT = Path(__file__).resolve().parents[2]
 WEB = ROOT / "web"
 CORE_SOCKET = Path("/run/core/core.sock")
 MAX_BODY = 4096
+MAX_DRAFT_BODY = 40000
 MAX_UPSTREAM = 65536
 MAX_ORBIT_VIEW = 4 * 1024 * 1024
 ASSETS = {
@@ -38,12 +40,16 @@ ASSETS = {
     "/orbit": ("orbit/index.html", "text/html; charset=utf-8"),
     "/assets/style.css": ("common/style.css", "text/css; charset=utf-8"),
     "/assets/app.js": ("common/app.js", "text/javascript; charset=utf-8"),
+    "/assets/ros-workbench.js": ("ops/workbench.js", "text/javascript; charset=utf-8"),
+    "/assets/ros-workbench.css": ("ops/workbench.css", "text/css; charset=utf-8"),
     "/assets/orbit.js": ("orbit/orbit.js", "text/javascript; charset=utf-8"),
     "/assets/orbit.css": ("orbit/orbit.css", "text/css; charset=utf-8"),
     "/assets/earth-blue-marble-october.jpg": ("assets/earth-blue-marble-october.jpg", "image/jpeg"),
 }
 PROXY_ROUTES = {
     "/api/ros/overview": ("ros", "/overview"),
+    "/api/ros/test-sequences": ("ros", "/test-sequences"),
+    "/api/ros/test-reservations": ("ros", "/test-reservations"),
     "/api/mps/catalog": ("mps", "/catalog"),
     "/api/mps/passes": ("mps", "/passes"),
 }
@@ -58,7 +64,8 @@ class AppServer(ThreadingHTTPServer):
                  ros_url: str = "", mps_url: str = "", client_cert: Path | None = None,
                  client_key: Path | None = None, static_root: Path = WEB,
                  core_socket: Path = CORE_SOCKET,
-                 orbit_view: Path | None = None) -> None:
+                 orbit_view: Path | None = None,
+                 draft_db: Path | None = None) -> None:
         self.mode = mode
         self.auth = auth
         self.ros_url = ros_url
@@ -69,6 +76,7 @@ class AppServer(ThreadingHTTPServer):
         self.core_socket = core_socket
         self.static_root = static_root
         self.orbit_view = orbit_view
+        self.drafts = RosDraftStore(draft_db) if mode == "ros" and draft_db else None
         self.login_attempts: dict[str, list[float]] = {}
         self.login_lock = threading.Lock()
         super().__init__(address, Handler)
@@ -163,23 +171,46 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = self._path()
-        if self.server.mode != "portal" or path not in ("/api/login", "/api/logout"):
-            self._error(HTTPStatus.NOT_FOUND, "not_found")
-            return
-        if path == "/api/login":
-            self._login()
+        if self.server.mode == "portal":
+            if path == "/api/login":
+                self._login()
+            elif path == "/api/logout":
+                self._logout()
+            elif path in ("/api/ros/test-sequences", "/api/ros/test-reservations",
+                          "/api/ros/test-reservations/cancel"):
+                self._portal_draft_post(path)
+            else:
+                self._error(HTTPStatus.NOT_FOUND, "not_found")
+        elif self.server.mode == "ros":
+            self._backend_draft_post(path)
         else:
-            self._logout()
+            self._error(HTTPStatus.NOT_FOUND, "not_found")
 
-    def _read_json(self) -> dict | None:
+    def _read_json(self, maximum: int = MAX_BODY) -> dict | None:
         try:
             length = int(self.headers.get("Content-Length", ""))
-            if length < 0 or length > MAX_BODY or self.headers.get("Content-Type", "").split(";")[0] != "application/json":
+            if length < 0 or length > maximum or self.headers.get("Content-Type", "").split(";")[0] != "application/json":
                 return None
             value = json.loads(self.rfile.read(length))
             return value if isinstance(value, dict) else None
         except (ValueError, UnicodeDecodeError):
             return None
+
+    def _portal_draft_post(self, path: str) -> None:
+        session = self._session()
+        if not session or not secrets.compare_digest(
+                session.csrf, self.headers.get("X-CSRF-Token", "")):
+            self._error(HTTPStatus.FORBIDDEN, "csrf_or_session")
+            return
+        if session.role not in ("operator", "lead", "planner"):
+            self._error(HTTPStatus.FORBIDDEN, "role_denied")
+            return
+        body = self._read_json(MAX_DRAFT_BODY)
+        if body is None:
+            self._error(HTTPStatus.BAD_REQUEST, "invalid_request")
+            return
+        route = ("ros", path.removeprefix("/api/ros"))
+        self._proxy(route, session.username, session.role, "POST", body)
 
     def _login(self) -> None:
         address = self.client_address[0]
@@ -284,7 +315,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._error(HTTPStatus.NOT_FOUND, "not_found")
 
-    def _proxy(self, route: tuple[str, str], username: str, role: str) -> None:
+    def _proxy(self, route: tuple[str, str], username: str, role: str,
+               method: str = "GET", body: dict | None = None) -> None:
         service, path = route
         base = self.server.ros_url if service == "ros" else self.server.mps_url
         address = urlsplit(base)
@@ -298,14 +330,20 @@ class Handler(BaseHTTPRequestHandler):
         try:
             connection = http.client.HTTPSConnection(address.hostname, address.port,
                                                      context=context, timeout=3)
-            connection.request("GET", path, headers={"X-Pado-Actor": username,
-                                                     "X-Pado-Role": role})
+            headers = {"X-Pado-Actor": username, "X-Pado-Role": role}
+            payload = None
+            if body is not None:
+                headers["Content-Type"] = "application/json"
+                payload = json.dumps(body, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+            connection.request(method, path, body=payload, headers=headers)
             response = connection.getresponse()
             data = response.read(MAX_UPSTREAM + 1)
-            if len(data) > MAX_UPSTREAM or response.status != HTTPStatus.OK:
+            if len(data) > MAX_UPSTREAM or (method == "GET" and path not in
+                                            ("/test-sequences", "/test-reservations") and
+                                            response.status != HTTPStatus.OK):
                 self._error(HTTPStatus.BAD_GATEWAY, "backend_failure")
             else:
-                self._send(HTTPStatus.OK, data)
+                self._send(response.status, data)
             connection.close()
         except (OSError, ssl.SSLError, http.client.HTTPException):
             self._error(HTTPStatus.BAD_GATEWAY, "backend_unavailable")
@@ -318,6 +356,14 @@ class Handler(BaseHTTPRequestHandler):
         role = self.headers.get("X-Pado-Role", "")
         if role not in ROLES or len(actor) > 64 or not actor:
             self._error(HTTPStatus.FORBIDDEN, "portal_identity")
+            return
+        if self.server.mode == "ros" and path in ("/test-sequences", "/test-reservations"):
+            if self.server.drafts is None:
+                self._error(HTTPStatus.SERVICE_UNAVAILABLE, "draft_store_unavailable")
+                return
+            items = (self.server.drafts.list_sequences() if path == "/test-sequences"
+                     else self.server.drafts.reservations())
+            self._json(HTTPStatus.OK, {"items": items, "operational": False})
             return
         if self.server.mode == "ros" and path == "/overview":
             try:
@@ -344,9 +390,39 @@ class Handler(BaseHTTPRequestHandler):
         if self.server.mode == "mps" and path == "/passes":
             self._json(HTTPStatus.OK, {
                 "passes": [], "operational": False,
-                "status": "TBD(FDS Contact Schedule ICD)"})
+                "status": "N13_SERVICE_NOT_CONNECTED"})
             return
         self._error(HTTPStatus.NOT_FOUND, "not_found")
+
+    def _backend_draft_post(self, path: str) -> None:
+        if not self._backend_identity() or self.server.drafts is None:
+            self._error(HTTPStatus.FORBIDDEN, "client_identity")
+            return
+        actor = self.headers.get("X-Pado-Actor", "")
+        role = self.headers.get("X-Pado-Role", "")
+        if not actor or len(actor) > 64 or role not in ("operator", "lead", "planner"):
+            self._error(HTTPStatus.FORBIDDEN, "portal_identity")
+            return
+        body = self._read_json(MAX_DRAFT_BODY)
+        if body is None:
+            self._error(HTTPStatus.BAD_REQUEST, "invalid_request")
+            return
+        try:
+            if path == "/test-sequences" and set(body) == {"sequence_text", "manifest_text"}:
+                result = self.server.drafts.import_pair(
+                    body["sequence_text"], body["manifest_text"], actor)
+            elif path == "/test-reservations" and set(body) == {"sha256", "step_id", "target_utc_s"}:
+                result = self.server.drafts.reserve(body["sha256"], body["step_id"],
+                                                    body["target_utc_s"], actor)
+            elif path == "/test-reservations/cancel" and set(body) == {"id"}:
+                self.server.drafts.cancel(body["id"], actor)
+                result = {"status": "CANCELLED"}
+            else:
+                raise DraftError("invalid_request")
+        except DraftError as exc:
+            self._error(HTTPStatus.BAD_REQUEST, str(exc))
+            return
+        self._json(HTTPStatus.OK, {**result, "operational": False})
 
 
 def parser() -> argparse.ArgumentParser:
@@ -373,6 +449,8 @@ def parser() -> argparse.ArgumentParser:
             service.add_argument("--orbit-view", type=Path)
         if mode in ("ros", "mps"):
             service.add_argument("--core-socket", type=Path, default=CORE_SOCKET)
+        if mode == "ros":
+            service.add_argument("--draft-db", type=Path)
     return result
 
 
@@ -405,11 +483,14 @@ def main() -> None:
                        client_key=getattr(args, "client_key", None),
                        static_root=getattr(args, "static_root", WEB),
                        core_socket=getattr(args, "core_socket", CORE_SOCKET),
-                       orbit_view=getattr(args, "orbit_view", None))
+                       orbit_view=getattr(args, "orbit_view", None),
+                       draft_db=getattr(args, "draft_db", None))
     try:
         server.serve_forever(poll_interval=0.2)
     finally:
         server.server_close()
+        if server.drafts:
+            server.drafts.close()
         if auth:
             auth.close()
 

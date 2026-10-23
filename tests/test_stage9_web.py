@@ -15,6 +15,7 @@ from urllib.request import Request, urlopen
 
 from services.webapp.auth import AuthStore
 from services.webapp.main import AppServer, ROOT
+from tests.test_ros_workbench import pair as test_sequence_pair
 
 
 CORE_BIN = Path(os.environ.get(
@@ -94,7 +95,8 @@ class WebBoundaryTests(unittest.TestCase):
                                 ("mps", cls.mps_cert, cls.mps_key)):
             server = AppServer(("127.0.0.1", 0), mode=mode, cert=cert,
                                key=key, ca=cls.ca_cert,
-                               core_socket=cls.core_sockets[mode])
+                               core_socket=cls.core_sockets[mode],
+                               draft_db=cls.folder / "ros-drafts.db" if mode == "ros" else None)
             cls.servers.append(server)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
@@ -117,6 +119,8 @@ class WebBoundaryTests(unittest.TestCase):
         for server in cls.servers:
             server.shutdown()
             server.server_close()
+            if server.drafts:
+                server.drafts.close()
         for thread in cls.threads:
             thread.join(timeout=3)
         for process in cls.core_processes:
@@ -184,6 +188,38 @@ class WebBoundaryTests(unittest.TestCase):
                       headers={"X-Pado-Actor": "planner01", "X-Pado-Role": "planner"})
         with self.assertRaises((URLError, ConnectionError, ssl.SSLError)):
             urlopen(req, context=self.context, timeout=3)
+
+    def test_test_only_ros_draft_auth_csrf_and_no_tc_route(self):
+        raw, manifest = test_sequence_pair(int(time.time()) + 3600)
+        status, _, _ = self.request("/api/ros/test-sequences", method="POST",
+                                    body={"sequence_text": raw, "manifest_text": manifest})
+        self.assertEqual(status, 403)
+        status, headers, body = self.request("/api/login", method="POST", body={
+            "username": "planner01", "password": "valid-password-123"})
+        self.assertEqual(status, 200)
+        auth = {"Cookie": headers["Set-Cookie"].split(";", 1)[0]}
+        csrf = json.loads(body)["csrf"]
+        payload = {"sequence_text": raw, "manifest_text": manifest}
+        status, _, _ = self.request("/api/ros/test-sequences", method="POST",
+                                    body=payload, headers=auth)
+        self.assertEqual(status, 403)
+        status, _, body = self.request("/api/ros/test-sequences", method="POST",
+                                       body=payload, headers={**auth, "X-CSRF-Token": csrf})
+        self.assertEqual(status, 200)
+        sequence = json.loads(body)
+        self.assertFalse(sequence["operational"])
+        status, _, body = self.request("/api/ros/test-reservations", method="POST",
+                                       body={"sha256": sequence["sha256"], "step_id": 1,
+                                             "target_utc_s": sequence["aos_utc_s"] + 60},
+                                       headers={**auth, "X-CSRF-Token": csrf})
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["status"], "DRAFT_ONLY")
+        status, _, body = self.request("/api/ros/test-reservations", headers=auth)
+        self.assertEqual(status, 200)
+        self.assertEqual(len(json.loads(body)["items"]), 1)
+        status, _, _ = self.request("/api/ros/tc", method="POST", body={},
+                                    headers={**auth, "X-CSRF-Token": csrf})
+        self.assertEqual(status, 404)
 
     def test_orbit_view_is_session_gated_and_read_only(self):
         status, _, _ = self.request("/api/fds/orbit")
