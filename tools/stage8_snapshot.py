@@ -1,6 +1,6 @@
 """Create, verify, and restore an explicitly selected local test snapshot.
 
-This does not encrypt data, snapshot a live database, or write to a NAS. The
+This does not encrypt data or snapshot a live database. The
 manifest digest must be kept outside the snapshot to detect later replacement.
 """
 

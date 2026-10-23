@@ -31,7 +31,7 @@ GitHub 원격 저장소는 비공개로 설정되어 있습니다(2026-10-21 확
 
 이전 개발방향 4.1절의 VM 8대 구성은 [결정 #16](docs/DECISIONS.md)으로 대체했습니다. 목표 구조는 Linux VM 한 대에 Portal, ROS, MPS, FDS, DGS-Archive, DGS-GS, DGS-NET 컨테이너를 두는 것입니다. [단계 7 배포 기준선](deploy/stage7/README.md)의 Compose 파일은 네트워크 검증용이며 운용 앱 배포 파일은 아직 아닙니다. 실제 서버 적용 순서는 [서버 설정 매뉴얼](deploy/stage7/SERVER_SETUP.md)에 있습니다.
 
-단계 8의 로컬 백업·복원과 퍼징 절차는 [단계 8 시험 안내](deploy/stage8/README.md)에 정리했습니다.
+단계 8의 로컬 백업·복원과 퍼징 절차는 [단계 8 시험 안내](deploy/stage8/README.md)에 정리했습니다. NAS 장비 연동은 현재 개발·배포 수락 범위에서 제외하고, 장비가 정해진 뒤 별도 과제로 추가합니다([결정 #19](docs/DECISIONS.md)). 운용 전 독립 백업·복원 방안은 별도로 검증해야 합니다.
 
 계획된 운용 TC 경로는 MPS 시퀀스 승인 → `ros-core` 명령 DB 재검증 → `ros-signer` 승인 확인·HMAC → TLS → `dgs-gs` `tc-gate` → `kari-adapter`입니다. 현재 단계 5는 합성 프레임을 이용한 모듈 간 시험 경로이며 실제 송출 경로는 구현되지 않았습니다. [개발방향 12장](docs/PADO-SAT_지상국_개발방향.md), [MPS 시험 계약](interfaces/mps/test_contract.md), [TC 시험 계약](interfaces/tc/test_contract.md)을 참고하세요.
 

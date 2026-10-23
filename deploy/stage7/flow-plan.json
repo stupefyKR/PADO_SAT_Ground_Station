@@ -237,6 +237,6 @@
   "limitations": [
     "A shared bridge permits both peers to initiate connections; direction requires service and peer policy.",
     "The Docker host and privileged containers can reach or alter bridge networks.",
-    "No external ICD, SDC, NAS, registry or portal service is deployed by this probe."
+    "No external ICD, SDC, registry or portal service is deployed by this probe."
   ]
 }

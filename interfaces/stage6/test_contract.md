@@ -24,7 +24,7 @@ manifest and SHA-256 checks. N09/N14/N15 may be relabelled from Archive to
 SDC on N17; N16 may be relabelled from Archive to MPS on N18. Forwarding
 rechecks the source hash. The upstream manifest is preserved separately;
 the downstream manifest has Archive as sender. The in-memory catalog and
-synthetic file bodies are test data, not a NAS retention or audit store.
+synthetic file bodies are test data, not a durable retention or audit store.
 
 FDS currently participates at the file boundary: it initiates N05 pull
 and is sender/receiver on N08, N11, N13 and N15. No Java/Orekit propagation,

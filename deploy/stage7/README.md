@@ -58,7 +58,8 @@ probe 로그 수신 시험은 가능하다.
 - N2 연결 시작 방향, SFTP 계정·인박스 권한, mTLS 상대 신원, DGS-GS의
   운용 VM 신규 연결 거부를 실제 서비스로 검증한다.
 - journald 보존 한도와 재부팅 후 로그 보존, 백업·복구를 검증한다.
-- 외부 ICD와 NAS, SDC, Space-Track 경로는 확정 후 별도 활성화한다.
+- 외부 ICD와 SDC, Space-Track 경로는 확정 후 별도 활성화한다.
+- NAS 연동은 현재 개발·배포 수락 범위에서 제외한다([결정 #19](../../docs/DECISIONS.md)).
 
 Docker 근거: [방화벽과 UFW](https://docs.docker.com/engine/network/packet-filtering-firewalls/),
 [브리지 격리](https://docs.docker.com/engine/network/drivers/bridge/),
