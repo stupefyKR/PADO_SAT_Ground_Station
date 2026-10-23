@@ -18,14 +18,14 @@ int main(int argc, char **argv)
     const char *const raw_types[] = {"CREST_RAW", "SIREN_RAW"};
     gs_sftp_client_t *client;
     gs_archive_catalog_t catalog = {0};
-    gs_manifest_t forwarded;
+    gs_manifest_t forwarded = {0};
     char forwarded_json[GS_MANIFEST_MAX_BYTES];
     char forwarded_path[1024];
     FILE *forwarded_file;
     int forwarded_length;
     unsigned int port;
     int failures = 0;
-    if (argc != 19) {
+    if (argc != 14 && argc != 19) {
         fprintf(stderr, "usage: sftp_test HOST PORT USER KEY PIN ACK_DATA ACK_MANIFEST "
                         "RAW_DATA RAW_MANIFEST INBOX OUTBOX DOWNLOAD WRONG_ROUTE_DIR "
                         "MISSION_DATA MISSION_MANIFEST MPS_INBOX TLE_OUTBOX TLE_DOWNLOAD\n");
@@ -73,6 +73,7 @@ int main(int argc, char **argv)
     failures += check(gs_sftp_upload_pair(client, argv[8], argv[9], argv[11],
                                           "dgs-gs", "dgs-archive", raw_types, 2u) != 0,
                       "reject write into read-only outbox");
+    if (argc == 19) {
     failures += check(gs_stage6_upload(client, "N05", argv[14], argv[15],
                                        argv[10]) != 0,
                       "pull route cannot be used for upload");
@@ -112,6 +113,7 @@ int main(int argc, char **argv)
                                                argv[16]) == 0,
                               "N18 Archive-to-MPS upload");
         }
+    }
     }
     gs_sftp_disconnect(client);
     return failures == 0 ? 0 : 1;
