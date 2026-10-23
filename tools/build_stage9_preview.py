@@ -60,6 +60,7 @@ document.querySelectorAll("[data-ros-target]").forEach((tab) => {
 '''
             html = html.replace('<script src="/assets/ros-workbench.js" defer></script>', '')
         else:
+            html = html.replace('<script src="/assets/mps-live.js" defer></script>', '')
             html = html.replace('id="mps-version">확인 중', 'id="mps-version">시험 초안')
             html = html.replace('id="mps-commands">—', 'id="mps-commands">0')
             html = html.replace('id="mps-passes">—', 'id="mps-passes">입력 대기')

@@ -17,6 +17,43 @@ def schedule(digest="a" * 64):
 
 
 class MpsCandidateStoreTest(unittest.TestCase):
+    def test_sequence_persists_typed_steps_and_rejects_stale_or_invalid_input(self):
+        (ROOT / "out").mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=ROOT / "out") as folder:
+            store = MpsCandidateStore(Path(folder) / "mps.db")
+            steps = [{"offset_s": 10, "command_name": "hk_set_period",
+                      "parameters": {"period_s": 30}},
+                     {"offset_s": 20, "command_name": "hk_get",
+                      "parameters": {}}]
+            saved = store.save_sequence(schedule(), "yonsei-001", "a" * 64,
+                                        0, steps, "planner01")
+            self.assertEqual(saved["revision"], 1)
+            self.assertEqual(store.list_sequences(schedule())[0]["steps"], steps)
+            with self.assertRaisesRegex(CandidateError, "revision_conflict"):
+                store.save_sequence(schedule(), "yonsei-001", "a" * 64,
+                                    0, steps, "planner01")
+            for invalid in [
+                [{**steps[0], "offset_s": 100}],
+                [{**steps[0], "parameters": {"period_s": True}}],
+                [{**steps[0], "parameters": {"period_s": 65536}}],
+                [{**steps[0], "parameters": {"period_s": 30, "other": 1}}],
+                [{"offset_s": 0, "command_name": "sp_burn", "parameters": {}}],
+            ]:
+                with self.assertRaisesRegex(CandidateError, "invalid_sequence"):
+                    store.save_sequence(schedule(), "yonsei-001", "a" * 64,
+                                        1, invalid, "planner01")
+            with self.assertRaisesRegex(CandidateError, "stale_schedule"):
+                store.save_sequence(schedule("b" * 64), "yonsei-001", "a" * 64,
+                                    1, steps, "planner01")
+            with self.assertRaisesRegex(CandidateError, "tc_not_available_for_pass"):
+                store.save_sequence(schedule(), "kari-001", "a" * 64,
+                                    0, steps, "planner01")
+            store.close()
+            reopened = MpsCandidateStore(Path(folder) / "mps.db")
+            self.assertEqual(reopened.list_sequences(schedule())[0]["steps"], steps)
+            self.assertEqual(reopened.list_sequences(schedule("b" * 64)), [])
+            reopened.close()
+
     def test_catalog_is_non_operational_and_blocks_undefined_arguments(self):
         commands = draft_commands()
         self.assertEqual(len(commands), 58)

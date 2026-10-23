@@ -409,7 +409,7 @@ function renderMpsDraftCatalog(commands) {
 function renderMpsPasses(schedule, session, drafts) {
   const panel = document.querySelector(".passes-panel");
   document.querySelector(".notice span").textContent =
-    "FDS N13 일정과 PDR 기반 TC 초안을 함께 검토합니다. 인자·충돌 정책과 운용 승인·출력은 아직 연결되지 않았습니다.";
+    "FDS N13 일정과 시험 TC 시퀀스를 함께 검토합니다. 충돌 검사·운용 승인·출력은 연결되지 않았습니다.";
   document.getElementById("mps-passes").previousElementSibling.textContent = "예측 패스";
   const timeline = panel.querySelector(".timeline");
   const tag = panel.querySelector(".panel-head .tag");
@@ -419,6 +419,7 @@ function renderMpsPasses(schedule, session, drafts) {
   timeline.replaceChildren();
   value("mps-passes", schedule.passes.length);
   if (schedule.schedule_state !== "validated") {
+    mpsSelectedPass = null; mpsDrawPass(null);
     tag.textContent = "N13 입력 대기";
     timeline.textContent = "검증된 FDS 패스 일정이 아직 게시되지 않았습니다.";
     return;
@@ -426,6 +427,7 @@ function renderMpsPasses(schedule, session, drafts) {
   tag.textContent = "N13 검증 완료 · 시험용";
   foot.textContent = `일정 SHA-256: ${schedule.schedule_sha256} · 운용 출력 차단`;
   if (!schedule.passes.length) {
+    mpsSelectedPass = null; mpsDrawPass(null);
     timeline.textContent = "예측 구간에 지상국 패스가 없습니다.";
     return;
   }
@@ -449,19 +451,19 @@ function renderMpsPasses(schedule, session, drafts) {
         ["최대 고각", `${pass.max_elevation_deg}°`], ["최소 고각", `${pass.minimum_elevation_deg}°`],
         ["시간 경계 절단", `${pass.clipped_start ? "시작 " : ""}${pass.clipped_end ? "종료" : ""}` || "없음"],
         ["명령 계획", pass.station_id === "yonsei" && pass.band === "UHF" ?
-          "UHF 시험 TC 후보 구성 가능 · 송출 차단" : "조회 전용 · UHF TC 대상 아님"],
-        ["후보 명령", "등록된 후보 없음"], ["초안 리비전", "미저장"]
+          "UHF 시험 TC 시퀀스 구성 가능 · 송출 차단" : "조회 전용 · UHF TC 대상 아님"],
+        ["시퀀스 명령", "등록된 단계 없음"], ["초안 리비전", "미저장"]
       ];
       inspector.replaceChildren(...details.map(([key, content]) => {
         const line = document.createElement("div");
         const term = document.createElement("dt"); term.textContent = key;
         const desc = document.createElement("dd"); desc.textContent = content;
-        if (key === "후보 명령") desc.id = "mps-review-commands";
+        if (key === "시퀀스 명령") desc.id = "mps-review-commands";
         if (key === "초안 리비전") desc.id = "mps-review-revision";
         line.append(term, desc); return line;
       }));
       document.querySelector(".draft-meta strong").textContent = pass.pass_id;
-      renderMpsCandidateEditor(pass, schedule, session, drafts);
+      mpsRenderSequenceEditor(pass, schedule, session, drafts);
     };
     row.addEventListener("click", select);
     row.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); select(); } });
@@ -476,6 +478,11 @@ function renderMpsPasses(schedule, session, drafts) {
   }
   table.append(head, body);
   timeline.append(table);
+  const selected = [...body.children].find((row) =>
+    row.lastElementChild?.textContent === mpsSelectedPass?.pass_id);
+  const upcoming = [...body.children].find((_, index) =>
+    schedule.passes[index].los_utc_s > Date.now() / 1000);
+  (selected || upcoming || body.firstElementChild)?.click();
 }
 
 async function workspace(page) {
@@ -501,15 +508,37 @@ async function workspace(page) {
     await initOrbitViewer();
   } else {
     try {
-      const [catalog, passes, drafts] = await Promise.all([
-        api("/api/mps/catalog"), api("/api/mps/passes"), api("/api/mps/test-candidates")
+      const [catalog, passes, drafts, orbit] = await Promise.all([
+        api("/api/mps/catalog"), api("/api/mps/passes"), api("/api/mps/test-sequences"),
+        api("/api/fds/orbit").catch(() => null)
       ]);
       value("mps-version", catalog.version);
       value("mps-commands", catalog.commands.length);
       mpsDraftCommands = catalog.draft_commands || [];
       renderMpsDraftCatalog(mpsDraftCommands);
+      mpsSetOrbit(orbit);
       renderMpsPasses(passes, session, drafts.items);
       value("mps-catalog-status", `비운용 초안 ${mpsDraftCommands.length}종`);
+      let activeDigest = passes.schedule_sha256;
+      const refresh = async () => {
+        if (document.visibilityState !== "visible") return;
+        try {
+          const [next, currentOrbit] = await Promise.all([
+            api("/api/mps/passes"), api("/api/fds/orbit").catch(() => null)
+          ]);
+          mpsSetOrbit(currentOrbit);
+          if (next.schedule_sha256 !== activeDigest) {
+            showError("FDS PASS 일정이 갱신됐습니다. 이전에 저장하지 않은 시퀀스 변경은 다시 입력하세요.");
+            activeDigest = next.schedule_sha256;
+            const currentDrafts = await api("/api/mps/test-sequences");
+            renderMpsPasses(next, session, currentDrafts.items);
+          }
+        } catch (_) { showError("FDS/MPS 일정 갱신에 실패했습니다."); }
+      };
+      setInterval(refresh, 60000);
+      document.getElementById("mps-earth-image")?.addEventListener("load", () => {
+        if (mpsSelectedPass) mpsDrawPass(mpsSelectedPass);
+      });
     } catch (_) { showError("서브시스템 상태를 읽지 못했습니다."); }
   }
 }

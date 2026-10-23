@@ -45,6 +45,7 @@ ASSETS = {
     "/assets/ros-workbench.js": ("ops/workbench.js", "text/javascript; charset=utf-8"),
     "/assets/ros-workbench.css": ("ops/workbench.css", "text/css; charset=utf-8"),
     "/assets/mps-workflow.css": ("mps/workflow.css", "text/css; charset=utf-8"),
+    "/assets/mps-live.js": ("mps/live.js", "text/javascript; charset=utf-8"),
     "/assets/orbit.js": ("orbit/orbit.js", "text/javascript; charset=utf-8"),
     "/assets/orbit.css": ("orbit/orbit.css", "text/css; charset=utf-8"),
     "/assets/earth-blue-marble-october.jpg": ("assets/earth-blue-marble-october.jpg", "image/jpeg"),
@@ -57,6 +58,7 @@ PROXY_ROUTES = {
     "/api/mps/catalog": ("mps", "/catalog"),
     "/api/mps/passes": ("mps", "/passes"),
     "/api/mps/test-candidates": ("mps", "/test-candidates"),
+    "/api/mps/test-sequences": ("mps", "/test-sequences"),
 }
 
 
@@ -186,14 +188,15 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/logout":
                 self._logout()
             elif path in ("/api/ros/test-sequences", "/api/ros/test-reservations",
-                          "/api/ros/test-reservations/cancel", "/api/mps/test-candidates"):
+                          "/api/ros/test-reservations/cancel", "/api/mps/test-candidates",
+                          "/api/mps/test-sequences"):
                 self._portal_draft_post(path)
             else:
                 self._error(HTTPStatus.NOT_FOUND, "not_found")
         elif self.server.mode == "ros":
             self._backend_draft_post(path)
-        elif self.server.mode == "mps" and path == "/test-candidates":
-            self._backend_candidate_post()
+        elif self.server.mode == "mps" and path in ("/test-candidates", "/test-sequences"):
+            self._backend_candidate_post(path)
         else:
             self._error(HTTPStatus.NOT_FOUND, "not_found")
 
@@ -349,11 +352,14 @@ class Handler(BaseHTTPRequestHandler):
                 payload = json.dumps(body, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
             connection.request(method, path, body=payload, headers=headers)
             response = connection.getresponse()
-            maximum = MAX_SNAPSHOT_BYTES if path == "/test-tm-snapshot" else MAX_UPSTREAM
+            maximum = (MAX_SNAPSHOT_BYTES if path == "/test-tm-snapshot" else
+                       1024 * 1024 if path == "/test-sequences" and service == "mps"
+                       else MAX_UPSTREAM)
             data = response.read(maximum + 1)
             if len(data) > maximum or (method == "GET" and path not in
                                             ("/test-sequences", "/test-reservations",
-                                             "/test-candidates", "/test-tm-snapshot") and
+                                             "/test-candidates", "/test-sequences",
+                                             "/test-tm-snapshot") and
                                             response.status != HTTPStatus.OK):
                 self._error(HTTPStatus.BAD_GATEWAY, "backend_failure")
             else:
@@ -425,7 +431,7 @@ class Handler(BaseHTTPRequestHandler):
                 "status": "VALIDATED_N13" if schedule["schedule_state"] == "validated"
                           else "N13_NOT_RECEIVED"})
             return
-        if self.server.mode == "mps" and path == "/test-candidates":
+        if self.server.mode == "mps" and path in ("/test-candidates", "/test-sequences"):
             if self.server.candidates is None:
                 self._error(HTTPStatus.SERVICE_UNAVAILABLE, "candidate_store_unavailable")
                 return
@@ -434,12 +440,14 @@ class Handler(BaseHTTPRequestHandler):
             except CoreUnavailable:
                 self._error(HTTPStatus.SERVICE_UNAVAILABLE, "mps_schedule_unavailable")
                 return
-            self._json(HTTPStatus.OK, {"items": self.server.candidates.list_current(schedule),
+            items = (self.server.candidates.list_sequences(schedule) if path == "/test-sequences"
+                     else self.server.candidates.list_current(schedule))
+            self._json(HTTPStatus.OK, {"items": items,
                                        "operational": False})
             return
         self._error(HTTPStatus.NOT_FOUND, "not_found")
 
-    def _backend_candidate_post(self) -> None:
+    def _backend_candidate_post(self, path: str) -> None:
         if not self._backend_identity() or self.server.candidates is None:
             self._error(HTTPStatus.FORBIDDEN, "client_identity")
             return
@@ -449,16 +457,22 @@ class Handler(BaseHTTPRequestHandler):
             self._error(HTTPStatus.FORBIDDEN, "portal_identity")
             return
         body = self._read_json(MAX_DRAFT_BODY)
+        content_key = "steps" if path == "/test-sequences" else "candidate_ids"
         if body is None or set(body) != {"pass_id", "schedule_sha256", "expected_revision",
-                                         "candidate_ids"}:
+                                         content_key}:
             self._error(HTTPStatus.BAD_REQUEST, "invalid_request")
             return
         try:
             schedule = mps_passes(self.server.core_socket)
-            result = self.server.candidates.save(schedule, body["pass_id"],
-                                                 body["schedule_sha256"],
-                                                 body["expected_revision"],
-                                                 body["candidate_ids"], actor)
+            if path == "/test-sequences":
+                result = self.server.candidates.save_sequence(
+                    schedule, body["pass_id"], body["schedule_sha256"],
+                    body["expected_revision"], body["steps"], actor)
+            else:
+                result = self.server.candidates.save(schedule, body["pass_id"],
+                                                     body["schedule_sha256"],
+                                                     body["expected_revision"],
+                                                     body["candidate_ids"], actor)
         except CoreUnavailable:
             self._error(HTTPStatus.SERVICE_UNAVAILABLE, "mps_schedule_unavailable")
             return

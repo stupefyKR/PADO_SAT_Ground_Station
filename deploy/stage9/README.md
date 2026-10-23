@@ -21,10 +21,17 @@ ROS는 `SIM_ONLY`와 TC 송출 차단 상태, MPS는 현재 비운용 명령 DB�
 **TC 송출, 승인, 업링크 반입, 운용 시퀀스 출력, 실제 TM 파라미터 조회 API는
 존재하지 않는다.** 단계 9 전체 완료로 판정하지 않는다.
 
-`/orbit`은 FDS가 오프라인으로 만든 `orbit_view.json`을 세션 인증 뒤 읽어
+`/orbit`은 FDS 독립 프로세스가 만든 `orbit_view.json`을 세션 인증 뒤 읽어
 동시에 보이는 3D 지구와 2D 지상궤적, 주야간, 향후 3주기 궤적과 두 지상국의 PASS polar plot을
 표시한다. 지도에서는 TLE나 GNSS 상태를 다시 전파하지 않는다. 지구 텍스처는
-로컬 NASA Blue Marble이며 출처는 `web/assets/README.md`에 있다. FDS 실행·
+로컬 NASA Blue Marble이며 출처는 `web/assets/README.md`에 있다. 시험 중에는
+`python3 tools/build_iss_demo.py --orekit-data /path/to/orekit-data --watch --refresh-seconds 900`
+을 저장소 루트에서 별도 프로세스로 실행한다. 동일한 실행에서 ORBIT 파일과
+N13 PASS 파일을 게시하며, 포털과 MPS는 각각의 읽기 API를 통해 표시한다.
+이 프로세스는 Compose 밖에서 실행하고 두 게시 경로를 Compose의
+`PADO_STAGE9_FDS_VIEW_DIR`, `PADO_STAGE9_MPS_SCHEDULE_DIR`에 맞춘다.
+고정 TLE의 유효 기간이 지나면 FDS는 계산을 중단하고 ORBIT/MPS 경로 화면은
+유효한 현재 자료가 없다고 표시한다. FDS 실행·
 개발용 `tools/receive_fds_inputs.py`가 N05 인증 SFTP pull·N11 완료 파일 수신함을 검증된 스냅샷으로 게시하고 `tools/run_fds_pipeline.py`가 이를 반복 계산할 수 있다. Compose에는 이 수신기·FDS 실행 서비스를 아직 추가하지 않았다. 파일이 없거나 낡으면 현재 위치로
 표시하지 않는다. 시간 이동과 재생 기능은 없으며 화면은 현재 UTC 기준으로만 그린다.
 현재 고정 ISS TLE 화면 시험 도구는 `services/fds/README.md`에 별도로 기록했다.
@@ -73,13 +80,17 @@ operator/lead/planner는 패스 내부 시각의 단계별 예약 초안을 저�
 필요하다. 초안은 `DRAFT_ONLY`이며 시간 도래 시 실행하는 타이머, TC 인코더,
 signer, tc-gate, RF 송출 경로가 없다. 이는 기존 C 코어의 독립 승인·충돌·
 명령 검증을 대신하지 않는다.
-MPS는 검증된 N13 패스 일정, 후보 초안, 명령 카탈로그, 선택 항목 정보를 작업 순서에
-맞춰 배치했다. 아직 입력 ICD가 없는 작업 버튼은 비활성이다.
-패스를 선택하면 로그인한 planner/operator/lead가 대문자 후보 ID의 순서를
-시험용으로 저장할 수 있다. `mps_candidates` 볼륨은 일정 SHA-256·패스
-시간창·예상 리비전과 함께 이 초안을 보관한다. auditor는 조회만 가능하다.
-후보 ID는 실제 TC 코드가 아니며 명령 인코딩, 충돌 판정, 승인, 출력·송출로
-이어지지 않는다.
+MPS는 검증된 N13 패스 일정, 선택 패스의 ground view/polar plot, 초안 명령
+카탈로그, 시험 시퀀스 편집기를 작업 순서에 맞춰 배치했다. 경로 화면은
+`/api/fds/orbit`의 ECEF 위치 표본으로만 그리며, N13 일정과 AOS·LOS가
+일치하지 않거나 TLE가 만료되면 표시를 차단한다. 화면은 60초마다 두 API를
+다시 읽는다. 연세대 UHF 패스에서 planner/operator/lead는 카탈로그에 인자가
+정의된 초안 명령의 인자와 AOS 기준 실행 오프셋을 순서대로 저장한다.
+`/api/mps/test-sequences` POST는 포털 세션·CSRF·내부 mTLS를 거치며,
+MPS API는 인자 형식과 패스 범위·일정 SHA-256·예상 리비전을 검증한다.
+`mps_candidates` 볼륨의 별도 `sequence_drafts` 테이블이 초안을 보관한다.
+auditor는 조회만 가능하다. 대전 S-band는 패스 경로 조회만 제공한다.
+명령 인코딩, 충돌 판정, 승인, 출력·송출은 아직 연결되지 않는다.
 
 실제 TM 연결 단계에서는 확정된 패킷/파라미터 DB를 기준으로 센서 ID,
 UTC 수신 시각, 보정 값, 단위, 품질, 하한·상한, 경보 등급 및 이력을 제공해야

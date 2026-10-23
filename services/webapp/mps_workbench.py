@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import sqlite3
@@ -46,6 +47,7 @@ def draft_commands() -> list[dict]:
         result.append({"id": entry["id"], "name": entry["name"],
                        "group": entry["group"], "risk": entry["risk"],
                        "parameters": list(entry["fields"] or {}),
+                       "field_types": entry["fields"],
                        "fields_defined": entry["fields"] is not None,
                        "operational": False})
     return result
@@ -64,6 +66,12 @@ class MpsCandidateStore:
                         "pass_id TEXT NOT NULL, schedule_sha256 TEXT NOT NULL, "
                         "aos_utc_s INTEGER NOT NULL, los_utc_s INTEGER NOT NULL, "
                         "revision INTEGER NOT NULL, candidate_ids TEXT NOT NULL, "
+                        "updated_by TEXT NOT NULL, updated_at INTEGER NOT NULL, "
+                        "PRIMARY KEY(pass_id, schedule_sha256))")
+        self.db.execute("CREATE TABLE IF NOT EXISTS sequence_drafts ("
+                        "pass_id TEXT NOT NULL, schedule_sha256 TEXT NOT NULL, "
+                        "aos_utc_s INTEGER NOT NULL, los_utc_s INTEGER NOT NULL, "
+                        "revision INTEGER NOT NULL, steps TEXT NOT NULL, "
                         "updated_by TEXT NOT NULL, updated_at INTEGER NOT NULL, "
                         "PRIMARY KEY(pass_id, schedule_sha256))")
         self.db.commit()
@@ -147,3 +155,93 @@ class MpsCandidateStore:
                 "aos_utc_s": aos, "los_utc_s": los,
                 "revision": revision, "candidate_ids": candidate_ids,
                 "updated_by": actor, "operational": False}
+
+    def list_sequences(self, schedule: dict) -> list[dict]:
+        if schedule.get("schedule_state") != "validated":
+            return []
+        digest = schedule["schedule_sha256"]
+        with self.lock:
+            rows = self.db.execute(
+                "SELECT pass_id,aos_utc_s,los_utc_s,revision,steps,updated_by "
+                "FROM sequence_drafts WHERE schedule_sha256=? ORDER BY pass_id LIMIT 256",
+                (digest,)).fetchall()
+        current = {item["pass_id"]: item for item in schedule["passes"]}
+        return [{"pass_id": pass_id, "schedule_sha256": digest,
+                 "aos_utc_s": aos, "los_utc_s": los, "revision": revision,
+                 "steps": json.loads(steps), "updated_by": actor, "operational": False}
+                for pass_id, aos, los, revision, steps, actor in rows
+                if pass_id in current and
+                (current[pass_id].get("station_id"), current[pass_id].get("band")) ==
+                ("yonsei", "UHF") and
+                (aos, los) == (current[pass_id]["aos_utc_s"], current[pass_id]["los_utc_s"])]
+
+    @staticmethod
+    def _validated_steps(steps: object, duration: int) -> list[dict]:
+        if not isinstance(steps, list) or len(steps) > 64:
+            raise CandidateError("invalid_sequence")
+        catalog = {item["name"]: item for item in draft_commands()
+                   if item["fields_defined"]}
+        clean = []
+        for step in steps:
+            if not isinstance(step, dict) or set(step) != {"offset_s", "command_name", "parameters"}:
+                raise CandidateError("invalid_sequence")
+            offset = step["offset_s"]
+            name = step["command_name"]
+            params = step["parameters"]
+            if (type(offset) is not int or not 0 <= offset < duration or
+                    not isinstance(name, str) or name not in catalog or
+                    not isinstance(params, dict) or
+                    set(params) != set(catalog[name]["field_types"])):
+                raise CandidateError("invalid_sequence")
+            for field, kind in catalog[name]["field_types"].items():
+                value = params[field]
+                if kind in ("u8", "u16", "u32", "u64"):
+                    if type(value) is not int or not 0 <= value < 2 ** int(kind[1:]):
+                        raise CandidateError("invalid_sequence")
+                elif kind == "bool":
+                    if type(value) is not bool:
+                        raise CandidateError("invalid_sequence")
+                elif kind in ("f32", "f64"):
+                    if type(value) not in (int, float) or not math.isfinite(value):
+                        raise CandidateError("invalid_sequence")
+                elif kind.startswith("ascii") and kind[5:].isdigit():
+                    if (not isinstance(value, str) or not value.isascii() or
+                            len(value.encode("ascii")) > int(kind[5:])):
+                        raise CandidateError("invalid_sequence")
+                else:
+                    raise CandidateError("unsupported_field_type")
+            clean.append({"offset_s": offset, "command_name": name,
+                          "parameters": params})
+        return clean
+
+    def save_sequence(self, schedule: dict, pass_id: str, digest: str,
+                      expected_revision: int, steps: object, actor: str) -> dict:
+        selected = self._pass(schedule, pass_id, digest)
+        if (type(expected_revision) is not int or not 0 <= expected_revision < 0xffffffff or
+                not isinstance(actor, str) or not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", actor)):
+            raise CandidateError("invalid_sequence")
+        aos, los = selected["aos_utc_s"], selected["los_utc_s"]
+        clean = self._validated_steps(steps, los - aos)
+        with self.lock, self.db:
+            row = self.db.execute(
+                "SELECT aos_utc_s,los_utc_s,revision FROM sequence_drafts "
+                "WHERE pass_id=? AND schedule_sha256=?", (pass_id, digest)).fetchone()
+            if row is None:
+                if expected_revision != 0:
+                    raise CandidateError("revision_conflict")
+                revision = 1
+                self.db.execute("INSERT INTO sequence_drafts VALUES (?,?,?,?,?,?,?,?)",
+                                (pass_id, digest, aos, los, revision,
+                                 json.dumps(clean, separators=(",", ":")), actor, int(time.time())))
+            else:
+                if row != (aos, los, expected_revision):
+                    raise CandidateError("revision_conflict")
+                revision = expected_revision + 1
+                self.db.execute(
+                    "UPDATE sequence_drafts SET revision=?,steps=?,updated_by=?,updated_at=? "
+                    "WHERE pass_id=? AND schedule_sha256=?",
+                    (revision, json.dumps(clean, separators=(",", ":")), actor,
+                     int(time.time()), pass_id, digest))
+        return {"pass_id": pass_id, "schedule_sha256": digest,
+                "aos_utc_s": aos, "los_utc_s": los, "revision": revision,
+                "steps": clean, "updated_by": actor, "operational": False}

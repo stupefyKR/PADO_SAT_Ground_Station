@@ -279,6 +279,23 @@ class WebBoundaryTests(unittest.TestCase):
         status, _, _ = self.request("/api/mps/test-candidates", method="POST",
                                     body=payload, headers={**auth, "X-CSRF-Token": csrf})
         self.assertEqual(status, 409)
+        sequence = {"pass_id": "yonsei-001", "schedule_sha256": digest,
+                    "expected_revision": 0,
+                    "steps": [{"offset_s": 20, "command_name": "hk_set_period",
+                               "parameters": {"period_s": 30}}]}
+        status, _, _ = self.request("/api/mps/test-sequences", method="POST",
+                                    body=sequence, headers=auth)
+        self.assertEqual(status, 403)
+        status, _, body = self.request("/api/mps/test-sequences", method="POST",
+                                       body=sequence, headers={**auth, "X-CSRF-Token": csrf})
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["revision"], 1)
+        status, _, body = self.request("/api/mps/test-sequences", headers=auth)
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["items"][0]["steps"], sequence["steps"])
+        status, _, _ = self.request("/api/mps/test-sequences", method="POST",
+                                    body=sequence, headers={**auth, "X-CSRF-Token": csrf})
+        self.assertEqual(status, 409)
 
     def test_orbit_view_is_session_gated_and_read_only(self):
         status, _, _ = self.request("/api/fds/orbit")
