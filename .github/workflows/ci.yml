@@ -57,5 +57,12 @@ jobs:
         env:
           PADO_STAGE9_CERT_DIR: /tmp
         run: |
+          set -euo pipefail
+          trap 'docker compose -f deploy/stage9/compose.dev.yaml down --volumes --remove-orphans' EXIT
           docker compose -f deploy/stage9/compose.dev.yaml config --quiet
           docker compose -f deploy/stage9/compose.dev.yaml build
+          docker compose -f deploy/stage9/compose.dev.yaml up -d --wait --no-deps ros-core-read mps-core-read
+          docker compose -f deploy/stage9/compose.dev.yaml run --rm --no-deps ros-api \
+            python3 -c 'from pathlib import Path; from services.webapp.core import ros_summary; assert ros_summary(Path("/run/core/core.sock"))["record_state"] == "absent"'
+          docker compose -f deploy/stage9/compose.dev.yaml run --rm --no-deps mps-api \
+            python3 -c 'from pathlib import Path; from services.webapp.core import mps_catalog; assert mps_catalog(Path("/run/core/core.sock"))["version"] == 1'
