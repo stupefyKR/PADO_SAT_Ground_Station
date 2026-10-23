@@ -178,6 +178,8 @@ class WebBoundaryTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body)["commands"], [])
         self.assertEqual(json.loads(body)["version"], 1)
+        self.assertEqual(len(json.loads(body)["draft_commands"]), 58)
+        self.assertFalse(json.loads(body)["operational"])
         status, _, body = self.request("/api/mps/passes", headers=auth_header)
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body)["passes"], [])
@@ -241,7 +243,7 @@ class WebBoundaryTests(unittest.TestCase):
         auth = {"Cookie": headers["Set-Cookie"].split(";", 1)[0]}
         csrf = json.loads(body)["csrf"]
         payload = {"pass_id": "yonsei-001", "schedule_sha256": "a" * 64,
-                   "expected_revision": 0, "candidate_ids": ["PING_1"]}
+                   "expected_revision": 0, "candidate_ids": ["HK_GET"]}
         status, _, _ = self.request("/api/mps/test-candidates", method="POST",
                                     body=payload, headers=auth)
         self.assertEqual(status, 403)
@@ -271,7 +273,7 @@ class WebBoundaryTests(unittest.TestCase):
         self.assertEqual(json.loads(body)["revision"], 1)
         status, _, body = self.request("/api/mps/test-candidates", headers=auth)
         self.assertEqual(status, 200)
-        self.assertEqual(json.loads(body)["items"][0]["candidate_ids"], ["PING_1"])
+        self.assertEqual(json.loads(body)["items"][0]["candidate_ids"], ["HK_GET"])
         status, _, _ = self.request("/api/mps/test-candidates", method="POST",
                                     body=payload, headers={**auth, "X-CSRF-Token": csrf})
         self.assertEqual(status, 409)

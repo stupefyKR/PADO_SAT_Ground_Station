@@ -82,7 +82,9 @@ round-trip succeeds.
 for offline contract testing. Its `gnss_to_fds_properties` converts a decoded
 draft `GNSS_PVT` record to the existing `fds.gnss-state.v1` N11 body after
 fix/age/orbit checks. It does not ingest vendor OEM719A logs or publish the
-N11 manifest. The source documents name ECEF position/velocity; a
+N11 manifest. The separate test-only `tools/bridge_draft_gnss.py` now writes
+a committed N11 body/manifest pair from one validated draft PDU; this is not
+an AX100/CSP or OEM719A flight downlink decoder. The source documents name ECEF position/velocity; a
 quaternion belongs to the separate ADCS attitude packet and does not encode
 position. The current adapter expects whole-second UTC because the FDS input
 contract does. The `receiver_age_ms <= 1000` and `solution_status=1` rule is

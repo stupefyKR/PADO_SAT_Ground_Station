@@ -33,6 +33,7 @@ let selectedExample = exampleSensors[1];
 let exampleRange = 30;
 let latestRosOverview = null;
 let rosSummaryUnavailable = false;
+let mpsDraftCommands = [];
 
 function renderRosCoreStatus() {
   if (latestRosOverview === null || exampleActive || window.rosTestPreviewActive) return;
@@ -268,17 +269,19 @@ function renderMpsCandidateEditor(pass, schedule, session, drafts) {
   actions.replaceChildren();
   tag.textContent = "시험 초안 · 송출 차단";
   tag.className = "tag neutral";
-  const input = document.createElement("input");
-  input.type = "text"; input.maxLength = 63;
-  input.placeholder = "시험용 TC 후보 ID (대문자·숫자·_·-)";
-  input.setAttribute("aria-label", "시험용 TC 후보 ID");
+  const input = document.createElement("select");
+  input.setAttribute("aria-label", "PDR 기반 시험 TC 후보");
+  input.add(new Option("초안 TC 선택", ""));
+  for (const command of mpsDraftCommands.filter((item) => item.fields_defined)) {
+    input.add(new Option(`${command.group} · ${command.name} · 0x${command.id.toString(16).toUpperCase()}`, command.name.toUpperCase()));
+  }
   input.disabled = !editable;
   const add = document.createElement("button");
   add.type = "button"; add.textContent = "후보 추가"; add.disabled = !editable;
   add.addEventListener("click", () => {
     const id = input.value.trim();
-    if (!/^[A-Z0-9_-]{1,63}$/.test(id) || candidates.includes(id) || candidates.length >= 64) {
-      showError("후보 ID는 대문자·숫자·_·-만 사용하며 중복할 수 없습니다."); return;
+    if (!id || candidates.includes(id) || candidates.length >= 64) {
+      showError("초안 카탈로그에서 중복되지 않은 TC를 선택하세요."); return;
     }
     candidates.push(id); input.value = ""; draw();
   });
@@ -303,7 +306,7 @@ function renderMpsCandidateEditor(pass, schedule, session, drafts) {
   actions.append(input, add, save);
   const note = document.createElement("p");
   note.className = "inspector-note";
-  note.textContent = "후보 ID와 순서만 저장합니다. 실제 TC 명령·시각·파라미터·충돌 판정·승인·송출은 사용할 수 없습니다.";
+  note.textContent = "PDR 기반 초안 TC의 이름과 순서만 저장합니다. 인자·실행 시각·충돌 판정·승인·송출은 사용할 수 없습니다.";
   const table = document.createElement("table");
   const header = document.createElement("thead");
   header.innerHTML = "<tr><th>순서</th><th>후보 ID</th><th>상태</th><th>편집</th></tr>";
@@ -345,10 +348,42 @@ function renderMpsCandidateEditor(pass, schedule, session, drafts) {
   tag.textContent = revision ? `시험 초안 · 리비전 ${revision}` : "새 시험 초안";
 }
 
+function renderMpsDraftCatalog(commands) {
+  const panel = document.querySelector(".catalog-panel");
+  const filter = document.getElementById("command-filter");
+  const rows = panel.querySelector("tbody");
+  filter.disabled = false;
+  filter.placeholder = "초안 명령명 또는 ID 검색";
+  const draw = () => {
+    rows.replaceChildren();
+    const query = filter.value.trim().toLowerCase();
+    const found = commands.filter((item) => `${item.name} ${item.group} ${item.id.toString(16)}`.toLowerCase().includes(query));
+    for (const item of found) {
+      const row = document.createElement("tr");
+      for (const content of [
+        `${item.name} / 0x${item.id.toString(16).toUpperCase()}`,
+        item.fields_defined ? (item.parameters.join(", ") || "없음") : "인자 정의 대기",
+        `${item.group} · ${item.risk} · 비운용 초안`
+      ]) {
+        const cell = document.createElement("td"); cell.textContent = content; row.append(cell);
+      }
+      rows.append(row);
+    }
+    if (!found.length) {
+      const row = document.createElement("tr");
+      const cell = document.createElement("td"); cell.colSpan = 3;
+      cell.className = "table-empty"; cell.textContent = "검색 결과가 없습니다.";
+      row.append(cell); rows.append(row);
+    }
+  };
+  filter.addEventListener("input", draw);
+  draw();
+}
+
 function renderMpsPasses(schedule, session, drafts) {
   const panel = document.querySelector(".passes-panel");
   document.querySelector(".notice span").textContent =
-    "FDS N13 일정은 검증 후 읽기 전용으로 표시합니다. TC 명령 DB, 충돌 정책과 운용 승인·출력은 아직 연결되지 않았습니다.";
+    "FDS N13 일정과 PDR 기반 TC 초안을 함께 검토합니다. 인자·충돌 정책과 운용 승인·출력은 아직 연결되지 않았습니다.";
   document.getElementById("mps-passes").previousElementSibling.textContent = "예측 패스";
   const timeline = panel.querySelector(".timeline");
   const tag = panel.querySelector(".panel-head .tag");
@@ -441,8 +476,10 @@ async function workspace(page) {
       ]);
       value("mps-version", catalog.version);
       value("mps-commands", catalog.commands.length);
+      mpsDraftCommands = catalog.draft_commands || [];
+      renderMpsDraftCatalog(mpsDraftCommands);
       renderMpsPasses(passes, session, drafts.items);
-      value("mps-catalog-status", catalog.status);
+      value("mps-catalog-status", `비운용 초안 ${mpsDraftCommands.length}종`);
     } catch (_) { showError("서브시스템 상태를 읽지 못했습니다."); }
   }
 }

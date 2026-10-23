@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from services.webapp.mps_workbench import CandidateError, MpsCandidateStore
+from services.webapp.mps_workbench import CandidateError, MpsCandidateStore, draft_commands
 from tools.stage_fds_outbox import ROOT
 
 
@@ -15,29 +15,38 @@ def schedule(digest="a" * 64):
 
 
 class MpsCandidateStoreTest(unittest.TestCase):
+    def test_catalog_is_non_operational_and_blocks_undefined_arguments(self):
+        commands = draft_commands()
+        self.assertEqual(len(commands), 58)
+        self.assertEqual(sum(item["fields_defined"] for item in commands), 36)
+        self.assertTrue(all(item["operational"] is False for item in commands))
+
     def test_persists_only_revision_bound_candidate_ids(self):
         (ROOT / "out").mkdir(exist_ok=True)
         with tempfile.TemporaryDirectory(dir=ROOT / "out") as folder:
             path = Path(folder) / "candidates.db"
             store = MpsCandidateStore(path)
             first = store.save(schedule(), "yonsei-001", "a" * 64, 0,
-                               ["SAFE_MODE", "PING_1"], "planner01")
+                               ["HK_GET", "MM_GET_MODE"], "planner01")
             self.assertEqual(first["revision"], 1)
             self.assertFalse(first["operational"])
             with self.assertRaisesRegex(CandidateError, "revision_conflict"):
                 store.save(schedule(), "yonsei-001", "a" * 64, 0,
-                           ["PING_1"], "planner01")
+                           ["HK_GET"], "planner01")
             with self.assertRaisesRegex(CandidateError, "invalid_candidate_draft"):
                 store.save(schedule(), "yonsei-001", "a" * 64, 1,
                            ["unsafe command"], "planner01")
+            with self.assertRaisesRegex(CandidateError, "invalid_candidate_draft"):
+                store.save(schedule(), "yonsei-001", "a" * 64, 1,
+                           ["SP_BURN"], "planner01")
             with self.assertRaisesRegex(CandidateError, "stale_schedule"):
                 store.save(schedule("b" * 64), "yonsei-001", "a" * 64, 1,
-                           ["PING_1"], "planner01")
+                           ["HK_GET"], "planner01")
             self.assertEqual(store.save(schedule(), "yonsei-001", "a" * 64, 1,
-                                        ["PING_1"], "planner01")["revision"], 2)
+                                        ["HK_GET"], "planner01")["revision"], 2)
             store.close()
             reopened = MpsCandidateStore(path)
-            self.assertEqual(reopened.list_current(schedule())[0]["candidate_ids"], ["PING_1"])
+            self.assertEqual(reopened.list_current(schedule())[0]["candidate_ids"], ["HK_GET"])
             self.assertEqual(reopened.list_current(schedule("b" * 64)), [])
             self.assertEqual(reopened.list_current({"schedule_state": "absent"}), [])
             reopened.close()

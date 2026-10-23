@@ -123,7 +123,7 @@ TC는 계획된 검증·승인·서명·게이트 경로로만 송출하며, 위
 
 - TBD(ICD): 항우연·연세대 연동 포트, 프로토콜, 프레임 형식
 - TBD(HMAC): 트랜시버 HMAC 세부 사양
-- TBD(ICD): TC 명령·TM 실제 항목과 항목 스키마. 현재 DB는 `operational: false`
+- TBD(ICD): PDR 기반 [TC/TM 초안 58/16종](docs/TC_TM/README.md)은 정리했으나 비행 승인 명령 ID·인자·TM 항목/보정은 미확정. 운용 DB는 `operational: false`
 - TBD(ICD): DGS-GS 원시데이터 임시 영역의 용량·보관시간·회수 주기
 
 ## 변경 이력 요약

@@ -23,7 +23,7 @@ from urllib.parse import urlsplit
 
 from .auth import AuthError, AuthStore, ROLES
 from .core import CoreUnavailable, mps_catalog, mps_passes, ros_summary
-from .mps_workbench import CandidateError, MpsCandidateStore
+from .mps_workbench import CandidateError, MpsCandidateStore, draft_commands
 from .ros_workbench import DraftError, RosDraftStore
 
 
@@ -388,12 +388,14 @@ class Handler(BaseHTTPRequestHandler):
         if self.server.mode == "mps" and path == "/catalog":
             try:
                 catalog = mps_catalog(self.server.core_socket)
-            except CoreUnavailable:
+                proposals = draft_commands()
+            except (CoreUnavailable, CandidateError, OSError, ValueError):
                 self._error(HTTPStatus.SERVICE_UNAVAILABLE, "mps_core_unavailable")
                 return
             self._json(HTTPStatus.OK, {
                 "version": catalog["version"], "commands": [],
-                "operational": False, "status": "TBD(ICD)"})
+                "draft_commands": proposals,
+                "operational": False, "status": "DRAFT_NOT_FLIGHT_APPROVED"})
             return
         if self.server.mode == "mps" and path == "/passes":
             try:

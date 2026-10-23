@@ -27,6 +27,18 @@ PDF 쪽수는 파일 자체의 페이지 번호다. 원본 PDF는 사용자 제�
 
 명령·HK 이름은 [`draft_v0.json`](../../interfaces/pado_packets/draft_v0.json)과 [`source_inventory.json`](../../interfaces/pado_packets/source_inventory.json)에 반영했다. 원본에는 **비행용 명령 ID, 정확한 인자 인코딩, 인증·ACK 프로토콜, 비콘 전체 바이트 맵, 센서 보정·한계값**이 없다. 상세 출처 해시와 설계 근거는 [인터페이스 설명](../../interfaces/pado_packets/README.md)에 있다.
 
+### PDR에서 추가로 확인한 시험 기준값
+
+| PDR 별첨 근거 | 값 | 사용 범위 |
+| --- | --- | --- |
+| 43쪽 질량 예산 | 위성 CBE 5.207 kg, 여유 포함 MEV 5.773 kg, 3U 제한 6 kg | FDS 수치 모델 검토용 후보. 조립 후 실측 질량 아님 |
+| 46쪽 링크 버짓 | UHF 상·하향 437.5 MHz, S-band 하향 2250 MHz·상향 2075 MHz | 링크 버짓 기준 주파수. 실제 할당·설정 주파수 아님 |
+| 46쪽 링크 버짓 | 고각 10° | 버짓 계산 가정. 지상국별 실측 horizon mask 아님 |
+| 29–30쪽 CS 요구 | UHF 435–438 MHz, S-band 하향 2200–2290 MHz·상향 2025–2110 MHz | 허용 대역. 특정 운용 채널은 미정 |
+| 47쪽 장비 로그 목록 | OEM719A `BESTPOS`·`BESTVEL`·`BESTXYZ`·`TIME` 등 | 로그 이름·크기 목록. OBC의 다운링크 TM 바이트 구조는 아님 |
+
+두 안테나의 측량 위경도·타원체고, 실제 최소 고각, 위성의 항력·반사 계수/유효 면적, 정밀도 목표는 제공 PDR에서 확인되지 않았다. 따라서 이 표의 값으로 운용 설정을 자동 채우지 않는다.
+
 ## RF에서 응용 PDU까지
 
 ![UHF 계층 경계](01_uhf_frame_overview.png)
@@ -91,9 +103,14 @@ PDF 쪽수는 파일 자체의 페이지 번호다. 원본 PDF는 사용자 제�
 | 구성 | 현재 상태 |
 | --- | --- |
 | [초안 카탈로그](../../interfaces/pado_packets/draft_v0.json), [오프라인 코덱](../../tools/pado_packet_codec.py) | 비운용 encode/decode·길이·CRC·full HK 분할 및 GNSS→FDS 변환 |
+| [GNSS 시험 브리지](../../tools/bridge_draft_gnss.py) | 검증된 초안 `GNSS_PVT` 바이너리 1개를 N11 시험 수신함의 본문+manifest로 게시. 실제 RF/OBC 디코더 아님 |
+| [ROS 시험 TM 변환기](../../tools/preview_draft_tm.py) | 초안 TM 바이너리와 명시적 시험 한계표로 ROS 그래프용 `TEST_ONLY_TM_SNAPSHOT` 생성. 임의 운용 한계 추정 없음 |
+| MPS 웹·후보 저장소 | 초안 58종 검색, 필드가 정의된 36종만 PASS별 이름과 순서를 시험 초안으로 저장. 인자·충돌·승인·송신 없음 |
 | MPS/ROS 운용 명령·TM DB | 비어 있음. 실제 TC 송신과 미검증 TM 표시를 차단 |
 | FDS | 검증된 GNSS N11 및 TLE 계산 기능 존재; 실제 위성 GNSS TM 추출 경로는 미연결 |
 | DGS-GS/AX100/FlatSat | 초안 PDU의 실제 링크·인증·ACK 검증 전 |
+
+ROS 시험 화면에서 초안 패킷을 미리 보려면 [`preview_limits.example.json`](preview_limits.example.json)을 **시험 범위값으로만** 복사해, 실제 검토할 항목·한계로 바꾼다. `python tools/preview_draft_tm.py --test-only --limits <한계표.json> <TM1.pdu> <TM2.pdu>`의 표준 출력 JSON을 ROS의 시험 TM 파일 선택기에 넣는다. 범위값이 제공되지 않으면 센서 그래프를 생성하지 않는다. `python tools/bridge_draft_gnss.py --test-only <GNSS_PVT.pdu> <시험 N11 수신함>`은 N11 본문·매니페스트를 게시하며, 이후 기존 `receive_fds_inputs.py`가 이를 검증한다. 두 도구 모두 오프라인 PDU 입력 전용이다.
 
 ## 승인 전 확인할 사항
 

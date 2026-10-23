@@ -29,4 +29,5 @@ WORKDIR /app
 COPY services/webapp /app/services/webapp
 COPY web /app/web
 COPY interfaces/command_db/commands.json /app/interfaces/command_db/commands.json
+COPY interfaces/pado_packets/draft_v0.json /app/interfaces/pado_packets/draft_v0.json
 USER 10001:10001

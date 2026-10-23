@@ -12,7 +12,7 @@
 
 ## 두 안테나와 산출물
 
-`station.yonsei`는 연세대 이과대학 UHF 1기, `station.kari`는 대전 항우연 S-band 1기다. 각 안테나의 측량 위경도, WGS84 타원체 기준 고도, 최소 고각, 수신 중심 주파수를 `config.example.properties`에 채워야 한다. 예시 435 MHz·2.2 GHz는 운용 주파수가 아니며 `frequency_example=true`로 표시된다. 주파수 미정 상태에서도 거리 변화율(m/s)은 계산할 수 있으나 Hz 도플러 값은 예시값에만 대응한다.
+`station.yonsei`는 연세대 이과대학 UHF 1기, `station.kari`는 대전 항우연 S-band 1기다. 각 안테나의 측량 위경도, WGS84 타원체 기준 고도, 최소 고각, 수신 중심 주파수를 `config.example.properties`에 채워야 한다. 현재 설정 파일의 435 MHz·2.2 GHz는 임의 예시값이며 `frequency_example=true`로 표시된다. PDR 별첨 46쪽의 링크 버짓 기준 주파수는 UHF 437.5 MHz·S-band 하향 2250 MHz, 기준 고각은 10°다. 이들도 실제 주파수 할당이나 안테나 horizon mask는 아니다. 별첨 43쪽의 위성 질량 CBE 5.207 kg/MEV 5.773 kg은 예비 예산이며 실측 비행 질량이 아니다. 주파수 미정 상태에서도 거리 변화율(m/s)은 계산할 수 있으나 Hz 도플러 값은 설정된 예시값에만 대응한다.
 
 | 파일 | 내용 | N2 자료 유형 |
 |---|---|---|

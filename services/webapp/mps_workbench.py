@@ -16,6 +16,41 @@ class CandidateError(ValueError):
     pass
 
 
+CATALOG_PATH = Path(__file__).resolve().parents[2] / "interfaces/pado_packets/draft_v0.json"
+
+
+def draft_commands() -> list[dict]:
+    """Read only the separately marked draft; never populate the flight DB."""
+    value = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
+    if (value.get("schema") != "pado.packet-catalog.v0" or
+            value.get("operational") is not False or
+            value.get("status") != "DRAFT_NOT_FLIGHT_APPROVED"):
+        raise CandidateError("draft_catalog_invalid")
+    entries = value.get("commands")
+    if not isinstance(entries, list) or len(entries) > 128:
+        raise CandidateError("draft_catalog_invalid")
+    result = []
+    seen = set()
+    for entry in entries:
+        if (not isinstance(entry, dict) or type(entry.get("id")) is not int or
+                not 1 <= entry["id"] <= 65535 or
+                not isinstance(entry.get("name"), str) or
+                not re.fullmatch(r"[a-z][a-z0-9_]{0,62}", entry["name"]) or
+                entry["name"] in seen or
+                entry.get("risk") not in ("low", "medium", "high", "critical") or
+                not isinstance(entry.get("group"), str) or
+                not re.fullmatch(r"[A-Z0-9]{2,12}", entry["group"]) or
+                (entry.get("fields") is not None and not isinstance(entry["fields"], dict))):
+            raise CandidateError("draft_catalog_invalid")
+        seen.add(entry["name"])
+        result.append({"id": entry["id"], "name": entry["name"],
+                       "group": entry["group"], "risk": entry["risk"],
+                       "parameters": list(entry["fields"] or {}),
+                       "fields_defined": entry["fields"] is not None,
+                       "operational": False})
+    return result
+
+
 class MpsCandidateStore:
     def __init__(self, path: Path) -> None:
         if path.is_symlink() or (path.exists() and os.name == "posix" and
@@ -73,10 +108,12 @@ class MpsCandidateStore:
     def save(self, schedule: dict, pass_id: str, digest: str,
              expected_revision: int, candidate_ids: list[str], actor: str) -> dict:
         selected = self._pass(schedule, pass_id, digest)
+        allowed = {entry["name"].upper() for entry in draft_commands()
+                   if entry["fields_defined"]}
         if (type(expected_revision) is not int or not 0 <= expected_revision < 0xffffffff or
                 not isinstance(candidate_ids, list) or len(candidate_ids) > 64 or
                 any(not isinstance(value, str) or
-                    not re.fullmatch(r"[A-Z0-9_-]{1,63}", value)
+                    value not in allowed
                     for value in candidate_ids) or len(set(candidate_ids)) != len(candidate_ids) or
                 not isinstance(actor, str) or not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", actor)):
             raise CandidateError("invalid_candidate_draft")

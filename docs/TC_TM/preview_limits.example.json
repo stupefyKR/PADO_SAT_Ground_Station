@@ -1,0 +1,12 @@
+{
+  "sensors": {
+    "EPS_PDU1.bus_voltage_v": {
+      "id": "test_bus_voltage",
+      "name": "시험 버스 전압",
+      "group": "EPS TEST",
+      "unit": "V",
+      "lower": 4.5,
+      "upper": 5.5
+    }
+  }
+}
