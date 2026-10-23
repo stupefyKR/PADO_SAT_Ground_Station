@@ -50,7 +50,7 @@ def build_snapshot(packets: list[bytes], limits: dict[str, Any], *, received_ms:
         if (not isinstance(rule["id"], str) or
                 not re.fullmatch(r"[A-Za-z0-9._-]{1,48}", rule["id"]) or
                 rule["id"] in ids or
-                any(not isinstance(rule[name], str) or len(rule[name]) > maximum
+                any(not isinstance(rule[name], str) or not 1 <= len(rule[name]) <= maximum
                     for name, maximum in (("name", 64), ("group", 64), ("unit", 12))) or
                 any(type(rule[name]) not in (int, float) or not math.isfinite(rule[name])
                     for name in ("lower", "upper")) or
@@ -83,9 +83,12 @@ def build_snapshot(packets: list[bytes], limits: dict[str, Any], *, received_ms:
                 any(left["utc"] == right["utc"] for left, right in zip(samples, samples[1:])):
             raise ValueError("each configured test sensor needs unique TM samples")
         output.append({**sensor, "samples": samples})
-    return {"type": "TEST_ONLY_TM_SNAPSHOT", "non_operational": True,
-            "received_utc": _iso(received_ms), "sensors": output,
-            "attitude": attitude}
+    snapshot = {"type": "TEST_ONLY_TM_SNAPSHOT", "non_operational": True,
+                "received_utc": _iso(received_ms), "sensors": output,
+                "attitude": attitude}
+    if len(json.dumps(snapshot, ensure_ascii=False).encode("utf-8")) > 1024 * 1024:
+        raise ValueError("ROS test snapshot exceeds 1 MiB")
+    return snapshot
 
 
 def main() -> None:

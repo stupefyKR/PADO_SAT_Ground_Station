@@ -2,6 +2,8 @@
 
 PDR의 CS·CDHS 자료를 바탕으로 만든 **비운용 검토 초안**입니다. 숫자 ID와 바이트 배치는 지상국 제안이며 비행 소프트웨어에서 승인된 ICD가 아닙니다. [TC/TM 설계·미결 사항 전체 정리](DESIGN.md)를 먼저 확인하세요.
 
+현재 구현에서 운용 승인까지 필요한 입력은 [검토·인계표](REVIEW_GATES.md)에 정리했습니다.
+
 `preview_limits.example.json`의 한계값은 ROS 화면 시험용 예시이며 실제 센서 허용범위가 아닙니다.
 
 `tools/render_packet_diagrams.py`로 생성한 검토용 이미지입니다. PDR에 명시된 UHF
