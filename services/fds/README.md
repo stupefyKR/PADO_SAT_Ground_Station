@@ -68,7 +68,7 @@ python3 tools/run_fds_pipeline.py \
   --watch --poll-seconds 60 --refresh-seconds 900
 ```
 
-GNSS가 아직 없으면 N11의 두 인자를 생략한다. 아직 수신되지 않은 설정 경로의 두 파일이 모두 없으면 해당 입력을 기다린다. `--watch`를 생략하면 1회만 실행한다. Maven 경로·캐시는 `--mvn`, `--maven-repo`로 지정할 수 있다. 결과는 기본 `out/fds-runs`에 보존하고, N13/N15 출고함은 `out/fds-outbox`, 화면 파일은 **ISS 시험 화면과 분리한** `out/fds-live-view`에 원자적으로 게시한다. 출고함은 `--outbox-dir`로 바꿀 수 있다. 실제 화면을 이 결과에 연결하려면 배포 시 `PADO_STAGE9_FDS_VIEW_DIR`을 해당 디렉터리로 명시해야 한다. 이 실행기는 SFTP 수신·상대 신원 인증·원시 GNSS TM 해독을 수행하지 않는다. 그 경계와 실측 설정, 서비스 컨테이너 구성은 여전히 미완료다.
+GNSS가 아직 없으면 N11의 두 인자를 생략한다. 아직 수신되지 않은 설정 경로의 두 파일이 모두 없으면 해당 입력을 기다린다. `--watch`를 생략하면 1회만 실행한다. Maven 경로·캐시는 `--mvn`, `--maven-repo`로 지정할 수 있다. 결과는 기본 `out/fds-runs`에 보존하고, N13/N15 출고함은 `out/fds-outbox`, 화면 파일은 **ISS 시험 화면과 분리한** `out/fds-live-view`에 원자적으로 게시한다. MPS 읽기 전용 N13 스냅샷은 `out/mps-schedules`에 실행별로 게시한다. 각 위치는 `--outbox-dir`, `--view-dir`, `--mps-schedule-dir`로 바꿀 수 있다. 배포 시 포털의 `PADO_STAGE9_FDS_VIEW_DIR`과 MPS의 `PADO_STAGE9_MPS_SCHEDULE_DIR`을 각각 맞춘다. 이 실행기는 SFTP 수신·상대 신원 인증·원시 GNSS TM 해독을 수행하지 않는다. 그 경계와 실측 설정, 서비스 컨테이너 구성은 여전히 미완료다.
 
 ### N13/N15 전송용 출고함
 
