@@ -103,8 +103,12 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p out
-          git clone --depth 1 https://gitlab.orekit.org/orekit/orekit-data.git \
-            out/orekit-data-2422a7d06ee2cc3b5a503a47271203b0706f3e82
+          git init -q out/orekit-data-2422a7d06ee2cc3b5a503a47271203b0706f3e82
+          git -C out/orekit-data-2422a7d06ee2cc3b5a503a47271203b0706f3e82 \
+            fetch --depth 1 https://gitlab.orekit.org/orekit/orekit-data.git \
+            2422a7d06ee2cc3b5a503a47271203b0706f3e82
+          git -C out/orekit-data-2422a7d06ee2cc3b5a503a47271203b0706f3e82 \
+            checkout --detach -q FETCH_HEAD
           test "$(git -C out/orekit-data-2422a7d06ee2cc3b5a503a47271203b0706f3e82 rev-parse HEAD)" = \
             2422a7d06ee2cc3b5a503a47271203b0706f3e82
       - name: Compile and exercise FDS propagation

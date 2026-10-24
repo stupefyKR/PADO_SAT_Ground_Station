@@ -370,16 +370,19 @@ class DgsBoundaryInvariantTests(unittest.TestCase):
             ("compose.local.yaml", "192.168.45.128", 8080, "br-pado-local"),
             ("compose.dev.yaml", "127.0.0.1", 8443, "br-pado-dev")):
             with self.subTest(file=file):
+                project = "pado-stage9-local" if file == "compose.local.yaml" else None
                 env = dict(os.environ, PADO_LOCAL_BIND_IP="192.168.45.128",
                            PADO_STAGE9_CERT_DIR="/tmp",
                            PADO_OPERATOR_CIDR="192.168.45.1/32")
                 result = subprocess.run(
-                    ["docker", "compose", "-f", str(COMPOSE / file),
+                    ["docker", "compose", *(["-p", project] if project else []),
+                     "-f", str(COMPOSE / file),
                      "config", "--format", "json"], cwd=ROOT, env=env,
                     text=True, capture_output=True, check=False)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 config = json.loads(result.stdout)
-                check_compose_policy.check(config, host, port, bridge)
+                check_compose_policy.check(config, host, port, bridge,
+                                           project=project)
 
     @unittest.skipUnless(shutil.which("docker"), "Docker Compose is required")
     def test_stage7_probe_remains_private(self):
