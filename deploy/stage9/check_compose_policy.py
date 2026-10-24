@@ -11,6 +11,73 @@ from urllib.parse import urlsplit
 
 GATEWAY = "dgs-ops-gateway"
 PORTAL = "portal"
+COMMON_SERVICES = {GATEWAY, PORTAL, "ros-api", "mps-api",
+                   "ros-core-read", "mps-core-read"}
+LOCAL_SERVICES = COMMON_SERVICES | {"init-token", "fds-synthetic-demo",
+                                    "sim-volume-init", "sim-ground", "sim-satellite"}
+NETWORK_MEMBERS = {
+    "entry": {GATEWAY},
+    "dgs_portal": {GATEWAY, PORTAL},
+    "portal_ros": {PORTAL, "ros-api"},
+    "portal_mps": {PORTAL, "mps-api"},
+    "sim_tm": {"sim-ground", "sim-satellite"},
+}
+# A service's named volumes are part of its isolation boundary. Checking only
+# that a volume is declared would let an unrelated service mount ROS's draft DB
+# (or the shared internal token) while all network checks still pass.
+# Tuple order is source, container target, read-only.
+LOCAL_VOLUMES = {
+    "init-token": {("internal_token", "/internal", False)},
+    "dgs-ops-gateway": set(),
+    "portal": {("internal_token", "/internal", True),
+               ("portal_state", "/state", False),
+               ("fds_view", "/fds-view", True)},
+    "ros-api": {("internal_token", "/internal", True),
+                ("ros_core_socket", "/run/core", True),
+                ("ros_drafts", "/state", False),
+                ("ros_tm_preview", "/tm-preview", True),
+                ("sim_tc_socket", "/run/sim-tc", True)},
+    "mps-api": {("internal_token", "/internal", True),
+                ("mps_core_socket", "/run/core", True),
+                ("mps_candidates", "/state", False)},
+    "ros-core-read": {("ros_core_socket", "/run/core", False),
+                      ("ros_state", "/state", True)},
+    "mps-core-read": {("mps_core_socket", "/run/core", False),
+                      ("mps_schedules", "/mps-schedules", True)},
+    "fds-synthetic-demo": {("fds_runs", "/app/out", False),
+                           ("fds_view", "/app/out/fds-view", False),
+                           ("fds_truth", "/app/out/fds-truth", False),
+                           ("mps_schedules", "/app/out/mps-schedules", False),
+                           ("sim_n11_inbox", "/n11-inbox", True)},
+    "sim-volume-init": {("ros_tm_preview", "/tm-preview", False),
+                        ("sim_n11_inbox", "/n11-inbox", False),
+                        ("fds_runs", "/fds-runs", False),
+                        ("fds_view", "/fds-view", False),
+                        ("fds_truth", "/fds-truth", False),
+                        ("mps_schedules", "/mps-schedules", False),
+                        ("sim_tc_socket", "/sim-tc", False)},
+    "sim-ground": {("ros_tm_preview", "/tm-preview", False),
+                   ("sim_n11_inbox", "/n11-inbox", False),
+                   ("sim_tc_socket", "/run/sim-tc", False)},
+    "sim-satellite": {("fds_truth", "/fds-view", True)},
+}
+DEV_VOLUMES = {
+    "dgs-ops-gateway": set(),
+    "portal": {("portal_state", "/state", False)},
+    "ros-api": {("ros_core_socket", "/run/core", True),
+                ("ros_drafts", "/state", False)},
+    "mps-api": {("mps_core_socket", "/run/core", True),
+                ("mps_candidates", "/state", False)},
+    "ros-core-read": {("ros_core_socket", "/run/core", False),
+                      ("ros_state", "/state", True)},
+    "mps-core-read": {("mps_core_socket", "/run/core", False)},
+}
+DEV_BIND_TARGETS = {
+    "portal": {"/certs", "/fds-view"},
+    "ros-api": {"/certs", "/tm-preview"},
+    "mps-api": {"/certs"},
+    "mps-core-read": {"/mps-schedules"},
+}
 
 
 def require(condition: bool, message: str) -> None:
@@ -19,15 +86,48 @@ def require(condition: bool, message: str) -> None:
 
 
 def check(document: dict, bind_ip: str, port: int, bridge: str,
-          operator_cidr: str = "192.168.45.1/32") -> None:
+          operator_cidr: str = "192.168.45.1/32",
+          project: str | None = None) -> None:
     services = document.get("services")
     networks = document.get("networks")
     require(isinstance(services, dict) and isinstance(networks, dict),
             "Compose services and networks are required")
-    require(GATEWAY in services and PORTAL in services,
-            "DGS gateway and portal services are required")
-    require(set(networks) >= {"entry", "dgs_portal", "portal_ros", "portal_mps"},
-            "required DGS and portal networks are missing")
+    local = port == 8080
+    expected_services = LOCAL_SERVICES if local else COMMON_SERVICES
+    expected_networks = set(NETWORK_MEMBERS) if local else set(NETWORK_MEMBERS) - {"sim_tm"}
+    expected_volumes = LOCAL_VOLUMES if local else DEV_VOLUMES
+    require(set(services) == expected_services,
+            "Compose service set differs from approved services")
+    require(set(networks) == expected_networks,
+            "Compose network set differs from approved networks")
+
+    # A named volume backed by a host bind is still a host mount. Do not let
+    # volume driver options or external volumes bypass the service mount check.
+    volumes = document.get("volumes") or {}
+    require(isinstance(volumes, dict), "Compose volumes must be a mapping")
+    document_project = document.get("name")
+    if local:
+        require(project in (None, "pado-stage9-local") and
+                document_project in (None, "pado-stage9-local") and
+                (project is None or document_project == project),
+                "local Compose project name differs from launcher")
+        project = "pado-stage9-local"
+    else:
+        require(project is None or document_project == project,
+                "Compose project name differs from expected project")
+        project = document_project
+    require(set(volumes) == {source for mounts in expected_volumes.values()
+                             for source, _, _ in mounts},
+            "Compose named volume set differs from approved volumes")
+    for name, volume in volumes.items():
+        require(isinstance(volume, dict) and not volume.get("external") and
+                not volume.get("driver_opts") and volume.get("driver") in (None, "local"),
+                f"{name}: external or host-backed volume forbidden")
+        configured_name = volume.get("name")
+        require(configured_name is None or
+                (isinstance(project, str) and bool(project) and
+                 configured_name == f"{project}_{name}"),
+                f"{name}: named volume escapes the Compose project")
 
     entry = networks["entry"]
     require(entry.get("driver") == "bridge" and entry.get("internal") is not True,
@@ -60,8 +160,8 @@ def check(document: dict, bind_ip: str, port: int, bridge: str,
                 "no-new-privileges:true" in (service.get("security_opt") or []),
                 f"{name}: all capabilities must be dropped and new privileges denied")
         for namespace in ("pid", "ipc", "uts", "userns_mode", "cgroup"):
-            require(service.get(namespace) != "host",
-                    f"{name}: host {namespace} namespace forbidden")
+            require(service.get(namespace) is None,
+                    f"{name}: explicit {namespace} namespace forbidden")
         require(not service.get("devices") and not service.get("device_cgroup_rules"),
                 f"{name}: host devices forbidden")
         added_caps = service.get("cap_add") or []
@@ -69,10 +169,43 @@ def check(document: dict, bind_ip: str, port: int, bridge: str,
                                    service.get("network_mode") == "none" and
                                    added_caps == ["CHOWN"]),
                 f"{name}: added capabilities forbidden")
-        mounts = service.get("volumes", [])
-        require(not any("/var/run/docker.sock" in str(mount) or
-                        "/run/docker.sock" in str(mount) for mount in mounts),
-                f"{name}: Docker socket mount forbidden")
+        require(not service.get("volumes_from") and not service.get("configs") and
+                not service.get("secrets"),
+                f"{name}: indirect host mounts forbidden")
+        mounts = service.get("volumes") or []
+        require(isinstance(mounts, list), f"{name}: volumes must be a list")
+        named_mounts = set()
+        bind_targets = set()
+        all_targets = set()
+        for mount in mounts:
+            require(isinstance(mount, dict),
+                    f"{name}: only normalized Compose mounts are allowed")
+            kind = mount.get("type")
+            target = mount.get("target")
+            source = mount.get("source")
+            require(isinstance(target, str) and target.startswith("/") and
+                    isinstance(source, str) and source,
+                    f"{name}: mount source and target are required")
+            require(target not in all_targets,
+                    f"{name}: duplicate container mount target")
+            all_targets.add(target)
+            require(target not in ("/var/run/docker.sock", "/run/docker.sock"),
+                    f"{name}: Docker socket mount forbidden")
+            if kind == "bind":
+                require(not local and target in DEV_BIND_TARGETS.get(name, set()) and
+                        mount.get("read_only") is True and source.startswith("/") and
+                        source != "/",
+                        f"{name}: unapproved or writable host bind mount")
+                bind_targets.add(target)
+            else:
+                require(kind == "volume" and source in volumes,
+                        f"{name}: undeclared named volume or mount type")
+                named_mounts.add((source, target, mount.get("read_only") is True))
+        require(len(named_mounts) + len(bind_targets) == len(mounts) and
+                named_mounts == expected_volumes[name],
+                f"{name}: named volume mount differs from approved source, target or mode")
+        require(bind_targets == (set() if local else DEV_BIND_TARGETS.get(name, set())),
+                f"{name}: host bind targets differ from approved targets")
         connected = set(service.get("networks") or ())
         if service.get("network_mode") == "none":
             require(not connected, f"{name}: network_mode none has networks")
@@ -119,6 +252,10 @@ def check(document: dict, bind_ip: str, port: int, bridge: str,
     require(members["entry"] == {GATEWAY}, "only DGS may join entry")
     require(members["dgs_portal"] == {GATEWAY, PORTAL},
             "DGS-to-portal network must have exactly two peers")
+    for name, expected in NETWORK_MEMBERS.items():
+        if name in networks:
+            require(members[name] == expected,
+                    f"{name}: unexpected network membership")
     require(set(services[PORTAL].get("networks") or ()) ==
             {"dgs_portal", "portal_ros", "portal_mps"},
             "portal must have only approved internal networks")
@@ -198,7 +335,7 @@ def main() -> None:
                                   args.require_gateway)
         else:
             check(document, args.bind_ip, args.port, args.bridge,
-                  args.operator_cidr)
+                  args.operator_cidr, args.project)
     except (ValueError, TypeError, AttributeError, KeyError, json.JSONDecodeError) as exc:
         parser.exit(1, f"DGS network policy violation: {exc}\n")
 

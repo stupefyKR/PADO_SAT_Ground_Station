@@ -15,6 +15,17 @@ ROOT = Path(__file__).resolve().parents[1]
 COMPOSE = ROOT / "deploy" / "stage9"
 
 
+def approved_volume_fixture(document, service_mounts):
+    """Add normalized named volumes to a minimal Compose policy fixture."""
+    document["volumes"] = {source: {} for mounts in service_mounts.values()
+                           for source, _, _ in mounts}
+    for name, mounts in service_mounts.items():
+        document["services"][name]["volumes"] = [
+            {"type": "volume", "source": source, "target": target,
+             "read_only": read_only}
+            for source, target, read_only in sorted(mounts)]
+
+
 def check_private_probe(config):
     """The Stage 7 N2 probe has no operator or external attachment."""
     networks = config["networks"]
@@ -57,7 +68,12 @@ class DgsBoundaryInvariantTests(unittest.TestCase):
                                         "enable_ipv6": False,
                                         "driver_opts": {
                                             "com.docker.network.bridge.gateway_mode_ipv4":
-                                                "isolated"}}},
+                                                 "isolated"}},
+                         "sim_tm": {"driver": "bridge", "internal": True,
+                                    "enable_ipv6": False,
+                                    "driver_opts": {
+                                        "com.docker.network.bridge.gateway_mode_ipv4":
+                                            "isolated"}}},
             "services": {
                 "dgs-ops-gateway": {"networks": {"entry": None, "dgs_portal": None},
                                 "ports": [{"host_ip": "192.168.45.128",
@@ -78,11 +94,18 @@ class DgsBoundaryInvariantTests(unittest.TestCase):
                 "ros-api": {"networks": {"portal_ros": None}},
                 "mps-api": {"networks": {"portal_mps": None}},
                 "ros-core-read": {"network_mode": "none"},
+                "mps-core-read": {"network_mode": "none"},
+                "init-token": {"network_mode": "none"},
+                "fds-synthetic-demo": {"network_mode": "none"},
+                "sim-volume-init": {"network_mode": "none"},
+                "sim-ground": {"networks": {"sim_tm": None}},
+                "sim-satellite": {"networks": {"sim_tm": None}},
             },
         }
         for service in self.good["services"].values():
             service.setdefault("cap_drop", ["ALL"])
             service.setdefault("security_opt", ["no-new-privileges:true"])
+        approved_volume_fixture(self.good, check_compose_policy.LOCAL_VOLUMES)
 
     def test_dgs_gateway_is_the_only_external_boundary(self):
         check_compose_policy.check(self.good, "192.168.45.128", 8080,
@@ -117,6 +140,18 @@ class DgsBoundaryInvariantTests(unittest.TestCase):
             (lambda c: c["services"]["dgs-ops-gateway"]["environment"].pop(
                 "PADO_GATEWAY_OPERATOR_CIDR"),
              "operator CIDR differs"),
+            (lambda c: c["services"].update({"unreviewed-helper": {
+                "network_mode": "none"}}),
+             "service set differs"),
+            (lambda c: c["networks"].update({"unreviewed_bridge": {
+                "driver": "bridge", "internal": True}}),
+             "network set differs"),
+            (lambda c: c["services"]["ros-api"]["networks"].update(
+                {"portal_mps": None}),
+             "portal_mps: unexpected network membership"),
+            (lambda c: c["services"]["sim-ground"]["networks"].update(
+                {"portal_ros": None}),
+             "portal_ros: unexpected network membership"),
         )
         for corrupt, policy_message in cases:
             with self.subTest(expected=policy_message):
@@ -193,6 +228,141 @@ class DgsBoundaryInvariantTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     check_compose_policy.check(broken, "192.168.45.128", 8080,
                                                "br-pado-local")
+
+    def test_local_stack_rejects_host_and_indirect_mounts(self):
+        mutations = (
+            {"volumes": [{"type": "bind", "source": "/etc",
+                          "target": "/host", "read_only": True}]},
+            {"volumes": [{"type": "bind", "source": "/var/run/docker.sock",
+                          "target": "/run/docker.sock", "read_only": True}]},
+            {"volumes_from": ["dgs-ops-gateway"]},
+            {"configs": [{"source": "host_config", "target": "/host"}]},
+        )
+        for extra in mutations:
+            with self.subTest(extra=extra):
+                broken = copy.deepcopy(self.good)
+                broken["services"]["ros-api"].update(extra)
+                with self.assertRaises(ValueError):
+                    check_compose_policy.check(broken, "192.168.45.128", 8080,
+                                               "br-pado-local")
+        for volume in ({"external": True},
+                       {"driver": "local", "driver_opts": {
+                           "type": "none", "device": "/etc", "o": "bind"}}):
+            with self.subTest(volume=volume):
+                broken = copy.deepcopy(self.good)
+                broken["volumes"]["ros_drafts"] = volume
+                with self.assertRaisesRegex(ValueError, "host-backed volume forbidden"):
+                    check_compose_policy.check(broken, "192.168.45.128", 8080,
+                                               "br-pado-local")
+
+    def test_named_volumes_cannot_cross_subsystem_boundaries(self):
+        for name, source, target in (
+                ("sim-satellite", "ros_drafts", "/stolen-ros-drafts"),
+                ("mps-api", "ros_tm_preview", "/unapproved-tm"),
+                ("dgs-ops-gateway", "internal_token", "/internal")):
+            with self.subTest(service=name, source=source):
+                broken = copy.deepcopy(self.good)
+                broken["services"][name]["volumes"].append({
+                    "type": "volume", "source": source, "target": target,
+                    "read_only": True})
+                with self.assertRaisesRegex(ValueError, "named volume mount differs"):
+                    check_compose_policy.check(broken, "192.168.45.128", 8080,
+                                               "br-pado-local")
+        for change in ({"source": "mps_candidates"}, {"target": "/alternate"},
+                       {"read_only": False}):
+            with self.subTest(change=change):
+                broken = copy.deepcopy(self.good)
+                mount = next(item for item in broken["services"]["ros-api"]["volumes"]
+                             if item["source"] == "ros_core_socket")
+                mount.update(change)
+                with self.assertRaisesRegex(ValueError, "named volume mount differs"):
+                    check_compose_policy.check(broken, "192.168.45.128", 8080,
+                                               "br-pado-local")
+        duplicate = copy.deepcopy(self.good)
+        duplicate["services"]["ros-api"]["volumes"].append({
+            "type": "volume", "source": "mps_candidates", "target": "/state"})
+        with self.assertRaisesRegex(ValueError, "duplicate container mount target"):
+            check_compose_policy.check(duplicate, "192.168.45.128", 8080,
+                                       "br-pado-local")
+
+    def test_named_volumes_resolve_within_the_compose_project(self):
+        normalized = copy.deepcopy(self.good)
+        normalized["name"] = "pado-stage9-local"
+        for name, volume in normalized["volumes"].items():
+            volume["name"] = f"pado-stage9-local_{name}"
+        check_compose_policy.check(normalized, "192.168.45.128", 8080,
+                                   "br-pado-local", project="pado-stage9-local")
+        normalized["volumes"]["ros_drafts"]["name"] = "other_project_secret"
+        with self.assertRaisesRegex(ValueError, "escapes the Compose project"):
+            check_compose_policy.check(normalized, "192.168.45.128", 8080,
+                                       "br-pado-local", project="pado-stage9-local")
+        normalized["volumes"]["ros_drafts"]["name"] = "pado-stage9-local_ros_drafts"
+        normalized["name"] = "different-project"
+        with self.assertRaisesRegex(ValueError, "project name differs"):
+            check_compose_policy.check(normalized, "192.168.45.128", 8080,
+                                       "br-pado-local", project="pado-stage9-local")
+
+    def test_shared_service_and_container_namespaces_are_forbidden(self):
+        for field, value in (("pid", "service:ros-api"),
+                             ("ipc", "service:ros-api"),
+                             ("uts", "container:other"),
+                             ("userns_mode", "host"),
+                             ("cgroup", "host")):
+            with self.subTest(field=field):
+                broken = copy.deepcopy(self.good)
+                broken["services"]["mps-api"][field] = value
+                with self.assertRaisesRegex(ValueError, "explicit " + field):
+                    check_compose_policy.check(broken, "192.168.45.128", 8080,
+                                               "br-pado-local")
+
+    def test_development_bind_mounts_are_read_only_and_target_limited(self):
+        dev = copy.deepcopy(self.good)
+        for name in check_compose_policy.LOCAL_SERVICES - check_compose_policy.COMMON_SERVICES:
+            del dev["services"][name]
+        del dev["networks"]["sim_tm"]
+        approved_volume_fixture(dev, check_compose_policy.DEV_VOLUMES)
+        gateway = dev["services"]["dgs-ops-gateway"]
+        gateway["ports"] = [{"host_ip": "127.0.0.1", "published": "8443",
+                             "target": 8443, "protocol": "tcp"}]
+        gateway["command"] = ["python3", "/app/deploy/stage9/dgs_ops_gateway.py",
+                              "--listen-port", "8443", "--upstream-port", "8443"]
+        gateway["environment"] = {}
+        dev["networks"]["entry"]["driver_opts"][
+            "com.docker.network.bridge.name"] = "br-pado-dev"
+        dev["services"]["portal"]["command"] = [
+            "python3", "portal", "--ros-url", "https://ros-api:8443",
+            "--mps-url", "https://mps-api:8443"]
+        for name, targets in check_compose_policy.DEV_BIND_TARGETS.items():
+            dev["services"][name]["volumes"].extend({
+                "type": "bind", "source": "/tmp/pado-certs" if target == "/certs"
+                else "/tmp/pado-data", "target": target, "read_only": True}
+                for target in targets)
+        dev["name"] = "pado-stage9-dev"
+        for name, volume in dev["volumes"].items():
+            volume["name"] = f"pado-stage9-dev_{name}"
+        check_compose_policy.check(dev, "127.0.0.1", 8443, "br-pado-dev")
+        duplicate = copy.deepcopy(dev)
+        duplicate["services"]["portal"]["volumes"].append({
+            "type": "bind", "source": "/tmp/other", "target": "/state",
+            "read_only": True})
+        with self.assertRaisesRegex(ValueError, "duplicate container mount target"):
+            check_compose_policy.check(duplicate, "127.0.0.1", 8443,
+                                       "br-pado-dev")
+        for bad_mount in (
+            {"type": "bind", "source": "/tmp/pado-certs", "target": "/certs",
+             "read_only": False},
+            {"type": "bind", "source": "/tmp/other", "target": "/host",
+             "read_only": True},
+        ):
+            with self.subTest(bad_mount=bad_mount):
+                broken = copy.deepcopy(dev)
+                broken["services"]["portal"]["volumes"] = [
+                    mount for mount in broken["services"]["portal"]["volumes"]
+                    if mount["target"] != bad_mount["target"] and
+                    mount["target"] != "/certs"] + [bad_mount]
+                with self.assertRaisesRegex(ValueError, "unapproved or writable"):
+                    check_compose_policy.check(broken, "127.0.0.1", 8443,
+                                               "br-pado-dev")
 
     @unittest.skipUnless(shutil.which("docker"), "Docker Compose is required")
     def test_real_compose_files_keep_dgs_boundary(self):

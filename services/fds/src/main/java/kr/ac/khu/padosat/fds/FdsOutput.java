@@ -41,7 +41,7 @@ public final class FdsOutput {
             AbsoluteDate start = OrbitInput.date(config.start());
             AbsoluteDate end = start.shiftedBy(config.horizonHours() * 3600.0);
             writeSchedule(staging.resolve("contact_schedule.csv"), config, orbit, start, end);
-            writeProfile(staging.resolve("pass_information.csv"), config, orbit, start, end);
+            writeProfile(staging, config, orbit, start, end);
             writeEphemeris(staging.resolve("orbit_ephemeris.csv"), config, orbit, start, end);
             OrbitViewWriter.write(staging.resolve("orbit_view.json"), config, source, inputPath,
                     orbit, start, end);
@@ -49,6 +49,8 @@ public final class FdsOutput {
             manifest(staging, "contact_schedule.csv", "CONTACT_SCHEDULE", "mps");
             manifest(staging, "pass_information.csv", "PASS_INFORMATION", "dgs-archive");
             manifest(staging, "orbit_ephemeris.csv", "ORBIT_EPHEMERIS", "dgs-archive");
+            manifest(staging, "pass_request.csv", "PASS_REQUEST", "dgs-gs");
+            manifest(staging, "antenna_pointing.csv", "ANTENNA_POINTING", "dgs-gs");
             Files.move(staging, absolute, StandardCopyOption.ATOMIC_MOVE);
         } catch (AtomicMoveNotSupportedException error) {
             throw new IOException("atomic output publication is unavailable", error);
@@ -81,25 +83,37 @@ public final class FdsOutput {
         }
     }
 
-    private static void writeProfile(Path file, FdsConfig config, BoundedPropagator orbit,
+    private static void writeProfile(Path directory, FdsConfig config, BoundedPropagator orbit,
                                      AbsoluteDate start, AbsoluteDate end) throws IOException {
-        try (BufferedWriter writer = Files.newBufferedWriter(file, StandardCharsets.UTF_8)) {
+        try (BufferedWriter writer = Files.newBufferedWriter(directory.resolve("pass_information.csv"),
+                     StandardCharsets.UTF_8);
+             BufferedWriter requests = Files.newBufferedWriter(directory.resolve("pass_request.csv"),
+                     StandardCharsets.UTF_8);
+             BufferedWriter pointing = Files.newBufferedWriter(directory.resolve("antenna_pointing.csv"),
+                     StandardCharsets.UTF_8)) {
             writer.write("schema,station_id,band,pass_id,utc,azimuth_deg,elevation_deg,range_m,range_rate_mps,carrier_hz,doppler_shift_hz,received_hz,frequency_example\n");
+            requests.write("schema,station_id,band,pass_id,aos_utc,los_utc,minimum_elevation_deg,clipped_start,clipped_end,quality,station_parameters_status\n");
+            pointing.write("schema,station_id,band,pass_id,utc,azimuth_deg,elevation_deg,quality,station_parameters_status\n");
             for (FdsConfig.Station station : config.stations()) {
                 PassPredictor predictor = new PassPredictor(orbit, station);
                 List<PassPredictor.Pass> passes = predictor.predict(start, end, config.profileStepSeconds());
                 for (PassPredictor.Pass pass : passes) {
+                    requests.write(String.format(Locale.ROOT,
+                            "fds.pass-request.draft.v1,%s,%s,%s,%s,%s,%.6f,%s,%s,PRELIMINARY_NOT_FOR_OPERATIONS,UNVERIFIED_TEST_VALUES%n",
+                            station.id(), station.band(), pass.id(), utc(pass.aos()), utc(pass.los()),
+                            station.minimumElevationDeg(), pass.clippedStart(), pass.clippedEnd()));
                     for (AbsoluteDate time = pass.aos(); time.compareTo(pass.los()) < 0;
                          time = time.shiftedBy(config.profileStepSeconds())) {
-                        profileRow(writer, predictor, pass, time);
+                        profileRow(writer, pointing, predictor, pass, time);
                     }
-                    profileRow(writer, predictor, pass, pass.los());
+                    profileRow(writer, pointing, predictor, pass, pass.los());
                 }
             }
         }
     }
 
-    private static void profileRow(BufferedWriter writer, PassPredictor predictor,
+    private static void profileRow(BufferedWriter writer, BufferedWriter pointing,
+                                   PassPredictor predictor,
                                    PassPredictor.Pass pass, AbsoluteDate time) throws IOException {
         PassPredictor.Observation observation = predictor.at(time);
         FdsConfig.Station station = pass.station();
@@ -110,6 +124,10 @@ public final class FdsOutput {
                 observation.elevationDeg(), observation.rangeM(), observation.rangeRateMps(),
                 station.carrierHz(), shift, station.carrierHz() + shift,
                 station.exampleFrequency()));
+        pointing.write(String.format(Locale.ROOT,
+                "fds.antenna-pointing.draft.v1,%s,%s,%s,%s,%.6f,%.6f,PRELIMINARY_NOT_FOR_OPERATIONS,UNVERIFIED_TEST_VALUES%n",
+                station.id(), station.band(), pass.id(), utc(time), observation.azimuthDeg(),
+                observation.elevationDeg()));
     }
 
     private static void writeEphemeris(Path file, FdsConfig config, BoundedPropagator orbit,

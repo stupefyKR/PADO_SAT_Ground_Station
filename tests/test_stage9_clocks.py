@@ -76,6 +76,51 @@ assert.match(nodes['utc-clock'].textContent, /2026-10-23/);
 assert.match(nodes['kst-clock'].textContent, /2026-10-24/);
 """
 
+NODE_PASS_TEST = r"""
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+let epoch = Date.parse('2026-10-23T10:00:00Z');
+class TestDate extends Date {
+  constructor(...args) { super(...(args.length ? args : [epoch])); }
+  static now() { return epoch; }
+}
+const element = () => ({
+  textContent: '', children: [],
+  classList: { names: new Set(), add(name) { this.names.add(name); },
+    remove(name) { this.names.delete(name); } },
+  replaceChildren(...items) { this.children = items; },
+  append(...items) { this.children.push(...items); },
+});
+const nodes = Object.fromEntries(['ros-pass-state', 'ros-pass-yonsei',
+  'ros-pass-kari'].map((id) => [id, element()]));
+const context = { Date: TestDate, document: {
+  body: { dataset: { page: 'pass-test' } },
+  getElementById: (id) => nodes[id] || null,
+  createElement: () => element(),
+}};
+vm.createContext(context);
+vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
+const base = Math.floor(epoch / 1000);
+vm.runInContext(`rosPassPlan = ${JSON.stringify({
+  start: epoch - 1000, end: epoch + 7200000, inputEpoch: epoch - 1000,
+  passes: [
+    {station_id: 'yonsei', aos_utc_s: base + 600, los_utc_s: base + 1200,
+      clipped_start: false, clipped_end: false},
+    {station_id: 'kari', aos_utc_s: base - 300, los_utc_s: base + 300,
+      clipped_start: false, clipped_end: false},
+  ]
+})}; renderRosPasses();`, context);
+assert.match(nodes['ros-pass-state'].textContent, /FDS 시험 예측/);
+assert.match(nodes['ros-pass-yonsei'].children[2].textContent, /AOS까지 00:10:00/);
+assert.match(nodes['ros-pass-kari'].children[2].textContent, /LOS까지 00:05:00/);
+assert.ok(nodes['ros-pass-kari'].classList.names.has('ros-pass-active'));
+epoch += 7300000;
+vm.runInContext('renderRosPasses()', context);
+assert.match(nodes['ros-pass-state'].textContent, /판정 불가/);
+assert.match(nodes['ros-pass-yonsei'].children[2].textContent, /--:--:--/);
+"""
+
 
 class SharedClockTests(unittest.TestCase):
     def test_every_entry_page_places_both_clocks_above_main_content(self):
@@ -104,6 +149,14 @@ class SharedClockTests(unittest.TestCase):
             ["node", "-e", NODE_CLOCK_TEST, str(WEB / "common" / "app.js")],
             capture_output=True, text=True, timeout=10, check=False,
             env={**os.environ, "TZ": "America/Los_Angeles"},
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js unavailable")
+    def test_ros_pass_countdown_distinguishes_prediction_and_expiry(self):
+        result = subprocess.run(
+            ["node", "-e", NODE_PASS_TEST, str(WEB / "common" / "app.js")],
+            capture_output=True, text=True, timeout=10, check=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
 

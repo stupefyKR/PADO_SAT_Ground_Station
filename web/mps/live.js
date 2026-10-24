@@ -3,6 +3,76 @@
 // MPS uses only FDS-published Earth-fixed positions; no TLE propagation runs here.
 let mpsOrbitView = null;
 let mpsSelectedPass = null;
+let mpsN10Feedback = null;
+
+function mpsRenderN10Feedback(feedback = mpsN10Feedback) {
+  const state = document.getElementById("mps-n10-state");
+  const sohState = document.getElementById("mps-n10-soh-state");
+  const sensorList = document.getElementById("mps-n10-soh-sensors");
+  const ackRows = document.getElementById("mps-n10-ack-rows");
+  if (!state || !sohState || !sensorList || !ackRows) return;
+  ackRows.replaceChildren();
+  sensorList.replaceChildren();
+  if (!feedback || feedback.schema !== "pado.sim-n10-feedback.v1" ||
+      feedback.source !== "ROS_SIM_ONLY" || feedback.non_operational !== true ||
+      !Array.isArray(feedback.ack_items)) {
+    state.textContent = "ROS 조회 불가";
+    sohState.textContent = "판정 불가";
+    sensorList.textContent = "ROS 시험 자료를 읽을 수 없습니다.";
+    const row = document.createElement("tr");
+    const cell = document.createElement("td"); cell.colSpan = 4;
+    cell.textContent = "ACK 판정 불가"; row.append(cell); ackRows.append(row);
+    return;
+  }
+  state.textContent = "SIM ONLY · 조회 중";
+  const recent = feedback.ack_items.slice(0, 12);
+  if (!recent.length) {
+    const row = document.createElement("tr");
+    const cell = document.createElement("td"); cell.colSpan = 4;
+    cell.textContent = "수신된 시험 ACK가 없습니다."; row.append(cell); ackRows.append(row);
+  }
+  for (const item of recent) {
+    const row = document.createElement("tr");
+    if (item.pass_id === mpsSelectedPass?.pass_id) row.classList.add("n10-selected-pass");
+    const result = item.status === "ACKED" ? "수락" :
+      item.status === "REJECTED" ? `거절 · 이유 ${item.ack?.reason ?? "?"}` : "판정 불가";
+    const ackDate = Number.isSafeInteger(item.ack?.executed_at_utc_ms) ?
+      new Date(item.ack.executed_at_utc_ms) : null;
+    const stamp = ackDate && Number.isFinite(ackDate.getTime()) ?
+      ackDate.toISOString() : "시각 오류";
+    for (const content of [item.pass_id, item.command_name, result, stamp]) {
+      const cell = document.createElement("td"); cell.textContent = String(content); row.append(cell);
+    }
+    ackRows.append(row);
+  }
+  const soh = feedback.bus_soh;
+  const quality = feedback.bus_soh_state;
+  sohState.textContent = quality === "CURRENT" ? "최신 시험 TM" :
+    quality === "STALE" ? "자료 오래됨 · 판정 불가" :
+    quality === "INVALID" ? "자료 오류 · 판정 불가" : "자료 없음 · 판정 불가";
+  if (!soh || !Array.isArray(soh.sensors) || !["CURRENT", "STALE"].includes(quality)) {
+    sensorList.textContent = "EPS 시험 TM을 확인할 수 없습니다.";
+    return;
+  }
+  for (const sensor of soh.sensors) {
+    const row = document.createElement("div"); row.className = "n10-sensor";
+    const name = document.createElement("span"); name.textContent = sensor.name;
+    const value = document.createElement("strong");
+    value.textContent = `${sensor.value} ${sensor.unit}`;
+    const limit = document.createElement("small");
+    limit.textContent = quality === "STALE" ? "자료 오래됨" :
+      sensor.limit_state === "OUT_OF_RANGE" ? "시험 한계 초과" :
+      sensor.limit_state === "IN_RANGE" ? "시험 한계 내" : "판정 불가";
+    if (quality === "CURRENT" && sensor.limit_state === "OUT_OF_RANGE")
+      row.classList.add("n10-alarm");
+    row.append(name, value, limit); sensorList.append(row);
+  }
+}
+
+function mpsSetN10Feedback(feedback) {
+  mpsN10Feedback = feedback;
+  mpsRenderN10Feedback();
+}
 
 function mpsPassPoint(rows, at) {
   let right = rows.findIndex((row) => Date.parse(row[0]) >= at);
@@ -150,6 +220,7 @@ function mpsFieldInput(name, type, editable) {
 function mpsRenderSequenceEditor(pass, schedule, session, drafts) {
   mpsSelectedPass = pass;
   mpsDrawPass(pass);
+  mpsRenderN10Feedback();
   const panel = document.querySelector(".draft-panel");
   const scroll = panel.querySelector(".table-scroll");
   const actions = panel.querySelector(".panel-actions");

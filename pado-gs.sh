@@ -350,7 +350,7 @@ verify_runtime_networks() {
 validate_compose_config() {
   compose config --format json | python3 "$ROOT_DIR/deploy/stage9/check_compose_policy.py" \
     --bind-ip "$PADO_LOCAL_BIND_IP" --port "$PORT" --bridge "$ENTRY_BRIDGE" \
-    --operator-cidr "$PADO_OPERATOR_CIDR"
+    --operator-cidr "$PADO_OPERATOR_CIDR" --project "$PROJECT"
 }
 
 start_stack() {

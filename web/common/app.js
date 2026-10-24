@@ -34,6 +34,82 @@ let exampleRange = 30;
 let latestRosOverview = null;
 let rosSummaryUnavailable = false;
 let mpsDraftCommands = [];
+let rosPassPlan = null;
+
+function rosPassRemaining(seconds) {
+  const whole = Math.max(0, Math.ceil(seconds));
+  const hours = Math.floor(whole / 3600);
+  const minutes = Math.floor(whole % 3600 / 60);
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(whole % 60).padStart(2, "0")}`;
+}
+
+function renderRosPasses() {
+  const badge = document.getElementById("ros-pass-state");
+  if (!badge) return;
+  const now = Date.now();
+  const valid = rosPassPlan && now >= rosPassPlan.start && now <= rosPassPlan.end &&
+    now - rosPassPlan.inputEpoch < 72 * 3600000 &&
+    rosPassPlan.inputEpoch - now < 300000;
+  badge.textContent = valid ? "FDS 시험 예측" : "예측 자료 없음 · 판정 불가";
+  for (const [stationId, label] of [["yonsei", "연세대 UHF"],
+    ["kari", "항우연 S-band"]]) {
+    const target = document.getElementById(`ros-pass-${stationId}`);
+    if (!target) continue;
+    target.replaceChildren(); target.classList.remove("ros-pass-active");
+    const title = document.createElement("strong"); title.textContent = label;
+    const state = document.createElement("span");
+    const countdown = document.createElement("em");
+    const times = document.createElement("small");
+    if (!valid) {
+      state.textContent = "예측 확인 불가"; countdown.textContent = "--:--:--";
+      times.textContent = "FDS N13·위치 자료가 없거나 만료됐습니다.";
+    } else {
+      const passes = rosPassPlan.passes.filter((item) => item.station_id === stationId &&
+        item.los_utc_s * 1000 > now && !item.clipped_start && !item.clipped_end);
+      const pass = passes[0];
+      if (!pass) {
+        state.textContent = "예측창 내 확정 PASS 없음";
+        countdown.textContent = "—";
+        times.textContent = "경계에서 잘린 PASS는 카운트다운에서 제외합니다.";
+      } else {
+        const active = pass.aos_utc_s * 1000 <= now;
+        state.textContent = active ? "예측 가시구간 · 링크 실측 아님" : "다음 예측 PASS";
+        countdown.textContent = `${active ? "LOS" : "AOS"}까지 ${
+          rosPassRemaining(((active ? pass.los_utc_s * 1000 : pass.aos_utc_s * 1000) - now) / 1000)}`;
+        times.textContent = `AOS ${new Date(pass.aos_utc_s * 1000).toISOString()} · ` +
+          `LOS ${new Date(pass.los_utc_s * 1000).toISOString()}`;
+        if (active) target.classList.add("ros-pass-active");
+      }
+    }
+    target.append(title, state, countdown, times);
+  }
+}
+
+async function refreshRosPasses() {
+  if (document.visibilityState !== "visible") return;
+  try {
+    const [schedule, view] = await Promise.all([
+      api("/api/mps/passes"), api("/api/fds/orbit")
+    ]);
+    const start = Date.parse(view.start_utc), end = Date.parse(view.end_utc);
+    const inputEpoch = Date.parse(view.input_epoch_utc);
+    if (schedule.schedule_state !== "validated" || schedule.operational !== false ||
+        view.schema !== "fds.orbit-view.v1" ||
+        view.quality !== "PRELIMINARY_NOT_FOR_OPERATIONS" ||
+        !Number.isFinite(start) || !Number.isFinite(end) ||
+        !Number.isFinite(inputEpoch) || !Array.isArray(schedule.passes) ||
+        !Array.isArray(view.stations) ||
+        !schedule.passes.every((item) => {
+          const station = view.stations.find((site) =>
+            site.id === item.station_id && site.band === item.band);
+          return station && Array.isArray(station.passes) && station.passes.some((expected) =>
+            Math.abs(Date.parse(expected.aos_utc) - item.aos_utc_s * 1000) <= 1500 &&
+            Math.abs(Date.parse(expected.los_utc) - item.los_utc_s * 1000) <= 1500);
+        })) throw new Error("FDS N13 and orbit view differ");
+    rosPassPlan = { start, end, inputEpoch, passes: schedule.passes };
+  } catch (_) { rosPassPlan = null; }
+  renderRosPasses();
+}
 
 function renderRosCoreStatus() {
   if (latestRosOverview === null || exampleActive || window.rosTestPreviewActive) return;
@@ -522,9 +598,12 @@ async function workspace(page) {
   });
   if (page === "ops") {
     await refreshRosSummary();
+    await refreshRosPasses();
     setInterval(() => {
       if (document.visibilityState === "visible") refreshRosSummary();
     }, 5000);
+    setInterval(renderRosPasses, 1000);
+    setInterval(refreshRosPasses, 60000);
   } else if (page === "orbit") {
     await initOrbitViewer();
   } else {
@@ -561,6 +640,13 @@ async function workspace(page) {
         if (mpsSelectedPass) mpsDrawPass(mpsSelectedPass);
       });
     } catch (_) { showError("서브시스템 상태를 읽지 못했습니다."); }
+    const refreshN10 = async () => {
+      if (document.visibilityState !== "visible") return;
+      try { mpsSetN10Feedback(await api("/api/mps/test-ros-feedback")); }
+      catch (_) { mpsSetN10Feedback(null); }
+    };
+    await refreshN10();
+    setInterval(refreshN10, 5000);
   }
 }
 

@@ -141,6 +141,34 @@ public final class FdsSelfTest {
         }
         List<String> profile = Files.readAllLines(output.resolve("pass_information.csv"));
         check(profile.size() > 1, "no Doppler samples");
+        List<String> pointing = Files.readAllLines(output.resolve("antenna_pointing.csv"));
+        List<String> requests = Files.readAllLines(output.resolve("pass_request.csv"));
+        List<String> schedule = Files.readAllLines(output.resolve("contact_schedule.csv"));
+        check(pointing.size() == profile.size(), "N08 pointing cadence differs from N15 profile");
+        check(requests.size() == schedule.size(), "N08 pass request count differs from N13");
+        for (int row = 1; row < requests.size(); row++) {
+            String[] request = requests.get(row).split(",");
+            String[] contact = schedule.get(row).split(",");
+            check(request.length == 11 && request[0].equals("fds.pass-request.draft.v1") &&
+                    request[1].equals(contact[1]) && request[2].equals(contact[2]) &&
+                    request[3].equals(contact[3]) && request[4].equals(contact[4]) &&
+                    request[5].equals(contact[5]) && request[7].equals(contact[9]) &&
+                    request[8].equals(contact[10]) &&
+                    request[9].equals("PRELIMINARY_NOT_FOR_OPERATIONS") &&
+                    request[10].equals("UNVERIFIED_TEST_VALUES"),
+                    "N08 request lost contact window or draft status");
+        }
+        for (int row = 1; row < pointing.size(); row++) {
+            String[] sample = pointing.get(row).split(",");
+            String[] reference = profile.get(row).split(",");
+            check(sample.length == 9 && sample[0].equals("fds.antenna-pointing.draft.v1") &&
+                    sample[1].equals(reference[1]) && sample[2].equals(reference[2]) &&
+                    sample[3].equals(reference[3]) && sample[4].equals(reference[4]) &&
+                    sample[5].equals(reference[5]) && sample[6].equals(reference[6]) &&
+                    sample[7].equals("PRELIMINARY_NOT_FOR_OPERATIONS") &&
+                    sample[8].equals("UNVERIFIED_TEST_VALUES"),
+                    "N08 pointing is not the calculated PASS profile");
+        }
         for (String line : profile.subList(1, profile.size())) {
             String[] fields = line.split(",");
             double rate = Double.parseDouble(fields[8]);
@@ -154,9 +182,12 @@ public final class FdsSelfTest {
         check(Files.readString(output.resolve("run.properties")).contains("maneuver_model=NONE"),
                 "unmodeled maneuvers must be explicit");
         for (String name : List.of("contact_schedule.csv", "pass_information.csv",
-                "orbit_ephemeris.csv")) {
+                "orbit_ephemeris.csv", "pass_request.csv", "antenna_pointing.csv")) {
             String manifest = Files.readString(output.resolve(name + ".manifest.json"));
             check(manifest.contains(FdsOutput.sha256(output.resolve(name))), "manifest hash");
+            if (name.equals("pass_request.csv") || name.equals("antenna_pointing.csv")) {
+                check(manifest.contains("\"to\":\"dgs-gs\""), "N08 destination");
+            }
         }
         rejected(() -> FdsOutput.write(output, config, selected, tle, orbit),
                 "existing output must not be replaced");

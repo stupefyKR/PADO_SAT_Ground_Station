@@ -17,6 +17,7 @@ import ssl
 import stat
 import threading
 import time
+from datetime import datetime, timezone
 from http import HTTPStatus
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -64,7 +65,57 @@ PROXY_ROUTES = {
     "/api/mps/passes": ("mps", "/passes"),
     "/api/mps/test-candidates": ("mps", "/test-candidates"),
     "/api/mps/test-sequences": ("mps", "/test-sequences"),
+    "/api/mps/test-ros-feedback": ("ros", "/test-n10-feedback"),
 }
+
+
+def test_n10_feedback(drafts: RosDraftStore, tm_preview: Path | None,
+                      now_s: int | None = None) -> dict:
+    """Bounded ACK/SOH projection; it is not an operational N10 exchange."""
+    now_s = int(time.time()) if now_s is None else now_s
+    result = {"schema": "pado.sim-n10-feedback.v1", "source": "ROS_SIM_ONLY",
+              "non_operational": True, "ack_items": drafts.n10_test_ack_items(),
+              "bus_soh_state": "UNAVAILABLE", "bus_soh": None}
+    try:
+        snapshot = load_snapshot(tm_preview)
+    except PreviewError as exc:
+        if str(exc) not in ("snapshot_unavailable", "snapshot_not_configured"):
+            result["bus_soh_state"] = "INVALID"
+        return result
+    now = datetime.fromtimestamp(now_s, timezone.utc)
+    received = datetime.fromisoformat(
+        snapshot["received_utc"].replace("Z", "+00:00"))
+    age = (now - received).total_seconds()
+    if age < -30:
+        result["bus_soh_state"] = "INVALID"
+        return result
+    sensors = []
+    stale = age >= 300
+    for sensor in snapshot["sensors"]:
+        # Only the explicitly configured EPS test sensors are bus SOH here.
+        if sensor["group"] != "EPS":
+            continue
+        sample = sensor["samples"][-1]
+        sample_time = datetime.fromisoformat(
+            sample["utc"].replace("Z", "+00:00"))
+        if (now - sample_time).total_seconds() >= 300:
+            stale = True
+        sensors.append({"id": sensor["id"], "name": sensor["name"],
+                        "unit": sensor["unit"], "sample_utc": sample["utc"],
+                        "value": sample["value"], "lower": sensor["lower"],
+                        "upper": sensor["upper"]})
+    if not sensors:
+        return result
+    state = "STALE" if stale else "CURRENT"
+    for sensor in sensors:
+        sensor["limit_state"] = ("INDETERMINATE" if stale else
+                                 "IN_RANGE" if sensor["lower"] <= sensor["value"] <=
+                                 sensor["upper"] else "OUT_OF_RANGE")
+    result["bus_soh_state"] = state
+    result["bus_soh"] = {"kind": "BUS_SOH", "source": "TEST_ONLY_TM_SNAPSHOT",
+                         "received_utc": snapshot["received_utc"],
+                         "state": state, "sensors": sensors}
+    return result
 
 
 def initialize_internal_token(path: Path) -> None:
@@ -542,6 +593,18 @@ class Handler(BaseHTTPRequestHandler):
         role = self.headers.get("X-Pado-Role", "")
         if role not in ROLES or len(actor) > 64 or not actor:
             self._error(HTTPStatus.FORBIDDEN, "portal_identity")
+            return
+        if self.server.mode == "ros" and path == "/test-n10-feedback":
+            if self.server.drafts is None:
+                self._error(HTTPStatus.SERVICE_UNAVAILABLE, "draft_store_unavailable")
+                return
+            try:
+                feedback = test_n10_feedback(self.server.drafts,
+                                             self.server.tm_preview)
+            except DraftError:
+                self._error(HTTPStatus.SERVICE_UNAVAILABLE, "test_feedback_invalid")
+                return
+            self._json(HTTPStatus.OK, feedback)
             return
         if self.server.mode == "ros" and path == "/test-tm-snapshot":
             try:

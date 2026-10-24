@@ -29,13 +29,15 @@ synthetic file bodies are test data, not a durable retention or audit store.
 FDS participates at the file boundary: it initiates N05 pull and is
 sender/receiver on N08, N11, N13 and N15. A separate offline Java/Orekit
 calculation core now produces preliminary Contact Schedule, Pass Information
-with Doppler and Orbit Ephemeris bodies plus manifests. A local development
+with Doppler, Orbit Ephemeris and local-only N08 antenna pointing / pass request
+drafts plus manifests. N08 carries an explicit unverified test-parameter marker;
+it is not an antenna command and is never read by the N13/N15 SFTP sender. A local development
 runner revalidates staged N05/N11 pairs, repeatedly runs FDS, and atomically
 publishes the orbit view. Its N13/N15 outputs can be verified and staged as
 unique outbox pairs; a Linux one-shot CLI calls the existing N05/N13/N15 SFTP
 routes. The runner and CLI are not yet a deployed receiver/watcher/sender
 service, and they do not decode operational GNSS TM. The
-operational GNSS TM decoder, N08 antenna pointing body, source credentials
+operational GNSS TM decoder, final N08 antenna equipment format, source credentials
 and mission acceptance rules need ICDs. These Stage 6 tests establish
 transport and manifest routing only; a manifest type does not certify the
 orbital or mission meaning of the bytes.

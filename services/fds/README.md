@@ -16,7 +16,7 @@
 
 ### N13/N15 출고함 반복 송신
 
-`tools/stage_fds_outbox.py`가 검증해 게시한 고유 실행 디렉터리를 `tools/send_fds_outbox.py`가 순서대로 읽는다. 실제 서비스 설치 시 `outbox_peers.example.json`을 저장소 밖의 비공개 설정으로 복사해 MPS와 DGS-Archive의 SSH 호스트·계정·고정 호스트키 지문·키 파일을 입력한다. 아래는 Linux 배포 시 실행 형태이며, 현재 실제 상대 정보가 없어 현장 송신은 수행하지 않았다.
+`tools/stage_fds_outbox.py`가 검증해 게시한 N13/N15 고유 실행 디렉터리를 `tools/send_fds_outbox.py`가 순서대로 읽는다. **N08 안테나 지향·패스 요청 초안은 별도 로컬 출고함에만 기록하며 이 송신기는 읽지 않는다.** 실제 서비스 설치 시 `outbox_peers.example.json`을 저장소 밖의 비공개 설정으로 복사해 MPS와 DGS-Archive의 SSH 호스트·계정·고정 호스트키 지문·키 파일을 입력한다. 아래는 Linux 배포 시 실행 형태이며, 현재 실제 상대 정보가 없어 현장 송신은 수행하지 않았다.
 
 ```sh
 python3 tools/send_fds_outbox.py \
@@ -32,9 +32,11 @@ python3 tools/send_fds_outbox.py \
 | `contact_schedule.csv` | 안테나별 AOS·LOS·최고 고각과 시각, 예측창 경계 잘림 표시 | N13 `CONTACT_SCHEDULE` |
 | `pass_information.csv` | 가시 구간 10초 간격 방위각·고각·거리·거리 변화율·도플러 | N15 `PASS_INFORMATION` |
 | `orbit_ephemeris.csv` | 60초 간격 GCRF 위치(m)·속도(m/s) | N15 `ORBIT_EPHEMERIS` |
+| `pass_request.csv` | 두 지상국의 AOS·LOS, 최소 고각과 예측창 잘림 여부를 담은 시험 요청 초안 | N08 `PASS_REQUEST` — 로컬 전용 |
+| `antenna_pointing.csv` | 같은 패스의 10초 간격 방위각·고각 시험 지향값 | N08 `ANTENNA_POINTING` — 로컬 전용 |
 | `orbit_view.json` | 같은 전파 결과의 60초 간격 ITRF 위치·지상궤적·태양 방향, 두 지상국 PASS 구간 | 포털 내부 읽기 전용 화면 자료 (N2 외부 교환물 아님) |
 
-각 CSV는 `fds.*.v1` 스키마 열로 시작하고 UTC는 밀리초와 `Z`로 출력한다. 세 파일에 기존 매니페스트 스키마의 SHA-256·유형·송신자·수신자를 담은 `.manifest.json`을 붙인다. 도플러 부호는 거리 변화율이 음수(접근)일 때 양수 주파수 편이이며, `-carrier_hz × range_rate_mps / c`의 1차 근사다. 패스 경계는 설정한 최소 고각을 기준으로 탐색하고 0.1초 이하까지 세분화한다. 최대 전파 기간은 72시간이다.
+각 CSV는 버전형 스키마 열로 시작하고 UTC는 밀리초와 `Z`로 출력한다. 다섯 파일에 기존 매니페스트 스키마의 SHA-256·유형·송신자·수신자를 담은 `.manifest.json`을 붙인다. N08 두 파일의 수신처는 `dgs-gs`지만 **외부 송신 기능은 없다.** 모든 N08 행은 `PRELIMINARY_NOT_FOR_OPERATIONS`와 `UNVERIFIED_TEST_VALUES`를 명시한다. 안테나 좌표·고각 기준·주파수는 현재 시험 설정이며, N08 파일을 실제 안테나 명령이나 패스 요청으로 사용할 수 없다. 도플러 부호는 거리 변화율이 음수(접근)일 때 양수 주파수 편이이며, `-carrier_hz × range_rate_mps / c`의 1차 근사다. 패스 경계는 설정한 최소 고각을 기준으로 탐색하고 0.1초 이하까지 세분화한다. 최대 전파 기간은 72시간이다.
 
 ## 개발 실행
 
@@ -82,7 +84,7 @@ python3 tools/run_fds_pipeline.py \
   --watch --poll-seconds 60 --refresh-seconds 900
 ```
 
-GNSS가 아직 없으면 N11의 두 인자를 생략한다. 아직 수신되지 않은 설정 경로의 두 파일이 모두 없으면 해당 입력을 기다린다. `--watch`를 생략하면 1회만 실행한다. Maven 경로·캐시는 `--mvn`, `--maven-repo`로 지정할 수 있다. 결과는 기본 `out/fds-runs`에 보존하고, N13/N15 출고함은 `out/fds-outbox`, 화면 파일은 **합성 화면 시험과 분리한** `out/fds-live-view`에 원자적으로 게시한다. MPS 읽기 전용 N13 스냅샷은 `out/mps-schedules`에 실행별로 게시한다. 각 위치는 `--outbox-dir`, `--view-dir`, `--mps-schedule-dir`로 바꿀 수 있다. 배포 시 포털의 `PADO_STAGE9_FDS_VIEW_DIR`과 MPS의 `PADO_STAGE9_MPS_SCHEDULE_DIR`을 각각 맞춘다. 이 실행기는 SFTP 수신·상대 신원 인증·원시 GNSS TM 해독을 수행하지 않는다. 수신 스냅샷 경계는 아래 도구를 사용한다.
+GNSS가 아직 없으면 N11의 두 인자를 생략한다. 아직 수신되지 않은 설정 경로의 두 파일이 모두 없으면 해당 입력을 기다린다. `--watch`를 생략하면 1회만 실행한다. Maven 경로·캐시는 `--mvn`, `--maven-repo`로 지정할 수 있다. 결과는 기본 `out/fds-runs`에 보존하고, N13/N15 전송용 출고함은 `out/fds-outbox`, N08 **로컬 전용 초안** 출고함은 `out/fds-n08-outbox`, 화면 파일은 **합성 화면 시험과 분리한** `out/fds-live-view`에 원자적으로 게시한다. MPS 읽기 전용 N13 스냅샷은 `out/mps-schedules`에 실행별로 게시한다. 각 위치는 `--outbox-dir`, `--n08-outbox-dir`, `--view-dir`, `--mps-schedule-dir`로 바꿀 수 있다. N08과 N13/N15 출고함을 같은 경로로 지정하면 계산 시작 전에 거부한다. 배포 시 포털의 `PADO_STAGE9_FDS_VIEW_DIR`과 MPS의 `PADO_STAGE9_MPS_SCHEDULE_DIR`을 각각 맞춘다. 이 실행기는 SFTP 수신·상대 신원 인증·원시 GNSS TM 해독을 수행하지 않는다. 수신 스냅샷 경계는 아래 도구를 사용한다.
 
 ### N05/N11 수신 스냅샷 경계
 
@@ -113,10 +115,11 @@ Linux의 `gs_sftp_tests`는 CI에서 일시적인 키 전용 `sshd`를 시작해
 
 ### N13/N15 전송용 출고함
 
-완료된 FDS 실행 디렉터리의 N13/N15 CSV 세 개와 매니페스트를 `tools/stage_fds_outbox.py`로 다시 검증한다. 반복 계산 실행기는 계산 성공 후 이를 자동 호출한다. 도구는 각 파일에 실행 ID를 붙여 고유 이름의 불변 파일 쌍 3개를 원자적으로 출고함에 게시한다. 원본 FDS 결과와 합성 화면 시험 자료는 수정하지 않는다. 예를 들어 `out/fds-runs/fds-20261023T100000Z-1234abcd`를 지정하면 `out/fds-outbox/fds-20261023T100000Z-1234abcd/`에 `contact_schedule-fds-20261023T100000Z-1234abcd.csv`와 해당 매니페스트 등이 생긴다. MPS는 원본 고정 파일명과 출고함의 고유 파일명을 모두 검증할 수 있다.
+완료된 FDS 실행 디렉터리의 N13/N15 CSV 세 개와 매니페스트를 `tools/stage_fds_outbox.py`로 다시 검증한다. 반복 계산 실행기는 계산 성공 후 이를 자동 호출한다. 도구는 각 파일에 실행 ID를 붙여 고유 이름의 불변 파일 쌍 3개를 원자적으로 출고함에 게시한다. 원본 FDS 결과와 합성 화면 시험 자료는 수정하지 않는다. 예를 들어 `out/fds-runs/fds-20261023T100000Z-1234abcd`를 지정하면 `out/fds-outbox/fds-20261023T100000Z-1234abcd/`에 `contact_schedule-fds-20261023T100000Z-1234abcd.csv`와 해당 매니페스트 등이 생긴다. MPS는 원본 고정 파일명과 출고함의 고유 파일명을 모두 검증할 수 있다. N08 두 초안 파일은 같은 실행에서 N13 PASS 경계·두 지상국 식별자·시각·방위각/고각 범위·시험 출처와 해시를 확인해 별도 로컬 출고함에 게시한다. 이 경계는 SFTP 계정이나 DGS-GS 외부 송신 서비스를 만들지 않는다.
 
 ```sh
 python3 tools/stage_fds_outbox.py out/fds-runs/fds-20261023T100000Z-1234abcd
+python3 tools/stage_fds_outbox.py --n08-only out/fds-runs/fds-20261023T100000Z-1234abcd
 ```
 
 Linux 빌드의 `gs_fds_exchange`는 기존 단계 6 SFTP 경로 검증기를 사용한다. `push-n13`은 MPS로 일정 한 쌍, `push-n15`는 Archive로 궤도력·패스 정보 각 한 쌍을 송신한다. `pull-n05`는 DGS-NET에서 TLE 한 쌍을 받아 로컬 완료 파일로 게시한다. 호출 형식은 다음과 같다.

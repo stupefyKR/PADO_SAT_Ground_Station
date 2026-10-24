@@ -18,6 +18,19 @@
 .mps-sequence-form label{display:grid;gap:4px;color:#a8c5ce;font-size:.72rem}.mps-sequence-form input,.mps-sequence-form select{min-width:90px;max-width:180px}
 .mps-sequence-form .param-field{min-width:100px}.mps-sequence-form .param-field input{width:110px}
 .mps-sequence-actions{display:flex;gap:8px;flex-wrap:wrap}
+.n10-feedback-panel{margin-top:12px}
+.n10-feedback-grid{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(240px,.6fr);gap:12px;padding:12px}
+.n10-feedback-grid>div{min-width:0}
+.n10-feedback-grid h3{display:flex;justify-content:space-between;gap:8px;margin:0 0 8px;color:#dcecef;font-size:.78rem}
+.n10-feedback-grid h3 small{color:#a6bec7;font-size:.7rem}
+.n10-feedback-grid .table-scroll{max-height:260px}
+.n10-feedback-grid td{overflow-wrap:anywhere}
+.n10-selected-pass{background:#193b49}
+.n10-sensor-list{display:grid;gap:5px}
+.n10-sensor{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:3px 8px;padding:8px 10px;border:1px solid #345465;background:#102b3a;font-size:.73rem}
+.n10-sensor span{color:#afcbd2}.n10-sensor strong{color:#edf7f8;font-family:Consolas,monospace}
+.n10-sensor small{grid-column:1/-1;color:#8eafbb}
+.n10-sensor.n10-alarm{border-color:#b67b61;background:#3a2928}.n10-sensor.n10-alarm small{color:#f5b391}
 @media(max-width:1150px){.mps-build-grid{grid-template-columns:1fr}.mps-workflow .inspector-panel dl{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media(max-width:900px){.pass-view-grid{grid-template-columns:1fr}}
+@media(max-width:900px){.pass-view-grid,.n10-feedback-grid{grid-template-columns:1fr}}
 @media(max-width:650px){.mps-workflow .inspector-panel dl{grid-template-columns:1fr}.workflow-head{align-items:flex-start}}

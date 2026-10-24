@@ -362,6 +362,73 @@ class RosDraftStore:
                            "ack": json.loads(ack) if ack else None})
         return result
 
+    def n10_test_ack_items(self) -> list[dict]:
+        """Project only received simulator ACKs for an MPS read-only view.
+
+        This is a bounded development view of ROS-owned results. It does not
+        publish an N10 SFTP file pair or grant MPS access to the ROS database.
+        """
+        with self.lock:
+            rows = self.db.execute(
+                "SELECT r.id,r.step_id,r.target_utc_s,r.status,r.ack,s.payload "
+                "FROM sim_reservations AS r JOIN sim_sequences AS s "
+                "ON r.sha256=s.sha256 "
+                "WHERE r.status IN ('ACKED','REJECTED') "
+                "ORDER BY r.id DESC LIMIT 64").fetchall()
+        try:
+            command_ids = {entry["name"]: entry["id"]
+                           for entry in load_catalog()["commands"]}
+        except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+            raise DraftError("invalid_test_ack_catalog") from exc
+        items = []
+        for reservation_id, step_id, target, status, ack_text, payload_text in rows:
+            try:
+                sequence = json.loads(payload_text)
+                ack = json.loads(ack_text)
+                if (not isinstance(sequence, dict) or
+                        sequence.get("source") != "SIM_MPS_HANDOFF" or
+                        sequence.get("non_operational") is not True or
+                        sequence.get("station_id") != "yonsei" or
+                        sequence.get("band") != "UHF" or
+                        not isinstance(ack, dict) or
+                        set(ack) != {"command_id", "command_sequence", "result",
+                                    "reason", "executed_at_utc_ms"} or
+                        not _integer(ack["command_id"], 0, 65535) or
+                        not _integer(ack["command_sequence"], 1, 65535) or
+                        not _integer(ack["result"], 0, 255) or
+                        not _integer(ack["reason"], 0, 65535) or
+                        not _integer(ack["executed_at_utc_ms"], 1, 0xffffffffffffffff) or
+                        (status == "ACKED") != (ack["result"] == 0)):
+                    raise DraftError("invalid_test_ack")
+                step = next(item for item in sequence["steps"]
+                            if item["step_id"] == step_id)
+                if (not _integer(reservation_id, 1, 0x7fffffffffffffff) or
+                        not _integer(target, 1, 9007199254740991) or
+                        not isinstance(sequence.get("pass_id"), str) or
+                        not re.fullmatch(r"yonsei-[A-Za-z0-9._-]{1,56}",
+                                         sequence["pass_id"]) or
+                        not isinstance(sequence.get("schedule_sha256"), str) or
+                        not re.fullmatch(r"[0-9a-f]{64}",
+                                         sequence["schedule_sha256"]) or
+                        not _integer(sequence.get("revision"), 1, 0xffffffff) or
+                        step["command_name"] not in SIM_READ_ONLY_COMMANDS or
+                        ack["command_id"] != command_ids.get(step["command_name"]) or
+                        not _integer(ack["command_sequence"],
+                                     (reservation_id - 1) % 65535 + 1,
+                                     (reservation_id - 1) % 65535 + 1)):
+                    raise DraftError("invalid_test_ack")
+            except (AttributeError, KeyError, StopIteration, TypeError, ValueError) as exc:
+                raise DraftError("invalid_test_ack") from exc
+            items.append({"kind": "ACK", "source": "SIM_ONLY_COMMAND_RESULT",
+                          "reservation_id": reservation_id,
+                          "pass_id": sequence["pass_id"],
+                          "schedule_sha256": sequence["schedule_sha256"],
+                          "revision": sequence["revision"],
+                          "step_id": step_id, "target_utc_s": target,
+                          "command_name": step["command_name"],
+                          "status": status, "ack": ack})
+        return items
+
     def cancel_sim(self, reservation_id: int, actor: str) -> None:
         if not _integer(reservation_id, 1, 0x7fffffffffffffff) or \
                 not isinstance(actor, str) or not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", actor):

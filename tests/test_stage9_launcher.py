@@ -9,6 +9,8 @@ import sys
 import tempfile
 import unittest
 
+from deploy.stage9.check_compose_policy import LOCAL_VOLUMES
+
 
 ROOT = Path(__file__).resolve().parents[1]
 LAUNCHER = ROOT / "pado-gs.sh"
@@ -157,6 +159,7 @@ class LauncherLifecycleTests(unittest.TestCase):
         self.rules_path.write_text('{"DOCKER-USER": [], "INPUT": []}', encoding="utf-8")
         self.compose_json_path = base / "compose.json"
         self.compose_policy = {
+            "name": "pado-stage9-local",
             "networks": {
                 "entry": {"driver": "bridge", "enable_ipv6": False,
                           "driver_opts": {"com.docker.network.bridge.name":
@@ -178,6 +181,11 @@ class LauncherLifecycleTests(unittest.TestCase):
                                "driver_opts": {
                                    "com.docker.network.bridge.gateway_mode_ipv4":
                                        "isolated"}},
+                "sim_tm": {"driver": "bridge", "internal": True,
+                           "enable_ipv6": False,
+                           "driver_opts": {
+                               "com.docker.network.bridge.gateway_mode_ipv4":
+                                   "isolated"}},
             },
             "services": {
                 "dgs-ops-gateway": {
@@ -198,11 +206,26 @@ class LauncherLifecycleTests(unittest.TestCase):
                                        "http://mps-api:8081"]},
                 "ros-api": {"networks": {"portal_ros": None}},
                 "mps-api": {"networks": {"portal_mps": None}},
+                "ros-core-read": {"network_mode": "none"},
+                "mps-core-read": {"network_mode": "none"},
+                "init-token": {"network_mode": "none"},
+                "fds-synthetic-demo": {"network_mode": "none"},
+                "sim-volume-init": {"network_mode": "none"},
+                "sim-ground": {"networks": {"sim_tm": None}},
+                "sim-satellite": {"networks": {"sim_tm": None}},
             },
         }
         for service in self.compose_policy["services"].values():
             service.setdefault("cap_drop", ["ALL"])
             service.setdefault("security_opt", ["no-new-privileges:true"])
+        self.compose_policy["volumes"] = {
+            source: {} for mounts in LOCAL_VOLUMES.values()
+            for source, _, _ in mounts}
+        for name, mounts in LOCAL_VOLUMES.items():
+            self.compose_policy["services"][name]["volumes"] = [
+                {"type": "volume", "source": source, "target": target,
+                 "read_only": read_only}
+                for source, target, read_only in sorted(mounts)]
         self.compose_json_path.write_text(json.dumps(self.compose_policy), encoding="utf-8")
         self.network_json_path = base / "networks.json"
         members = {

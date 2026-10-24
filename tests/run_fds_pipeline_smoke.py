@@ -52,6 +52,7 @@ def main() -> None:
         gnss_body=None, gnss_manifest=None, gnss_current_root=ingress,
         output_root=scratch / "runs",
         view_dir=scratch / "view", outbox_dir=scratch / "outbox",
+        n08_outbox_dir=scratch / "n08-outbox",
         mps_schedule_dir=scratch / "mps-schedules",
         mvn=args.mvn, maven_repo=args.maven_repo,
     )
@@ -70,6 +71,9 @@ def main() -> None:
     schedule = staged / ("contact_schedule-" + runs[0].parent.name + ".csv")
     if len(list(staged.iterdir())) != 6 or not schedule.is_file():
         raise AssertionError("FDS did not publish three N13/N15 outbox file pairs")
+    n08_staged = scratch / "n08-outbox" / runs[0].parent.name
+    if len(list(n08_staged.iterdir())) != 4 or not list(n08_staged.glob("antenna_pointing-*.csv")):
+        raise AssertionError("FDS did not publish two local-only N08 draft file pairs")
     current = (scratch / "mps-schedules/current.txt").read_text(encoding="ascii").strip()
     if current != runs[0].parent.name or not (scratch / "mps-schedules" / current /
                                              "contact_schedule.csv").is_file():

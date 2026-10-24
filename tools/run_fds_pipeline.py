@@ -22,11 +22,11 @@ from pathlib import Path
 if __package__:
     from .publish_fds_view import publish
     from .publish_mps_schedule import publish as publish_mps_schedule
-    from .stage_fds_outbox import stage
+    from .stage_fds_outbox import ensure_separate_outboxes, stage, stage_n08
 else:
     from publish_fds_view import publish
     from publish_mps_schedule import publish as publish_mps_schedule
-    from stage_fds_outbox import stage
+    from stage_fds_outbox import ensure_separate_outboxes, stage, stage_n08
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -150,6 +150,8 @@ def _maven_token(value: str) -> str:
 
 def run_cycle(args: argparse.Namespace, *, now: datetime | None = None) -> tuple[Path, str]:
     now = now or datetime.now(timezone.utc)
+    ensure_separate_outboxes(args.n08_outbox_dir, args.outbox_dir)
+    ensure_separate_outboxes(args.n08_outbox_dir, ROOT / "out/fds-outbox")
     if not args.orekit_data.is_dir():
         raise ValueError("Orekit data directory required")
     tle = verified_pair(*input_pair(args, "tle"), "tle")
@@ -180,6 +182,7 @@ def run_cycle(args: argparse.Namespace, *, now: datetime | None = None) -> tuple
                    "-Dexec.classpathScope=test",
                    "-Dexec.args=" + " ".join(_maven_token(value) for value in fds_args)]
         subprocess.run(command, cwd=ROOT, env=environment, check=True)
+    stage_n08(run, args.n08_outbox_dir.resolve())
     stage(run, args.outbox_dir.resolve())
     published = publish(run, args.view_dir.resolve())
     publish_mps_schedule(run, args.mps_schedule_dir.resolve())
@@ -216,6 +219,8 @@ def main() -> None:
     parser.add_argument("--output-root", type=Path, default=ROOT / "out/fds-runs")
     parser.add_argument("--outbox-dir", type=Path, default=ROOT / "out/fds-outbox",
                         help="unique N13/N15 file pairs staged after each successful FDS run")
+    parser.add_argument("--n08-outbox-dir", type=Path, default=ROOT / "out/fds-n08-outbox",
+                        help="local-only draft N08 pairs; never used by the SFTP sender")
     parser.add_argument("--view-dir", type=Path, default=ROOT / "out/fds-live-view",
                         help="separate operational-input view; never the fixed ISS demo by default")
     parser.add_argument("--mps-schedule-dir", type=Path, default=ROOT / "out/mps-schedules",
