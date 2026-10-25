@@ -17,7 +17,7 @@ SOURCE = ROOT / "interfaces" / "n2_chart.json"
 PROGRESS = ROOT / "docs" / "N2_ICD" / "progress.json"
 OUTPUT = ROOT / "docs" / "N2_ICD" / "N2_개발진행도.png"
 
-WIDTH, HEIGHT = 1920, 1620
+WIDTH, HEIGHT = 1920, 1380
 WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
 
@@ -146,24 +146,15 @@ def render() -> None:
     note_left, note_right = 1448, right
     cell_width = (bar_right - bar_left) // 4
 
-    draw.text((left, 41), "N2 인터페이스별 개발 진행도",
-              font=font(53, bold=True), fill=BLACK)
-    date_text = f"기준 {progress['as_of']}"
-    date_font = fit_font(draw, date_text, 370, 24)
-    draw.text((right, 68), date_text, font=date_font, fill=BLACK, anchor="ra")
-    draw.text((left, 117), "21개 자료 경로의 확인된 범위를 표시한다.",
-              font=font(26), fill=BLACK)
-    draw.line((left, 168, right, 168), fill=BLACK, width=3)
-
     # The legend remains outside the bars so every glyph is black on white.
-    segment(image, (76, 189, 117, 211), "full")
-    draw.text((130, 184), "확인", font=font(21), fill=BLACK)
-    segment(image, (247, 189, 288, 211), "partial")
-    draw.text((302, 184), "부분 확인", font=font(21), fill=BLACK)
-    segment(image, (455, 189, 496, 211), "none")
-    draw.text((509, 184), "미확인 · 미연결", font=font(21), fill=BLACK)
+    segment(image, (76, 33, 117, 55), "full")
+    draw.text((130, 28), "확인", font=font(21), fill=BLACK)
+    segment(image, (247, 33, 288, 55), "partial")
+    draw.text((302, 28), "부분 확인", font=font(21), fill=BLACK)
+    segment(image, (455, 33, 496, 55), "none")
+    draw.text((509, 28), "미확인 · 미연결", font=font(21), fill=BLACK)
 
-    header_top, row_start = 232, 308
+    header_top, row_start = 76, 151
     draw.line((left, row_start, right, row_start), fill=BLACK, width=2)
     center_label(draw, "번호", (left, header_top, label_left - 4, row_start),
                  size=23, bold=True)
@@ -188,22 +179,16 @@ def render() -> None:
         draw.text((label_left, y_center), row["label"],
                   font=route_font, fill=BLACK, anchor="lm")
         for stage_index, state in enumerate(row["states"]):
-            x0 = bar_left + stage_index * cell_width + 6
-            x1 = bar_left + (stage_index + 1) * cell_width - 7
+            x0 = bar_left + stage_index * cell_width
+            x1 = bar_left + (stage_index + 1) * cell_width - 1
             segment(image, (x0, top + 16, x1, bottom - 16), state)
         center_label(draw, row["note"],
                      (note_left + 3, top + 3, note_right - 3, bottom - 3),
                      size=20, minimum=16, maximum_lines=2)
         draw.line((left, bottom, right, bottom), fill=BLACK, width=1)
 
-    footer_y = row_start + len(progress["rows"]) * row_height + 28
-    draw.text((left, footer_y), "단계별 증거이며 공정률이 아님",
-              font=font(25, bold=True), fill=BLACK)
-    draw.text((left, footer_y + 42),
-              "시험 자료와 가상 위성의 결과는 실제 안테나·외부 기관 연동과 구별한다.",
-              font=font(22), fill=BLACK)
-    if footer_y + 80 >= HEIGHT:
-        raise ValueError("Footer does not fit within the image")
+    if row_start + len(progress["rows"]) * row_height >= HEIGHT:
+        raise ValueError("Rows do not fit within the image")
 
     red, green, blue = image.split()
     if (ImageChops.difference(red, green).getbbox()
