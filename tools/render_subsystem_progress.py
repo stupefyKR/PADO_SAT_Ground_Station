@@ -16,11 +16,11 @@ from PIL import Image, ImageChops, ImageDraw, ImageFont
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "docs" / "subsystem_progress.json"
 OUTPUT = ROOT / "docs" / "서브시스템_개발진행도.png"
-WIDTH, HEIGHT = 1920, 1080
+WIDTH, HEIGHT = 1920, 1440
 WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
 CATEGORIES = ("architecture", "core", "integration", "field")
-SUBSYSTEMS = ("DGS", "ROS", "FDS", "MPS")
+SUBSYSTEMS = ("DGS", "ROS", "FDS", "MPS", "WEB", "SIM")
 
 FONT_PAIRS = (
     (Path("C:/Windows/Fonts/malgun.ttf"), Path("C:/Windows/Fonts/malgunbd.ttf")),
@@ -70,7 +70,7 @@ def read_progress() -> tuple[list[dict], dict[str, int]]:
 
     rows = data["rows"]
     if [row["id"] for row in rows] != list(SUBSYSTEMS):
-        raise ValueError("Rows must contain DGS, ROS, FDS, MPS in that order")
+        raise ValueError("Rows must contain DGS, ROS, FDS, MPS, WEB, SIM in that order")
     for row in rows:
         if set(row["score"]) != set(CATEGORIES):
             raise ValueError(f"{row['id']} has an incomplete score")
@@ -98,7 +98,7 @@ def render() -> None:
     bar_left, bar_right = 516, 1588
     percent_x = 1625
     note_right = 1844
-    first_top, row_height = 50, 245
+    first_top, row_height = 35, 226
     for index, row in enumerate(rows):
         top = first_top + index * row_height
         percent = percentage(row, weights)
