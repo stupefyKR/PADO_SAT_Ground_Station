@@ -1,11 +1,11 @@
-"""Render the high-level, monochrome PADO-SAT feature status image."""
+"""Render a high-level PADO-SAT feature status image."""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
-from PIL import Image, ImageChops, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -13,8 +13,16 @@ SOURCE = ROOT / "docs" / "core_feature_status.json"
 OUTPUT = ROOT / "docs" / "핵심기능_개발현황.png"
 WIDTH, HEIGHT = 2400, 1500
 BLACK, WHITE = (0, 0, 0), (255, 255, 255)
+SKY_BLUE = (198, 235, 250)
+GREEN = (202, 237, 198)
 IDS = ("DGS", "ROS", "FDS", "MPS", "WEB", "SIM")
-STATUSES = {"시험 구현", "예비 구현", "운용 미완", "추가 검증"}
+STATUS_FILL = {
+    "시험 구현": SKY_BLUE,
+    "예비 구현": GREEN,
+    "일부 구현": GREEN,
+    "운용 미완": WHITE,
+    "추가 검증": WHITE,
+}
 FONT_PAIRS = (
     (Path("C:/Windows/Fonts/malgun.ttf"), Path("C:/Windows/Fonts/malgunbd.ttf")),
     (Path("/usr/share/fonts/truetype/nanum/NanumGothic.ttf"),
@@ -46,19 +54,47 @@ def load_rows() -> list[dict]:
     if [row["id"] for row in rows] != list(IDS):
         raise ValueError("The six components must occur in the expected order")
     for row in rows:
-        if len(row["items"]) != 3:
-            raise ValueError(f"{row['id']} must have exactly three feature cards")
+        if len(row["items"]) not in (3, 4):
+            raise ValueError(f"{row['id']} must have three or four feature cards")
         if not row["name"].strip():
             raise ValueError(f"{row['id']} needs a name")
         for item in row["items"]:
-            if item["status"] not in STATUSES or not 1 <= len(item["lines"]) <= 3:
+            if item["status"] not in STATUS_FILL or not 1 <= len(item["lines"]) <= 3:
                 raise ValueError(f"Invalid {row['id']} feature card")
             if any(not isinstance(line, str) or not line.strip() or "\n" in line
                    for line in item["lines"]):
                 raise ValueError(f"Invalid {row['id']} text line")
-        if row["items"][2]["status"] not in {"운용 미완", "추가 검증"}:
+        if row["items"][-1]["status"] not in {"운용 미완", "추가 검증"}:
             raise ValueError(f"{row['id']} needs a remaining-work card")
+        if len(row["items"]) == 4 and any(
+                len(item["lines"]) != 1 for item in row["items"][2:]):
+            raise ValueError(f"{row['id']} split cards need one text line each")
     return rows
+
+
+def draw_card(draw: ImageDraw.ImageDraw, image: Image.Image, item: dict,
+              left: int, top: int, right: int, bottom: int,
+              *, compact: bool = False) -> None:
+    fill = STATUS_FILL[item["status"]]
+    draw.rectangle((left, top, right, bottom), fill=fill,
+                   outline=BLACK, width=3)
+    if compact:
+        draw.text((left + 20, top + 6), item["status"],
+                  font=font(22), fill=BLACK)
+        detail_font = fitting_font(draw, item["lines"], right - left - 42, 31)
+        draw.text((left + 20, top + 46), item["lines"][0],
+                  font=detail_font, fill=BLACK)
+    else:
+        draw.text((left + 23, top + 13), item["status"],
+                  font=font(26), fill=BLACK)
+        draw.line((left + 20, top + 56, right - 20, top + 56),
+                  fill=BLACK, width=2)
+        detail_font = fitting_font(draw, item["lines"], right - left - 46, 36)
+        for line_index, line in enumerate(item["lines"]):
+            draw.text((left + 23, top + 74 + line_index * 43), line,
+                      font=detail_font, fill=BLACK)
+    if image.getpixel((right - 10, bottom - 10)) != fill:
+        raise ValueError("Feature card background differs from its status")
 
 
 def render() -> None:
@@ -75,27 +111,19 @@ def render() -> None:
         draw.text((56, top + 47), row["id"], font=font(62, bold=True), fill=BLACK)
         draw.text((58, top + 135), row["name"], font=font(28), fill=BLACK)
         for card_index, item in enumerate(row["items"]):
-            left, right = cards[card_index]
-            card_top, card_bottom = top + 4, top + 209
-            draw.rectangle((left, card_top, right, card_bottom),
-                           outline=BLACK, width=3)
-            draw.text((left + 23, card_top + 13), item["status"],
-                      font=font(26), fill=BLACK)
-            draw.line((left + 20, card_top + 56, right - 20, card_top + 56),
-                      fill=BLACK, width=2)
-            lines = item["lines"]
-            detail_font = fitting_font(draw, lines, right - left - 46, 36)
-            baseline = card_top + 74
-            for line_index, line in enumerate(lines):
-                draw.text((left + 23, baseline + line_index * 43), line,
-                          font=detail_font, fill=BLACK)
+            left, right = cards[min(card_index, 2)]
+            compact = len(row["items"]) == 4 and card_index >= 2
+            if compact:
+                card_top, card_bottom = ((top + 4, top + 103)
+                                         if card_index == 2 else
+                                         (top + 110, top + 209))
+            else:
+                card_top, card_bottom = top + 4, top + 209
+            draw_card(draw, image, item, left, card_top, right, card_bottom,
+                      compact=compact)
         if top + 209 >= HEIGHT:
             raise ValueError("The content exceeds the image height")
 
-    red, green, blue = image.split()
-    if (ImageChops.difference(red, green).getbbox()
-            or ImageChops.difference(red, blue).getbbox()):
-        raise ValueError("The image contains a colored pixel")
     image.save(OUTPUT, format="PNG", optimize=True)
     print(f"{OUTPUT} | {WIDTH}x{HEIGHT} | {OUTPUT.stat().st_size} bytes")
 

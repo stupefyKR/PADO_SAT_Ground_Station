@@ -38,7 +38,8 @@
       "items": [
         {"status": "시험 구현", "lines": ["두 지상국 PASS 조회", "연세대 UHF 선택"]},
         {"status": "시험 구현", "lines": ["시험 TC 시퀀스 구성", "ROS 전달·가상 ACK 확인"]},
-        {"status": "운용 미완", "lines": ["운용 충돌 판정", "합성 규칙 시험만", "승인·TC 출력 미연결"]}
+        {"status": "일부 구현", "lines": ["충돌 분석: 합성 규칙 시험만"]},
+        {"status": "운용 미완", "lines": ["운용 승인·TC 출력 미연결"]}
       ],
       "evidence": ["services/webapp/mps_workbench.py", "services/mps/core/conflict.c", "docs/STAGE9_UI.md"]
     },
