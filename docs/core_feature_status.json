@@ -1,0 +1,66 @@
+{
+  "as_of": "2026-10-25",
+  "scope": "합성 자료와 로컬 시험으로 확인된 기능을 실제 운용 연결과 구분한 핵심 기능 현황",
+  "rows": [
+    {
+      "id": "DGS",
+      "name": "외부 접점",
+      "items": [
+        {"status": "시험 구현", "lines": ["단일 웹 진입", "컨테이너 간 망 격리"]},
+        {"status": "시험 구현", "lines": ["시험 TM 프레임 검증", "ROS 전달"]},
+        {"status": "운용 미완", "lines": ["실제 안테나·TLE·SDC", "외부 연동"]}
+      ],
+      "evidence": ["deploy/stage9/README.md", "tests/test_stage9_network_policy.py", "tests/run_stage3.py"]
+    },
+    {
+      "id": "ROS",
+      "name": "위성 관제",
+      "items": [
+        {"status": "시험 구현", "lines": ["시험 TC 초안 구성", "PASS 내 예약·가상 ACK"]},
+        {"status": "시험 구현", "lines": ["시험 TM 파싱·센서 그래프", "한계·자세 시각화"]},
+        {"status": "운용 미완", "lines": ["실제 TC/TM ICD", "운용 승인·RF 송수신"]}
+      ],
+      "evidence": ["services/webapp/ros_workbench.py", "services/sim_ground/receiver.py", "docs/STAGE9_UI.md"]
+    },
+    {
+      "id": "FDS",
+      "name": "궤도 예측",
+      "items": [
+        {"status": "시험 구현", "lines": ["TLE/SGP4 전파", "72시간 PASS·도플러·궤도력"]},
+        {"status": "예비 구현", "lines": ["GNSS 수치 전파", "GNSS 우선·TLE 백업"]},
+        {"status": "운용 미완", "lines": ["HPOP 힘 모델·정밀도 검증", "실제 GNSS TM 매핑"]}
+      ],
+      "evidence": ["services/fds/README.md", "services/fds/src/main/java/kr/ac/khu/padosat/fds/OrbitModel.java", "services/fds/src/main/java/kr/ac/khu/padosat/fds/FdsOutput.java"]
+    },
+    {
+      "id": "MPS",
+      "name": "임무 계획",
+      "items": [
+        {"status": "시험 구현", "lines": ["두 지상국 PASS 조회", "연세대 UHF 선택"]},
+        {"status": "시험 구현", "lines": ["시험 TC 시퀀스 구성", "ROS 전달·가상 ACK 확인"]},
+        {"status": "운용 미완", "lines": ["운용 충돌 판정", "합성 규칙 시험만", "승인·TC 출력 미연결"]}
+      ],
+      "evidence": ["services/webapp/mps_workbench.py", "services/mps/core/conflict.c", "docs/STAGE9_UI.md"]
+    },
+    {
+      "id": "WEB",
+      "name": "관제 웹·API",
+      "items": [
+        {"status": "시험 구현", "lines": ["로그인·ROS/MPS 관제 화면", "인증된 시험 API"]},
+        {"status": "시험 구현", "lines": ["ORBIT 3D·2D", "컨택 polar plot"]},
+        {"status": "운용 미완", "lines": ["실자료 연동", "화면 상세 설계·현장 수락"]}
+      ],
+      "evidence": ["services/webapp/main.py", "web/orbit/index.html", "tests/test_stage9_http.py"]
+    },
+    {
+      "id": "SIM",
+      "name": "위성 시뮬레이터",
+      "items": [
+        {"status": "시험 구현", "lines": ["500 km SSO·LTAN 06시", "GNSS·자세·EPS TM 생성"]},
+        {"status": "시험 구현", "lines": ["시험 TC 수신", "결과 TM 왕복"]},
+        {"status": "추가 검증", "lines": ["장애 시나리오 확대", "VM 전체 경로 검증"]}
+      ],
+      "evidence": ["services/sim_sat/emulator.py", "services/sim_ground/receiver.py", "tests/test_sim_sat_emulator.py"]
+    }
+  ]
+}
