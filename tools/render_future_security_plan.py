@@ -66,11 +66,6 @@ def arrow(ax, start: tuple[float, float], end: tuple[float, float], *,
                                  color=color, shrinkA=0, shrinkB=0, zorder=4))
 
 
-def section(ax, y: float, number: str, heading: str) -> None:
-    label(ax, 0.58, y, number, size=11.8, bold=True, color=ACCENT)
-    label(ax, 1.02, y, heading, size=12.8, bold=True)
-
-
 def card(ax, x: float, y: float, w: float, h: float, *, title: str,
          description: str, deliverable: str, emphasis: bool = False) -> None:
     rect(ax, x, y, w, h, fill=PALE if emphasis else WHITE,
@@ -84,68 +79,53 @@ def card(ax, x: float, y: float, w: float, h: float, *, title: str,
 
 
 def draw(ax) -> None:
-    label(ax, 0.58, 7.74, "향후 외부 연동·보안 개발 계획", size=19, bold=True)
-    label(ax, 13.42, 7.74, "결정 → 구현 → 수락", size=10.4,
-          color=MUTED, ha="right")
-    line(ax, 0.58, 7.43, 13.42, 7.43, color=INK, lw=1.0)
-
-    section(ax, 7.10, "01", "선행 협의")
-    card(ax, 0.58, 5.28, 6.20, 1.55,
+    card(ax, 0.58, 4.55, 6.20, 1.55,
          title="외부 기관 연동 기준",
          description="교환 프레임·프로토콜·주소·인증\nPASS 예약·TC 송출 책임",
          deliverable="산출물  N01·N02 상대 ICD · N08 인계 규격")
-    card(ax, 7.22, 5.28, 6.20, 1.55,
+    card(ax, 7.22, 4.55, 6.20, 1.55,
          title="비행 TC/TM 기준",
          description="CS/CDHS 패킷 필드·인증·ACK\n기준 바이트열과 오류 사례",
          deliverable="산출물  비행용 ICD · 기준 패킷")
 
     # Both agreements feed the two implementation tracks.
-    line(ax, 3.68, 5.28, 3.68, 5.04, color=ACCENT, lw=1.25)
-    line(ax, 10.32, 5.28, 10.32, 5.04, color=ACCENT, lw=1.25)
-    line(ax, 3.68, 5.04, 10.32, 5.04, color=ACCENT, lw=1.25)
-    arrow(ax, (3.68, 5.04), (3.68, 4.50), lw=1.3)
-    arrow(ax, (10.32, 5.04), (10.32, 4.50), lw=1.3)
+    line(ax, 3.68, 4.55, 3.68, 4.31, color=ACCENT, lw=1.25)
+    line(ax, 10.32, 4.55, 10.32, 4.31, color=ACCENT, lw=1.25)
+    line(ax, 3.68, 4.31, 10.32, 4.31, color=ACCENT, lw=1.25)
+    arrow(ax, (3.68, 4.31), (3.68, 3.98), lw=1.3)
+    arrow(ax, (10.32, 4.31), (10.32, 3.98), lw=1.3)
 
-    section(ax, 4.83, "02", "병행 개발")
-    card(ax, 0.58, 2.67, 6.20, 1.80,
+    card(ax, 0.58, 1.93, 6.20, 1.98,
          title="망 분리·접근 정책",
          description="DGS만 외부 경로 허용 · 그 외 기본 차단\n컨테이너·호스트·IPv4/IPv6·DNS 우회 시험",
          deliverable="산출물  허용 흐름표 · 차단 및 재시작 시험")
-    card(ax, 7.22, 2.67, 6.20, 1.80,
-         title="DGS 패킷 검증",
-         description="TC: 형식·SCID·시간창·송출 빈도\nN08: 스키마·대상  /  TM: 오류 격리·기록",
-         deliverable="산출물  검사 규칙 · 거부 사유 · 감사 기록",
+    card(ax, 7.22, 1.93, 6.20, 1.98,
+         title="DGS 외부 송출 방화벽",
+         description="TC 프레임: 형식·SCID·PASS 시간창·송출 빈도\n안테나 요청: 대상·스키마 확인, 불일치 차단\n수신 TM 오류는 별도 격리·기록",
+         deliverable="산출물  송출 허용 규칙 · 차단 사유 · 감사 기록",
          emphasis=True)
 
-    line(ax, 3.68, 2.67, 3.68, 2.45, color=ACCENT, lw=1.25)
-    line(ax, 10.32, 2.67, 10.32, 2.45, color=ACCENT, lw=1.25)
-    line(ax, 3.68, 2.45, 10.32, 2.45, color=ACCENT, lw=1.25)
-    arrow(ax, (7.00, 2.45), (7.00, 1.99), lw=1.3)
+    line(ax, 3.68, 1.93, 3.68, 1.70, color=ACCENT, lw=1.25)
+    line(ax, 10.32, 1.93, 10.32, 1.70, color=ACCENT, lw=1.25)
+    line(ax, 3.68, 1.70, 10.32, 1.70, color=ACCENT, lw=1.25)
+    arrow(ax, (7.00, 1.70), (7.00, 1.39), lw=1.3)
 
-    section(ax, 2.24, "03", "단계별 수락")
-    rect(ax, 0.58, 0.80, 12.84, 1.16, fill=WHITE, edge=RULE, lw=1.1)
+    rect(ax, 0.58, 0.25, 12.84, 1.10, fill=WHITE, edge=RULE, lw=1.1)
     milestones = ((1.73, "합성·변조 입력"), (5.18, "FlatSat"),
-                  (8.40, "기관 공동 시험"), (11.79, "현장 수락"))
+                  (8.40, "기관 공동 시험"), (11.79, "운용 환경 확인"))
     for x, value in milestones:
-        label(ax, x, 1.59, value, size=12.9, bold=True, ha="center")
+        label(ax, x, 0.80, value, size=12.9, bold=True, ha="center")
     for left, right in ((3.34, 3.87), (6.49, 6.84), (10.04, 10.35)):
-        arrow(ax, (left, 1.59), (right, 1.59), color=RULE, lw=1.1)
-    label(ax, 7.00, 1.08,
-          "정상 경로·거부·감사 일치  /  비DGS 우회 차단  /  재시작 후 정책 유지",
-          size=10.6, color=MUTED, ha="center")
-
-    label(ax, 7.00, 0.36,
-          "외부 연결 개방은 합의된 규격과 수락 증거를 승인한 뒤 결정",
-          size=10.9, bold=True, color=ACCENT, ha="center")
+        arrow(ax, (left, 0.80), (right, 0.80), color=RULE, lw=1.1)
 
 
 def main() -> None:
     plt.rcParams["svg.fonttype"] = "path"
     plt.rcParams["svg.hashsalt"] = "pado-gs-future-security-plan"
-    fig = plt.figure(figsize=(12, 7.1), dpi=360, facecolor=WHITE)
+    fig = plt.figure(figsize=(12, 5.5), dpi=360, facecolor=WHITE)
     ax = fig.add_axes((0, 0, 1, 1))
     ax.set_xlim(0, 14)
-    ax.set_ylim(0, 8.25)
+    ax.set_ylim(0, 6.40)
     ax.axis("off")
     draw(ax)
     OUT.mkdir(parents=True, exist_ok=True)
