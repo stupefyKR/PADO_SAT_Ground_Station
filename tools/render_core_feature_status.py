@@ -11,11 +11,11 @@ from PIL import Image, ImageDraw, ImageFont
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "docs" / "core_feature_status.json"
 OUTPUT = ROOT / "docs" / "핵심기능_개발현황.png"
-WIDTH, HEIGHT = 2400, 1500
+WIDTH, HEIGHT = 2400, 1280
 BLACK, WHITE = (0, 0, 0), (255, 255, 255)
 SKY_BLUE = (198, 235, 250)
 GREEN = (202, 237, 198)
-IDS = ("DGS", "ROS", "FDS", "MPS", "WEB", "SIM")
+IDS = ("DGS", "ROS", "FDS", "MPS", "WEB")
 STATUS_FILL = {
     "시험 구현": SKY_BLUE,
     "예비 구현": GREEN,
@@ -52,7 +52,7 @@ def fitting_font(draw: ImageDraw.ImageDraw, lines: list[str], width: int,
 def load_rows() -> list[dict]:
     rows = json.loads(SOURCE.read_text(encoding="utf-8"))["rows"]
     if [row["id"] for row in rows] != list(IDS):
-        raise ValueError("The six components must occur in the expected order")
+        raise ValueError("The five components must occur in the expected order")
     for row in rows:
         if len(row["items"]) not in (3, 4):
             raise ValueError(f"{row['id']} must have three or four feature cards")
