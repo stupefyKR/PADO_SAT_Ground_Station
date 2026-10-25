@@ -46,6 +46,7 @@ MPS 시험 시퀀스 → ROS 예약 → 가상 위성 → 명령 결과 TM → R
 
 - [현행 개발 방향](PADO-SAT_지상국_개발방향.md)
 - [개발 진행 기록](PROGRESS.md)
+- [서브시스템별 개발 진행도](서브시스템_개발진행도.md)
 - [ROS·MPS 화면 구조](STAGE9_UI.md)
 - [TC/TM 초안과 운용 전 검토 항목](TC_TM/README.md)
 - [N2 차트 기반 서브시스템 ICD](N2_ICD/README.md)

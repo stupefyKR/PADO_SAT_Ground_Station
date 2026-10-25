@@ -1,0 +1,44 @@
+{
+  "as_of": "2026-10-25",
+  "scope": "예정된 서브시스템 기능과 연동 범위의 대략적인 개발 추정치. 운용 준비율이 아님",
+  "weights": {
+    "architecture": 20,
+    "core": 40,
+    "integration": 20,
+    "field": 20
+  },
+  "rows": [
+    {
+      "id": "DGS",
+      "name": "외부 접점",
+      "score": {"architecture": 100, "core": 25, "integration": 25, "field": 0},
+      "implemented": "단일 웹 진입·내부망 격리, 파일·시험 프레임 검증",
+      "remaining": "실제 안테나·TLE 출처·SDC 연동과 현장 보안 검증",
+      "evidence": ["docs/PADO-SAT_지상국_개발방향.md", "deploy/stage9/README.md", "tests/test_stage9_network_policy.py"]
+    },
+    {
+      "id": "ROS",
+      "name": "위성 관제",
+      "score": {"architecture": 100, "core": 63, "integration": 75, "field": 0},
+      "implemented": "가상 TM 계측·한계·자세, 시험 TC 예약·ACK",
+      "remaining": "실제 TM/TC ICD, 운용 승인·RF 송출",
+      "evidence": ["docs/STAGE9_UI.md", "tests/test_ros_workbench.py", "tests/test_ros_sim_handoff.py"]
+    },
+    {
+      "id": "FDS",
+      "name": "궤도 예측",
+      "score": {"architecture": 100, "core": 88, "integration": 75, "field": 0},
+      "implemented": "SGP4·GNSS 예비 전파, 72시간 PASS·도플러·궤도력",
+      "remaining": "실제 GNSS TM 매핑, 정밀도·실측 지상국 검증",
+      "evidence": ["services/fds/README.md", "services/fds/src/test/java/kr/ac/khu/padosat/fds/FdsSelfTest.java"]
+    },
+    {
+      "id": "MPS",
+      "name": "임무 계획",
+      "score": {"architecture": 100, "core": 63, "integration": 75, "field": 0},
+      "implemented": "두 지상국 PASS 조회, 연세대 시험 시퀀스·ROS 전달",
+      "remaining": "충돌 정책, 운용 승인·TC 시퀀스 출력",
+      "evidence": ["docs/STAGE9_UI.md", "services/webapp/mps_workbench.py", "tests/test_mps_workbench.py"]
+    }
+  ]
+}
