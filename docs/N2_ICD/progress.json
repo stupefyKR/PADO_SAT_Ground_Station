@@ -1,0 +1,37 @@
+{
+  "as_of": "2026-10-25",
+  "stages": [
+    "N2 경로 정의",
+    "시험 형식·검증",
+    "로컬 경로 연동",
+    "운용 상대 수락"
+  ],
+  "legend": {
+    "full": "해당 단계의 시험 범위 확인",
+    "partial": "일부 자료형 또는 대체·모의 경로만 확인",
+    "none": "미확인 또는 미연결"
+  },
+  "rows": [
+    {"id":"N01","label":"안테나 → DGS-GS","states":["full","partial","none","none"],"note":"가상 TM 시험; 탑재체 자료 제외","evidence":["tests/run_stage3.py","docs/PROGRESS.md"]},
+    {"id":"N02","label":"DGS-GS → 안테나","states":["full","partial","none","none"],"note":"시험 TC 게이트; 안테나 미연결","evidence":["tests/stage5_test.c","docs/PROGRESS.md"]},
+    {"id":"N03","label":"Space-Track → DGS-NET","states":["full","full","none","none"],"note":"TLE 검사; 외부 HTTPS 미연결","evidence":["services/dgs-net/tle.c","tests/stage6_test.c"]},
+    {"id":"N04","label":"발사기관 → DGS-NET","states":["full","none","none","none"],"note":"상태벡터 외부 규격 미정","evidence":["interfaces/n2_chart.json"]},
+    {"id":"N05","label":"DGS-NET → FDS","states":["full","full","partial","none"],"note":"인증 회수 시험; DGS-NET 미연결","evidence":["tests/run_sftp.py","tests/test_receive_fds_inputs.py"]},
+    {"id":"N06","label":"DGS-GS → ROS","states":["full","full","full","none"],"note":"분리 컨테이너 TM 시험","evidence":["tests/run_stage3.py","tests/container/run_stage7_tm.py"]},
+    {"id":"N07","label":"ROS → DGS-GS","states":["full","full","none","none"],"note":"TC 게이트 시험; 서비스 미연결","evidence":["tests/stage5_test.c","docs/PROGRESS.md"]},
+    {"id":"N08","label":"FDS → DGS-GS","states":["full","full","none","none"],"note":"지향·패스 요청 출고함까지","evidence":["tests/test_stage_fds_outbox.py","docs/PROGRESS.md"]},
+    {"id":"N09","label":"DGS-GS → DGS-Archive","states":["full","partial","none","none"],"note":"원시자료 수신은 현 범위 제외","evidence":["tests/sftp_test.c","docs/PROGRESS.md"]},
+    {"id":"N10","label":"ROS → MPS","states":["full","partial","partial","none"],"note":"웹 피드백; N2 파일 미연결","evidence":["tests/test_n10_feedback.py","tests/run_sftp.py"]},
+    {"id":"N11","label":"ROS → FDS","states":["full","full","partial","none"],"note":"가상 GNSS→FDS 계산 시험","evidence":["tests/run_synthetic_demo_smoke.py","tests/run_sftp.py"]},
+    {"id":"N12","label":"MPS → ROS","states":["full","partial","partial","none"],"note":"시험 시퀀스 API; SFTP 미연결","evidence":["tests/test_ros_sim_handoff.py","tests/run_sftp.py"]},
+    {"id":"N13","label":"FDS → MPS","states":["full","partial","partial","none"],"note":"PASS 조회; 궤도 이벤트 미정","evidence":["tests/test_publish_mps_schedule.py","tests/test_mps_pass_selection.py"]},
+    {"id":"N14","label":"ROS → DGS-Archive","states":["full","partial","none","none"],"note":"공통 전송 시험; 자료 생산 미연결","evidence":["tests/run_sftp.py","tests/stage6_test.c"]},
+    {"id":"N15","label":"FDS → DGS-Archive","states":["full","full","partial","none"],"note":"출고·송신 시험; 수신 수락 없음","evidence":["tests/test_send_fds_outbox.py","tests/run_sftp.py"]},
+    {"id":"N16","label":"SDC → DGS-Archive","states":["full","partial","none","none"],"note":"SDC 모의 반입 시험","evidence":["tests/sftp_test.c","tests/stage6_test.c"]},
+    {"id":"N17","label":"DGS-Archive → SDC","states":["full","partial","none","none"],"note":"SDC 모의 회수; 원시자료 제외","evidence":["tests/run_sftp.py","tests/stage6_test.c"]},
+    {"id":"N18","label":"DGS-Archive → MPS","states":["full","partial","partial","none"],"note":"모의 자료 전달; 실원본 없음","evidence":["tests/sftp_test.c","tests/stage4_test.c"]},
+    {"id":"N19","label":"ROS → DGS-Archive 백업","states":["full","none","none","none"],"note":"백업 경로만 정의","evidence":["interfaces/n2_chart.json","deploy/stage7/flow-plan.json"]},
+    {"id":"N20","label":"MPS → DGS-Archive 백업","states":["full","none","none","none"],"note":"백업 경로만 정의","evidence":["interfaces/n2_chart.json","deploy/stage7/flow-plan.json"]},
+    {"id":"N21","label":"FDS → DGS-Archive 백업","states":["full","none","none","none"],"note":"백업 경로만 정의","evidence":["interfaces/n2_chart.json","deploy/stage7/flow-plan.json"]}
+  ]
+}
