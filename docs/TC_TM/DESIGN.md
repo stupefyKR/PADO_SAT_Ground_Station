@@ -31,7 +31,7 @@ PDR 별첨 47쪽의 OEM719A `BESTPOS`·`BESTVEL`·`BESTXYZ`·`TIME`은 장비 �
 
 ## RF에서 응용 PDU까지
 
-![UHF 계층 경계](01_uhf_frame_overview.png)
+![UHF 통신 경로](01_uhf_frame_overview.png)
 
 `안테나/RF → AX100 Mode 5 복조·FEC → CSP v1 → PADO 응용 PDU → ROS/MPS/FDS` 순서로 취급한다. ASM, GOLAY, RS는 PDR의 RF 맥락이며 지상국 초안 코덱이 생성하지 않는다. CSP 주소·포트도 실제 장비 계약이 필요하다. 아래 PDU CRC32는 RF FEC나 명령 인증을 대체하지 않는다.
 
@@ -51,11 +51,11 @@ PDR 별첨 47쪽의 OEM719A `BESTPOS`·`BESTVEL`·`BESTXYZ`·`TIME`은 장비 �
 
 정수와 IEEE-754 부동소수점은 big endian이며 암묵적 padding은 없다. TC payload는 `execute_at_utc_ms`(u64, 즉시는 0)부터 시작한다. `fields: null`인 22종은 인자 정의가 없어 코덱이 인코딩을 거부한다. 코덱은 잘못된 길이·CRC·예약 플래그·비정상 부동소수점도 거부한다.
 
-![응용 PDU 바이트 필드](04_byte_field_layout.png)
+![PDU 구성 개요](04_byte_field_layout.png)
 
 ## TC 목록
 
-![TC 패킷과 명령 그룹](02_tc_packet_and_commands.png)
+![TC 구성과 실행](02_tc_packet_and_commands.png)
 
 | 그룹 | 제안 ID 영역 | 기능 | 주의 |
 | --- | --- | --- | --- |
@@ -71,7 +71,7 @@ PDR 별첨 47쪽의 OEM719A `BESTPOS`·`BESTVEL`·`BESTXYZ`·`TIME`은 장비 �
 
 ## TM 목록과 사용처
 
-![TM 패킷 카탈로그](03_tm_packet_catalog.png)
+![TM 데이터와 활용](03_tm_packet_catalog.png)
 
 | ID | 이름 | 핵심 내용·사용처 |
 | --- | --- | --- |

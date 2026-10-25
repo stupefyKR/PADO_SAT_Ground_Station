@@ -4,6 +4,8 @@
 network connection directions separately. `approved_flows` is the allowlist for
 future account and firewall generation. A `null` connection endpoint or port is
 `TBD(ICD)` and must not generate an allow rule.
+The [N2 interface summary](../docs/N2_ICD/README.md) presents all N01–N21
+data paths, connection initiators, and current implementation scope.
 
 `command_db/commands.json` and `tm_db/telemetry.json` intentionally contain no
 operational entries. TC codes, parameters, TM packet identifiers, encoding, limits

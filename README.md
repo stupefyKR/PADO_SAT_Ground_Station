@@ -6,7 +6,7 @@
 
 GitHub 원격 저장소는 비공개로 설정되어 있습니다(2026-10-21 확인). 초기 푸시 뒤 공개 설정을 발견해 즉시 비공개로 전환한 기록은 [진행 기록](docs/PROGRESS.md)에 남겼습니다.
 
-기준 문서: [원본 N2 포함 제안서](docs/지상국.pdf), [개발방향](docs/PADO-SAT_지상국_개발방향.md), [보안 계획서](docs/PADO-SAT_지상국_보안설계_개발방향계획서.md), [진행 기록](docs/PROGRESS.md), [결정 기록](docs/DECISIONS.md)
+기준 문서: [원본 N2 포함 제안서](docs/지상국.pdf), [N2 인터페이스 표·그림](docs/N2_ICD/README.md), [개발방향](docs/PADO-SAT_지상국_개발방향.md), [보안 계획서](docs/PADO-SAT_지상국_보안설계_개발방향계획서.md), [진행 기록](docs/PROGRESS.md), [결정 기록](docs/DECISIONS.md)
 
 ## VMware 시험 웹 실행
 
@@ -49,7 +49,7 @@ ROS의 별도 `SIM ONLY` 영역에서 단계별 AOS 기준 예약과 가상 위�
 | 단계 | 내용 | 상태 | 비고 |
 |---|---|---|---|
 | 초기 구성 | 저장소·빌드·시험 골격 | 완료 | Windows 일반·ASan 시험 통과; 이후 단계 1에서 Linux CI 검증 |
-| 1 | `interfaces/`, `libgs/` | 완료(기준선) | N2 21개 원본 화살표, 승인 흐름 21개, Windows·Linux 매니페스트·로그·파일 교환 시험 통과; TC/TM 실값은 ICD 대기 |
+| 1 | `interfaces/`, `libgs/` | 완료(기준선) | N2 21개 원본 화살표, 설계 허용 경로 21개, Windows·Linux 매니페스트·로그·파일 교환 시험 통과; TC/TM 실값은 ICD 대기 |
 | 2 | 서브시스템 간 통신 기반 | 완료(개발 기준선) | VMware Linux VM의 Docker 격리 네트워크에서 mTLS·SFTP 송수신/거부 시험 통과 |
 | 3 | TM 수신 경로 | 완료(시뮬레이터 기준선) | `fake_kari` → `dgs-gs` → `ros-core`; 실제 ICD·TM 해석 대기 |
 | 4-1 | MPS 입력·카탈로그 기준선 | 완료(비운용 기준선) | 빈 명령 DB 판독과 FDS N13 PASS 파일 쌍 검증·시간순 반입; 실제 SFTP 서비스 연결 대기 |
@@ -80,7 +80,7 @@ FDS의 오프라인 Java/Orekit 계산기 입력, 두 안테나 설정, 결과 C
 
 | 디렉터리 | 계획된 역할 |
 |---|---|
-| `interfaces/` | 원본 N2와 승인된 연결 방향, 비운용 명령·TM DB, 매니페스트 스키마, 프레임 TBD |
+| `interfaces/` | 원본 N2와 설계 허용 연결 방향, 비운용 명령·TM DB, 매니페스트 스키마, 프레임 TBD |
 | `libgs/` | 매니페스트 파싱·검증, SHA-256, 한 줄 JSON 로그, 원자적 파일 공개·교환 검증 |
 | `third_party/` | cJSON v1.7.19 소스·라이선스·해시 |
 | `services/` | 서브시스템 서비스 |
