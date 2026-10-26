@@ -91,6 +91,14 @@ Docker 볼륨에 게시한다. 실행 때마다 TLE epoch를 현재 UTC 약 2초
 연결 시험 자료다. MPS의 선택 PASS 지도·polar plot과 시험 시퀀스도 이 자료를
 사용한다. 초안 저장은 테스트 전용이다.
 
+ORBIT의 위성 선택기는 가상 PADO-SAT, ISS 외삽 시험, 실제 운용 위성을 구분한다.
+ISS 화면은 사용자가 제공한 고정 TLE를 외삽해 현재 epoch에 재적합한 **가상 궤도**를
+별도 `fds-iss-display` 컨테이너에서 30분마다 계산한다. 실제 ISS 위치가 아니며
+MPS N13 일정이나 가상 위성 TM 입력에는 섞이지 않는다. 실제 운용 위성은 검증된
+N05/N11 입력과 별도 FDS 산출물 연결 전까지 `입력 대기`로 표시한다. MPS의
+`N13 검증 완료`는 MPS 코어가 일정 파일을 읽었다는 뜻이며, 조회 API 장애와
+FDS 산출물 대기는 화면에서 따로 표시한다.
+
 ### 가상 위성 TM과 FDS 입력 흐름
 
 ```text
@@ -105,8 +113,11 @@ fds-synthetic-demo ── TLE 기반 truth 궤도 ──→ sim-satellite
 
 `sim-satellite`는 FDS가 TLE로 만든 **별도 truth 파일**만 읽는다. 이후 GNSS로
 다시 계산한 운영자 화면 파일을 위성 위치의 원천으로 되먹이지 않는다.
-`sim-ground`는 길이 접두가 붙은 초안 응용 PDU의 크기·시험 표시·종류·시간·
-순번·GNSS 값·자세 쿼터니안을 확인한 뒤 ROS용 스냅샷을 게시한다. 화면의
+`sim-ground`는 truth 궤도의 연세대 UHF PASS(AOS 이상, LOS 미만)에서만
+TM을 수신하고 시험 TC를 전달한다. PASS 밖에서는 생성 중인 TM을 폐기하며,
+truth 파일이 없거나 잘못됐거나 오래됐을 때도 수신을 닫는다. 수신한 PDU의
+길이·시험 표시·종류·시간·순번·GNSS 값·자세 쿼터니안을 확인한 뒤 ROS용
+스냅샷을 게시한다. 화면의
 EPS 버스 전압·온도 한계는 `services/sim_ground/test_limits.json`의 명시적인
 시험값이다. GNSS는 N11 시험 본문·매니페스트로 게시해 FDS가 검증 후 읽는다.
 FDS는 GNSS가 계획 시각 기준 72시간 미만이면 이를 우선 사용하고, 없거나

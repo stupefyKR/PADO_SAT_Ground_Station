@@ -32,13 +32,14 @@ services:
     build:
       context: ../..
       dockerfile: docker/stage9/Dockerfile
-    command: ["python3", "-m", "services.webapp.main", "portal", "--transport", "http", "--internal-token-file", "/internal/token", "--bind", "0.0.0.0", "--port", "8080", "--db", "/state/accounts.db", "--ros-url", "http://ros-api:8081", "--mps-url", "http://mps-api:8081", "--orbit-view", "/fds-view/orbit_view.json"]
+    command: ["python3", "-m", "services.webapp.main", "portal", "--transport", "http", "--internal-token-file", "/internal/token", "--bind", "0.0.0.0", "--port", "8080", "--db", "/state/accounts.db", "--ros-url", "http://ros-api:8081", "--mps-url", "http://mps-api:8081", "--orbit-view", "/fds-view/orbit_view.json", "--synthetic-orbit-view", "/fds-view/orbit_view.json", "--iss-orbit-view", "/fds-iss-view/orbit_view.json"]
     depends_on:
       init-token: {condition: service_completed_successfully}
     volumes:
       - internal_token:/internal:ro
       - portal_state:/state
       - fds_view:/fds-view:ro
+      - fds_iss_view:/fds-iss-view:ro
     networks: [dgs_portal, portal_ros, portal_mps]
     read_only: true
     cap_drop: [ALL]
@@ -135,13 +136,27 @@ services:
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     logging: {driver: journald}
+  fds-iss-display:
+    build:
+      context: ../..
+      dockerfile: docker/stage9/FdsDemo.Dockerfile
+    command: ["python3", "tools/build_iss_demo.py", "--test-only", "--orekit-data", "/opt/orekit-data", "--mvn", "/usr/local/bin/mvn-offline", "--maven-repo", "/app/m2", "--output-root", "/app/out/iss-display", "--view-dir", "/app/out/fds-iss-view", "--watch", "--refresh-seconds", "1800"]
+    depends_on:
+      sim-volume-init: {condition: service_completed_successfully}
+    volumes:
+      - fds_iss_runs:/app/out/iss-display
+      - fds_iss_view:/app/out/fds-iss-view
+    network_mode: none
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    logging: {driver: journald}
   sim-volume-init:
     build:
       context: ../..
       dockerfile: docker/stage9/SimTm.Dockerfile
     user: "0:0"
     # Existing FDS runs may be private (0700); only volume roots need write ownership.
-    command: ["chown", "10001:10001", "/tm-preview", "/n11-inbox", "/fds-runs", "/fds-view", "/fds-truth", "/mps-schedules", "/sim-tc"]
+    command: ["chown", "10001:10001", "/tm-preview", "/n11-inbox", "/fds-runs", "/fds-view", "/fds-truth", "/mps-schedules", "/sim-tc", "/iss-runs", "/iss-view"]
     volumes:
       - ros_tm_preview:/tm-preview
       - sim_n11_inbox:/n11-inbox
@@ -150,6 +165,8 @@ services:
       - fds_truth:/fds-truth
       - mps_schedules:/mps-schedules
       - sim_tc_socket:/sim-tc
+      - fds_iss_runs:/iss-runs
+      - fds_iss_view:/iss-view
     network_mode: none
     read_only: true
     cap_drop: [ALL]
@@ -160,13 +177,14 @@ services:
     build:
       context: ../..
       dockerfile: docker/stage9/SimTm.Dockerfile
-    command: ["python3", "-m", "services.sim_ground.receiver", "--test-only", "--bind", "0.0.0.0", "--port", "9200", "--snapshot", "/tm-preview/test_tm_snapshot.json", "--n11-inbox", "/n11-inbox", "--limits", "/app/services/sim_ground/test_limits.json", "--tc-socket", "/run/sim-tc/bridge.sock"]
+    command: ["python3", "-m", "services.sim_ground.receiver", "--test-only", "--bind", "0.0.0.0", "--port", "9200", "--snapshot", "/tm-preview/test_tm_snapshot.json", "--n11-inbox", "/n11-inbox", "--limits", "/app/services/sim_ground/test_limits.json", "--tc-socket", "/run/sim-tc/bridge.sock", "--contact-view", "/fds-view/orbit_view.json"]
     depends_on:
       sim-volume-init: {condition: service_completed_successfully}
     volumes:
       - ros_tm_preview:/tm-preview
       - sim_n11_inbox:/n11-inbox
       - sim_tc_socket:/run/sim-tc
+      - fds_truth:/fds-view:ro
     networks: [sim_tm]
     read_only: true
     cap_drop: [ALL]
@@ -202,6 +220,8 @@ volumes:
   fds_view:
   fds_truth:
   fds_runs:
+  fds_iss_runs:
+  fds_iss_view:
   sim_n11_inbox:
   sim_tc_socket:
 networks:

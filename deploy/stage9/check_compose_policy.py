@@ -13,7 +13,7 @@ GATEWAY = "dgs-ops-gateway"
 PORTAL = "portal"
 COMMON_SERVICES = {GATEWAY, PORTAL, "ros-api", "mps-api",
                    "ros-core-read", "mps-core-read"}
-LOCAL_SERVICES = COMMON_SERVICES | {"init-token", "fds-synthetic-demo",
+LOCAL_SERVICES = COMMON_SERVICES | {"init-token", "fds-synthetic-demo", "fds-iss-display",
                                     "sim-volume-init", "sim-ground", "sim-satellite"}
 NETWORK_MEMBERS = {
     "entry": {GATEWAY},
@@ -31,7 +31,8 @@ LOCAL_VOLUMES = {
     "dgs-ops-gateway": set(),
     "portal": {("internal_token", "/internal", True),
                ("portal_state", "/state", False),
-               ("fds_view", "/fds-view", True)},
+               ("fds_view", "/fds-view", True),
+               ("fds_iss_view", "/fds-iss-view", True)},
     "ros-api": {("internal_token", "/internal", True),
                 ("ros_core_socket", "/run/core", True),
                 ("ros_drafts", "/state", False),
@@ -49,21 +50,26 @@ LOCAL_VOLUMES = {
                            ("fds_truth", "/app/out/fds-truth", False),
                            ("mps_schedules", "/app/out/mps-schedules", False),
                            ("sim_n11_inbox", "/n11-inbox", True)},
+    "fds-iss-display": {("fds_iss_runs", "/app/out/iss-display", False),
+                        ("fds_iss_view", "/app/out/fds-iss-view", False)},
     "sim-volume-init": {("ros_tm_preview", "/tm-preview", False),
                         ("sim_n11_inbox", "/n11-inbox", False),
                         ("fds_runs", "/fds-runs", False),
                         ("fds_view", "/fds-view", False),
                         ("fds_truth", "/fds-truth", False),
                         ("mps_schedules", "/mps-schedules", False),
-                        ("sim_tc_socket", "/sim-tc", False)},
+                        ("sim_tc_socket", "/sim-tc", False),
+                        ("fds_iss_runs", "/iss-runs", False),
+                        ("fds_iss_view", "/iss-view", False)},
     "sim-ground": {("ros_tm_preview", "/tm-preview", False),
                    ("sim_n11_inbox", "/n11-inbox", False),
-                   ("sim_tc_socket", "/run/sim-tc", False)},
+                   ("sim_tc_socket", "/run/sim-tc", False),
+                   ("fds_truth", "/fds-view", True)},
     "sim-satellite": {("fds_truth", "/fds-view", True)},
 }
 SIM_VOLUME_INIT_COMMAND = [
     "chown", "10001:10001", "/tm-preview", "/n11-inbox", "/fds-runs",
-    "/fds-view", "/fds-truth", "/mps-schedules", "/sim-tc",
+    "/fds-view", "/fds-truth", "/mps-schedules", "/sim-tc", "/iss-runs", "/iss-view",
 ]
 DEV_VOLUMES = {
     "dgs-ops-gateway": set(),

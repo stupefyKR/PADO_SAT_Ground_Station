@@ -4,7 +4,8 @@ The TCP length prefix is a simulator transport boundary, not an RF, AX100,
 or CSP frame. Only draft UHF application PDUs are decoded here. The private
 TCP stream also carries draft TC in the reverse direction and COMMAND_RESULT
 TM back. A local Unix socket accepts one test-only TC request at a time from
-ROS; neither socket is an operational command link.
+ROS. The FDS TLE truth view opens this link only during Yonsei UHF PASS windows;
+neither socket is an operational command link.
 """
 
 from __future__ import annotations
@@ -31,6 +32,7 @@ from tools.pado_packet_codec import PacketError, decode, gnss_to_fds_properties
 from tools.preview_draft_tm import (MAX_SIM_HISTORY_PDUS, build_snapshot,
                                     publish_snapshot)
 from tools.run_fds_pipeline import verified_pair
+from services.sim_sat.emulator import MAX_VIEW_BYTES, parse_orbit_view
 
 
 FRAME_LENGTH = struct.Struct(">I")
@@ -52,6 +54,105 @@ _DRAFT_GNSS_MANIFEST = re.compile(
 
 class ReceiverError(ValueError):
     """A simulator connection violated its bounded test-only contract."""
+
+
+def _unique_json_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ReceiverError("duplicate FDS contact-view field")
+        result[key] = value
+    return result
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ReceiverError(f"non-finite FDS contact field: {value}")
+
+
+def _contact_utc_ms(value: Any) -> int:
+    if not isinstance(value, str) or not value.endswith("Z"):
+        raise ReceiverError("FDS contact time must be UTC")
+    try:
+        instant = datetime.fromisoformat(value[:-1] + "+00:00")
+    except ValueError as error:
+        raise ReceiverError("invalid FDS contact time") from error
+    if instant.microsecond % 1000:
+        raise ReceiverError("FDS contact time must have millisecond precision")
+    epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
+    delta = instant - epoch
+    return delta.days * 86_400_000 + delta.seconds * 1000 + delta.microseconds // 1000
+
+
+class ContactGate:
+    """Receive a virtual UHF downlink only inside FDS truth PASS windows."""
+
+    def __init__(self, view_path: Path):
+        self.view_path = view_path
+        self._lock = Lock()
+        self._signature: tuple[int, int, int] | None = None
+        self._coverage: tuple[int, int, float] | None = None
+        self._windows: tuple[tuple[int, int], ...] = ()
+
+    def _reload(self) -> None:
+        path = self.view_path
+        if path.is_symlink() or not path.is_file():
+            raise ReceiverError("regular FDS truth contact view required")
+        metadata = path.stat()
+        if not 1 <= metadata.st_size <= MAX_VIEW_BYTES:
+            raise ReceiverError("FDS truth contact view size is invalid")
+        signature = (metadata.st_ino, metadata.st_mtime_ns, metadata.st_size)
+        if signature == self._signature:
+            return
+        raw = path.read_bytes()
+        view = parse_orbit_view(raw)
+        try:
+            document = json.loads(raw.decode("utf-8"),
+                                  object_pairs_hook=_unique_json_pairs,
+                                  parse_constant=_reject_json_constant)
+        except (UnicodeError, ValueError) as error:
+            raise ReceiverError("invalid FDS truth contact view") from error
+        stations = document.get("stations")
+        if not isinstance(stations, list) or not 1 <= len(stations) <= 8:
+            raise ReceiverError("FDS truth stations missing or unbounded")
+        matching = [station for station in stations if isinstance(station, dict) and
+                    station.get("id") == "yonsei" and station.get("band") == "UHF"]
+        if len(matching) != 1:
+            raise ReceiverError("one Yonsei UHF truth station required")
+        passes = matching[0].get("passes")
+        if not isinstance(passes, list) or len(passes) > 256:
+            raise ReceiverError("Yonsei UHF truth passes invalid or unbounded")
+        windows = []
+        previous_los = view.start_s * 1000
+        for contact in passes:
+            if not isinstance(contact, dict):
+                raise ReceiverError("invalid Yonsei UHF truth pass")
+            aos = _contact_utc_ms(contact.get("aos_utc"))
+            los = _contact_utc_ms(contact.get("los_utc"))
+            if not (previous_los <= aos < los <= view.end_s * 1000 and
+                    los - aos <= 2 * 60 * 60 * 1000):
+                raise ReceiverError("Yonsei UHF truth PASS boundaries invalid")
+            windows.append((aos, los))
+            previous_los = los
+        self._coverage = (view.start_s * 1000, view.end_s * 1000,
+                          view.input_epoch_s * 1000)
+        self._windows = tuple(windows)
+        self._signature = signature
+
+    def active(self, now_ms: int) -> bool:
+        if type(now_ms) is not int or now_ms <= 0:
+            return False
+        with self._lock:
+            try:
+                self._reload()
+            except (OSError, ValueError):
+                self._signature = None
+                self._coverage = None
+                self._windows = ()
+                return False
+            start, end, epoch = self._coverage
+            return (start <= now_ms <= end and
+                    0 <= now_ms - epoch < 72 * 60 * 60 * 1000 and
+                    any(aos <= now_ms < los for aos, los in self._windows))
 
 
 class _PendingTc:
@@ -158,7 +259,8 @@ def prune_simulator_n11(inbox: Path, newest_manifest: Path, *,
 class TmReceiver:
     """Single-writer, bounded decoder and ROS/FDS test publication point."""
 
-    def __init__(self, snapshot: Path, n11_inbox: Path, limits: dict[str, Any]):
+    def __init__(self, snapshot: Path, n11_inbox: Path, limits: dict[str, Any],
+                 contact_view: Path | None = None):
         if snapshot.name != "test_tm_snapshot.json":
             raise ReceiverError("ROS snapshot must be test_tm_snapshot.json")
         if snapshot.parent.is_symlink() or not snapshot.parent.is_dir():
@@ -168,6 +270,7 @@ class TmReceiver:
         self.snapshot = snapshot
         self.n11_inbox = n11_inbox
         self.limits = limits
+        self.contact_gate = ContactGate(contact_view) if contact_view is not None else None
         # Keep only packet families used by the explicitly configured sensors.
         # GNSS can still feed N11 without consuming the graph history budget.
         self.sensor_sources = {key.split(".", 1)[0] for key in limits["sensors"]}
@@ -199,6 +302,8 @@ class TmReceiver:
         instant = int(time.time() * 1000) if now_ms is None else now_ms
         if not 0 <= instant - decoded["utc_ms"] <= MAX_AGE_MS:
             raise ReceiverError("test TC issue timestamp is not fresh")
+        if self.contact_gate is not None and not self.contact_gate.active(instant):
+            raise ReceiverError("simulated TC outside Yonsei UHF contact")
         request = _PendingTc(packet, decoded["id"], decoded["sequence"])
         with self._tc_lock:
             if not self._satellite_connected:
@@ -334,16 +439,23 @@ class TmReceiver:
         return decoded
 
     def process_connection(self, connection: socket.socket) -> int:
-        """Process one duplex stream until clean EOF; invalid streams close."""
+        """Process a duplex stream; only in-contact TM reaches ROS and FDS."""
         accepted = 0
         with self._tc_lock:
             self._satellite_connected = True
         try:
             while True:
+                received_ms = int(time.time() * 1000)
+                contact_open = self.contact_gate is None or \
+                    self.contact_gate.active(received_ms)
                 to_send = None
                 with self._tc_lock:
                     request = self._tc_pending
-                    if request is not None and not request.sent:
+                    if request is not None and not contact_open:
+                        self._tc_pending = None
+                        request.error = "simulated TC outside Yonsei UHF contact"
+                        request.done.set()
+                    elif request is not None and not request.sent:
                         request.sent = True
                         to_send = request.packet
                 if to_send is not None:
@@ -358,11 +470,16 @@ class TmReceiver:
                 packet = read_framed_pdu(connection)
                 if packet is None:
                     return accepted
+                received_ms = int(time.time() * 1000)
+                if self.contact_gate is not None and not \
+                        self.contact_gate.active(received_ms):
+                    continue
                 decoded = decode(packet)
                 if decoded["name"] == RESULT_TELEMETRY:
-                    self._ingest_command_result(packet, decoded)
+                    self._ingest_command_result(packet, decoded,
+                                                received_ms=received_ms)
                 else:
-                    self.ingest(packet)
+                    self.ingest(packet, received_ms=received_ms)
                 accepted += 1
         finally:
             with self._tc_lock:
@@ -442,12 +559,14 @@ def main() -> None:
     parser.add_argument("--snapshot", type=Path, required=True)
     parser.add_argument("--n11-inbox", type=Path, required=True)
     parser.add_argument("--limits", type=Path, required=True)
+    parser.add_argument("--contact-view", type=Path, required=True,
+                        help="FDS truth orbit view containing Yonsei UHF PASS windows")
     parser.add_argument("--tc-socket", type=Path,
                         help="private Unix socket for one test-only TC/ACK exchange")
     args = parser.parse_args()
     try:
         receiver = TmReceiver(args.snapshot, args.n11_inbox,
-                              load_limits(args.limits))
+                              load_limits(args.limits), args.contact_view)
         stop = Event()
         bridge_thread = None
         if args.tc_socket is not None:

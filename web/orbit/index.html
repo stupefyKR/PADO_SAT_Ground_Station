@@ -31,6 +31,7 @@
     </header>
     <main class="orbit-content">
       <div class="orbit-notice"><strong id="orbit-mode-label">PADO-SAT SIMULATION</strong><span id="orbit-source-note">500 km SSO · LTAN 06h 가상 TLE의 FDS 결과를 기다리는 중입니다. 지상국 좌표는 시험용 근삿값이며 컨택은 운용 판단에 사용할 수 없습니다.</span></div>
+      <div class="orbit-target-bar"><label for="orbit-target">표시 위성</label><select id="orbit-target"><option value="synthetic">가상 PADO-SAT · 500 km SSO</option><option value="iss">ISS · 고정 TLE 외삽 시험</option><option value="operational">실제 운용 위성 · 입력 대기</option></select><span id="orbit-target-status" role="status">가상 위성 FDS 결과 확인 중</span></div>
       <div class="orbit-layout">
         <section class="orbit-stage" aria-labelledby="orbit-title">
           <div class="orbit-stage-head">
@@ -56,7 +57,7 @@
           <section class="orbit-card"><div class="orbit-card-head"><span class="eyebrow">ORBIT STATE</span><h2>현재 표시 위치</h2></div><dl class="orbit-readouts"><div><dt>입력 / 전파</dt><dd id="orbit-model">대기</dd></div><div><dt>위도 / 경도</dt><dd id="orbit-coordinates">—</dd></div><div><dt>고도</dt><dd id="orbit-altitude">—</dd></div><div><dt>궤도 주기</dt><dd id="orbit-period">—</dd></div><div><dt>예측 범위</dt><dd id="orbit-coverage">—</dd></div></dl></section>
           <section class="orbit-card"><div class="orbit-card-head"><span class="eyebrow">GROUND CONTACT / POLAR</span><h2>지상국 컨택 경로</h2></div><div id="orbit-stations" class="orbit-stations"><p class="orbit-empty">가상 위성 TLE와 FDS PASS 결과를 기다립니다.</p></div></section>
           <section class="orbit-card"><div class="orbit-card-head"><span class="eyebrow">UPCOMING PASSES</span><h2>다음 컨택</h2></div><div id="orbit-passes" class="orbit-passes"><p class="orbit-empty">예측 데이터 없음</p></div></section>
-          <section class="orbit-card orbit-load"><div class="orbit-card-head"><span class="eyebrow">DATA SOURCE</span><h2>FDS 산출물</h2></div><p id="orbit-data-state">서버의 읽기 전용 결과를 확인합니다.</p><div class="orbit-load-actions"><button id="orbit-reload" type="button">서버 결과 다시 읽기</button></div><small>화면은 현재 시각만 표시합니다. 결과는 60초마다 다시 확인합니다. 시험 TLE는 실제 TLE·GNSS 입력 경로와 분리되어 있습니다.</small></section>
+          <section class="orbit-card orbit-load"><div class="orbit-card-head"><span class="eyebrow">DATA SOURCE</span><h2>FDS 산출물</h2></div><p id="orbit-data-state">서버의 읽기 전용 결과를 확인합니다.</p><div class="orbit-load-actions"><button id="orbit-reload" type="button">서버 결과 다시 읽기</button></div><small>선택한 위성의 현재 위치만 표시하며 결과는 60초마다 다시 확인합니다. 실제 운용 위성은 유효한 FDS 입력이 게시된 뒤 표시됩니다.</small></section>
         </aside>
       </div>
       <p id="api-error" class="api-error" role="alert" hidden></p>

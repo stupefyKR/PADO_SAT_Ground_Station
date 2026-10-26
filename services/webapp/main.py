@@ -39,6 +39,7 @@ MAX_BODY = 4096
 MAX_DRAFT_BODY = 40000
 MAX_UPSTREAM = 65536
 MAX_ORBIT_VIEW = 4 * 1024 * 1024
+ORBIT_TARGETS = {"synthetic", "iss", "operational"}
 ASSETS = {
     "/login": ("login/index.html", "text/html; charset=utf-8"),
     "/ops": ("ops/index.html", "text/html; charset=utf-8"),
@@ -155,6 +156,9 @@ class AppServer(ThreadingHTTPServer):
                  client_key: Path | None = None, static_root: Path = WEB,
                  core_socket: Path = CORE_SOCKET,
                  orbit_view: Path | None = None,
+                 synthetic_orbit_view: Path | None = None,
+                 iss_orbit_view: Path | None = None,
+                 operational_orbit_view: Path | None = None,
                  tm_preview: Path | None = None,
                  draft_db: Path | None = None,
                  candidate_db: Path | None = None,
@@ -186,6 +190,9 @@ class AppServer(ThreadingHTTPServer):
         self.core_socket = core_socket
         self.static_root = static_root
         self.orbit_view = orbit_view
+        self.synthetic_orbit_view = synthetic_orbit_view
+        self.iss_orbit_view = iss_orbit_view
+        self.operational_orbit_view = operational_orbit_view
         self.tm_preview = tm_preview
         self.drafts = RosDraftStore(draft_db) if mode == "ros" and draft_db else None
         self.candidates = MpsCandidateStore(candidate_db) if mode == "mps" and candidate_db else None
@@ -249,7 +256,9 @@ class Handler(BaseHTTPRequestHandler):
             parsed = urlsplit(self.path)
         except ValueError:
             return ""
-        if parsed.query or parsed.fragment or not parsed.path.startswith("/"):
+        if parsed.fragment or not parsed.path.startswith("/") or (
+                parsed.query and not (parsed.path == "/api/fds/orbit" and
+                                      parsed.query in {f"target={target}" for target in ORBIT_TARGETS})):
             return ""
         return parsed.path
 
@@ -499,17 +508,34 @@ class Handler(BaseHTTPRequestHandler):
             if not self._session():
                 self._error(HTTPStatus.UNAUTHORIZED, "login_required")
                 return
-            source = self.server.orbit_view
+            query = urlsplit(self.path).query
+            target = query.removeprefix("target=") if query else None
+            source = (self.server.orbit_view if target is None else {
+                "synthetic": self.server.synthetic_orbit_view,
+                "iss": self.server.iss_orbit_view,
+                "operational": self.server.operational_orbit_view,
+            }[target])
             try:
-                if source is None or source.name != "orbit_view.json" or not source.is_file():
+                if source is None or source.name != "orbit_view.json" or source.is_symlink() or not source.is_file():
                     raise OSError("orbit view absent")
                 if source.stat().st_size > MAX_ORBIT_VIEW:
                     raise OSError("orbit view too large")
                 data = source.read_bytes()
                 if len(data) > MAX_ORBIT_VIEW:
                     raise OSError("orbit view too large")
+                if target is not None:
+                    payload = json.loads(data)
+                    if not isinstance(payload, dict):
+                        raise ValueError("orbit target payload must be an object")
+                    norad_id = payload.get("norad_id")
+                    if (payload.get("schema") != "fds.orbit-view.v1" or
+                            type(norad_id) is not int or not 1 <= norad_id <= 99999 or
+                            (target == "synthetic" and norad_id != 99999) or
+                            (target == "iss" and norad_id != 25544) or
+                            (target == "operational" and norad_id in (25544, 99999))):
+                        raise ValueError("orbit target differs from published data")
                 self._send(HTTPStatus.OK, data)
-            except OSError:
+            except (OSError, ValueError, TypeError):
                 self._error(HTTPStatus.SERVICE_UNAVAILABLE, "fds_orbit_unavailable")
             return
         if path in PROXY_ROUTES:
@@ -789,6 +815,9 @@ def parser() -> argparse.ArgumentParser:
             service.add_argument("--client-key", type=Path)
             service.add_argument("--static-root", type=Path, default=WEB)
             service.add_argument("--orbit-view", type=Path)
+            service.add_argument("--synthetic-orbit-view", type=Path)
+            service.add_argument("--iss-orbit-view", type=Path)
+            service.add_argument("--operational-orbit-view", type=Path)
         if mode in ("ros", "mps"):
             service.add_argument("--core-socket", type=Path, default=CORE_SOCKET)
         if mode == "ros":
@@ -841,6 +870,9 @@ def main() -> None:
                        static_root=getattr(args, "static_root", WEB),
                        core_socket=getattr(args, "core_socket", CORE_SOCKET),
                        orbit_view=getattr(args, "orbit_view", None),
+                       synthetic_orbit_view=getattr(args, "synthetic_orbit_view", None),
+                       iss_orbit_view=getattr(args, "iss_orbit_view", None),
+                       operational_orbit_view=getattr(args, "operational_orbit_view", None),
                        tm_preview=getattr(args, "tm_preview", None),
                        draft_db=getattr(args, "draft_db", None),
                        candidate_db=getattr(args, "candidate_db", None),

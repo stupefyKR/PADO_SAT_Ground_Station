@@ -175,19 +175,24 @@ python3 tests/run_synthetic_demo_smoke.py /path/to/orekit-data
 
 가상 TLE와 가상 위성이 만든 N11은 **실제** N05/N11 본문·매니페스트 수신
 경로에 자동 등록되지 않는다. 이 가상 링크는 RF·CSP·AX100 프레임이나 실제
-항우연/연세대 수신 장비를 거치지 않으며 TC 수신·송출 경로도 없다. 연세대
+항우연/연세대 수신 장비를 거치지 않는다. 시험 TC·ACK 왕복은 내부 시뮬레이터
+링크에서만 수행하며 실제 위성으로 송출하지 않는다. 연세대
 `(37.5624, 126.9389, 0 m)`, 항우연 대전 `(36.3700, 127.3600, 0 m)`, 최소 고각
 `10°`, UHF `435 MHz`, S-band `2.2 GHz`는 모두 **화면 시험용 근삿값·예시값**이다.
 실제 안테나의 측량 좌표·고각 마스크·주파수로 교체하기 전 컨택/도플러 시각은
 운용에 사용할 수 없다. 실제 N05 TLE 또는 정규화된 N11 GNSS 파일 쌍의 반복
 계산기는 별도 경로로 남으며, 실제 수신기·운용 화면과의 배포 연결은 후속 작업이다.
 
-### 고정 ISS TLE 자료 (선택형 과거 시험)
+### 고정 ISS TLE 자료 (화면 전용 시험)
 
 사용자가 제공한 ISS (ZARYA) TLE 두 줄은 `services/fds/demo/iss-fixed.tle`에
-변경 없이 보존한다. 별도 `tools/build_iss_demo.py`로 오프라인 비교 시험에
-사용할 수 있지만 로컬 Compose의 기본 입력은 아니다. 원본 TLE epoch는
-**2026-10-22 22:03:10 UTC**이며 FDS의 72시간 신선도 한계를 넘으면 새 현재
-위치 계산을 거부한다. ISS 자료 역시 운용 N05/N11 입력으로 자동 반입되지 않는다.
+변경 없이 보존한다. 원본 epoch는 **2026-10-22 22:03:10 UTC**이다.
+`tools/build_iss_demo.py --test-only`는 이 고정 자료를 SGP4로 외삽한 뒤 현재
+epoch에 다시 맞춘 **가상 TLE**로 별도의 ISS 화면 산출물을 만든다. 이는 실제 ISS의
+현재 위치·관측 TLE가 아니며 교신 계획에 사용할 수 없다. 생성 TLE의 epoch가
+새로워도 실제 입력이 최신이라는 뜻은 아니다. FDS의 72시간 입력 검사 자체는
+변경하지 않는다. ISS 화면 결과는 별도 `fds-iss-view`에만 게시하고 MPS N13
+일정이나 운용 N05/N11 입력으로 보내지 않는다. 로컬 Compose의 30분 간격 반복 실행 시 완료된
+실행 결과는 최근 8개만 보존한다.
 
 참고 원본: [NovAtel OEM7 BESTXYZ](https://docs.novatel.com/OEM7/Content/Logs/BESTXYZ.htm), [CubeADCS ICD 1.05](https://www.cubespace.co.za/uploads/c862e5e3-eff7-4519-b67f-b0dc2d5590a0.pdf), [Vallado SGP4 검증 자료](https://celestrak.org/publications/AIAA/2006-6753/), [Orekit 데이터 설정](https://test.orekit.org/site-orekit-development/data/default-configuration.html). 모델 수락 전에는 Orekit 물리 자료 세트의 버전과 EOP 유효 기간을 고정하고 기준 궤도력과 비교해야 한다.

@@ -97,6 +97,7 @@ class DgsBoundaryInvariantTests(unittest.TestCase):
                 "mps-core-read": {"network_mode": "none"},
                 "init-token": {"network_mode": "none"},
                 "fds-synthetic-demo": {"network_mode": "none"},
+                "fds-iss-display": {"network_mode": "none"},
                 "sim-volume-init": {
                     "network_mode": "none", "user": "0:0", "read_only": True,
                     "cap_add": ["CHOWN"],

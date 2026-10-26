@@ -1,6 +1,10 @@
 .orbit-content{padding:16px clamp(16px,2vw,30px) 36px;max-width:1900px}
 .orbit-notice{display:flex;gap:13px;align-items:center;margin-bottom:13px;padding:10px 13px;border:1px solid #6b623e;background:#292719;color:#e5ddc3;font-size:.76rem;line-height:1.5}
 .orbit-notice strong{color:#f4d489;font:800 .67rem Arial,sans-serif;letter-spacing:.12em}
+.orbit-target-bar{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px;padding:10px 13px;border:1px solid #2a4656;background:#10202e;font-size:.74rem;color:#b9d0d9}
+.orbit-target-bar label{font-weight:700;color:#e3f0f3}
+.orbit-target-bar select{min-width:250px;max-width:100%;padding:7px 9px;border:1px solid #477184;background:#0d2838;color:#e9f5f7}
+.orbit-target-bar #orbit-target-status{margin-left:auto;color:#a5c4ce}
 .orbit-layout{display:grid;grid-template-columns:minmax(480px,1fr) 345px;gap:12px;align-items:start}
 .orbit-stage,.orbit-card{border:1px solid #2a4656;background:#10202e;min-width:0}
 .orbit-stage-head{min-height:63px;padding:11px 15px;display:flex;align-items:center;justify-content:space-between;gap:14px;border-bottom:1px solid #2a4656}

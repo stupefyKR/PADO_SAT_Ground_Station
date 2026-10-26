@@ -2,9 +2,14 @@
 
 // The browser interpolates FDS Earth-fixed samples. It never propagates a TLE.
 const ORBIT_EARTH_RADIUS_M = 6378137;
-const ORBIT_FIXED_ISS_SHA256 = "80e9879d78792b0c61ac8fa3d38f3de1001cbdef0ef6cb33e531475678c18cac";
+const ORBIT_TARGETS = Object.freeze({
+  synthetic: { name: "가상 PADO-SAT", mode: "PADO-SAT SIMULATION", note: "가상 TM · 운용 금지" },
+  iss: { name: "ISS 외삽 시험", mode: "ISS FICTIONAL EXTRAPOLATION", note: "실제 ISS 위치 아님" },
+  operational: { name: "실제 운용 위성", mode: "PADO-SAT ORBIT PREVIEW", note: "FDS 입력 대기" }
+});
 const orbitState = {
   data: null, samples: [], stations: [], time: Date.now(), lon: 127, lat: 24, zoom: 1,
+  target: "synthetic", requestId: 0,
   image: new Image(), gl: null, program: null, texture: null,
   lastUi: 0, nightStamp: -1, nightCanvas: document.createElement("canvas")
 };
@@ -89,27 +94,45 @@ function parseOrbitData(input) {
 
 function setOrbitData(input, label) {
   const parsed = parseOrbitData(input);
+  if ((orbitState.target === "synthetic" && input.norad_id !== 99999) ||
+      (orbitState.target === "iss" && input.norad_id !== 25544) ||
+      (orbitState.target === "operational" && [99999, 25544].includes(input.norad_id))) {
+    throw new Error("선택한 위성과 FDS 결과의 식별자가 일치하지 않습니다.");
+  }
   orbitState.data = parsed;
   orbitState.samples = parsed.samples;
   orbitState.stations = parsed.stations;
   orbitState.time = Date.now();
-  const isIssTest = input.norad_id === 25544 && input.source === "TLE" &&
-    input.input_sha256 === ORBIT_FIXED_ISS_SHA256;
-  const isSyntheticTest = input.norad_id === 99999 &&
-    input.quality === "PRELIMINARY_NOT_FOR_OPERATIONS" && ["TLE", "GNSS"].includes(input.source);
-  orbitEl("orbit-mode-label").textContent = isSyntheticTest ? "PADO-SAT SIMULATION" :
-    isIssTest ? "ISS TEST MODE" : "PRELIMINARY";
-  orbitEl("orbit-sidebar-mode").textContent = isSyntheticTest ? "가상 PADO-SAT" :
-    isIssTest ? "ISS 시험 궤도" : "예비 궤도 화면";
-  orbitEl("orbit-sidebar-note").textContent = isSyntheticTest ? "가상 TM · 운용 금지" :
-    isIssTest ? "고정 TLE · 운용 금지" : "FDS 산출물 · 운용 금지";
+  const target = ORBIT_TARGETS[orbitState.target];
+  orbitEl("orbit-mode-label").textContent = target.mode;
+  orbitEl("orbit-sidebar-mode").textContent = target.name;
+  orbitEl("orbit-sidebar-note").textContent = target.note;
   orbitEl("orbit-source-note").textContent =
-    `${isSyntheticTest ? "가상 PADO-SAT (500 km SSO · LTAN 06h)" : isIssTest ? "ISS (ZARYA) 고정 TLE 시험" : `NORAD ${input.norad_id}`} · ${input.source} / ${input.model} · 입력 ${formattedUtc(parsed.inputEpoch)} · ${isSyntheticTest || isIssTest ? "안테나 좌표는 시험용 근삿값입니다. " : "안테나 설정을 확인하세요. "}실제 관제 판단에는 사용하지 마세요.`;
+    `${orbitState.target === "synthetic" ? "가상 PADO-SAT (500 km SSO · LTAN 06h)" : orbitState.target === "iss" ? "2026년 고정 ISS 참조 TLE를 장기 외삽·재적합한 가상 위치 (실제 ISS 아님)" : `${target.name} · NORAD ${input.norad_id}`} · ${input.source} / ${input.model} · 계산 입력 epoch ${formattedUtc(parsed.inputEpoch)} · ${orbitState.target === "operational" ? "안테나 설정을 확인하세요. " : "안테나 좌표는 시험용 근삿값입니다. "}현재 산출물은 운용 판단에 사용하지 마세요.`;
   orbitEl("orbit-data-state").textContent = `${label} · ${isCurrentData() ? "현재 위치 표시 가능" : "현재 유효한 입력·예측 범위 없음"}`;
-  orbitEl("orbit-model").textContent = `${isSyntheticTest ? "가상 위성 시험 · " : isIssTest ? "ISS 시험 · " : ""}${input.source} / ${input.model}`;
+  orbitEl("orbit-target-status").textContent = isCurrentData() ?
+    orbitState.target === "iss" ? "가상 외삽 위치 표시 중" : "현재 위치 표시 중" : "FDS 결과 갱신 필요";
+  orbitEl("orbit-model").textContent = `${target.name} · ${input.source} / ${input.model}`;
   orbitEl("orbit-period").textContent = `${(input.orbital_period_s / 60).toFixed(1)} 분`;
   orbitEl("orbit-coverage").textContent = `${Math.round((parsed.end - parsed.start) / 3600000)} 시간`;
   orbitEl("api-error").hidden = true;
+  orbitRender(true);
+}
+
+function clearOrbitData(message) {
+  orbitState.data = null;
+  orbitState.samples = [];
+  orbitState.stations = [];
+  const target = ORBIT_TARGETS[orbitState.target];
+  orbitEl("orbit-mode-label").textContent = target.mode;
+  orbitEl("orbit-sidebar-mode").textContent = target.name;
+  orbitEl("orbit-sidebar-note").textContent = target.note;
+  orbitEl("orbit-source-note").textContent = `${target.name} · ${message}`;
+  orbitEl("orbit-target-status").textContent = message;
+  orbitEl("orbit-data-state").textContent = message;
+  orbitEl("orbit-model").textContent = "—";
+  orbitEl("orbit-period").textContent = "—";
+  orbitEl("orbit-coverage").textContent = "—";
   orbitRender(true);
 }
 
@@ -379,8 +402,8 @@ function drawOverlay(canvas, flat) {
       4 * scale, station.id === "yonsei" ? [7 * scale, -10 * scale] : [7 * scale, 14 * scale]);
   }
   drawMarker(context, projected[0], "#f4f7fb",
-    orbitState.data.info.norad_id === 99999 ? "PADO-SAT SIM / NOW" :
-      orbitState.data.info.norad_id === 25544 ? "ISS / NOW" : `NORAD ${orbitState.data.info.norad_id}`, 6 * scale);
+    orbitState.target === "synthetic" ? "PADO-SAT SIM / NOW" :
+      orbitState.target === "iss" ? "ISS TEST / NOW" : `NORAD ${orbitState.data.info.norad_id}`, 6 * scale);
   if (flat) {
     context.fillStyle = "#eff9fb"; context.font = `${11 * scale}px Arial`;
     context.fillText("N", 8 * scale, 15 * scale);
@@ -449,7 +472,10 @@ function updateOrbitUi() {
     orbitEl("orbit-altitude").textContent = "—";
     orbitEl("orbit-stations").textContent = "현재 유효한 FDS 입력이 없습니다.";
     orbitEl("orbit-passes").textContent = "예측 데이터 없음";
-    if (orbitState.data) orbitEl("orbit-data-state").textContent = "현재 시각이 FDS 예측 범위 밖이거나 입력이 72시간 이상 경과했습니다.";
+    if (orbitState.data) {
+      orbitEl("orbit-data-state").textContent = "현재 시각이 FDS 예측 범위 밖이거나 입력이 72시간 이상 경과했습니다.";
+      orbitEl("orbit-target-status").textContent = "FDS 결과 갱신 필요";
+    }
     return;
   }
   orbitEl("orbit-coordinates").textContent = `${Math.abs(current.lat).toFixed(3)}°${current.lat >= 0 ? "N" : "S"} · ${Math.abs(current.lon).toFixed(3)}°${current.lon >= 0 ? "E" : "W"}`;
@@ -520,26 +546,40 @@ function orbitAnimation(now) {
 }
 
 async function readOrbitServer() {
-  if (!orbitState.data) orbitEl("orbit-data-state").textContent = "서버 FDS 산출물 확인 중…";
+  const target = orbitState.target;
+  const requestId = ++orbitState.requestId;
+  if (!orbitState.data) orbitEl("orbit-data-state").textContent = `${ORBIT_TARGETS[target].name} FDS 산출물 확인 중…`;
   try {
-    const response = await fetch("/api/fds/orbit", { credentials: "same-origin", cache: "no-store" });
+    const response = await fetch(`/api/fds/orbit?target=${target}`, { credentials: "same-origin", cache: "no-store" });
+    if (requestId !== orbitState.requestId) return;
     if (response.status === 401) { window.location.assign("/login"); return; }
-    if (!response.ok) throw new Error("서버에 게시된 FDS 결과가 없습니다.");
+    if (!response.ok) throw new Error(response.status === 503 ?
+      `${ORBIT_TARGETS[target].name}의 유효한 FDS 결과가 아직 없습니다.` : "FDS 결과를 읽지 못했습니다.");
     if (Number(response.headers.get("content-length") || 0) > 4 * 1024 * 1024) {
       throw new Error("FDS 결과 파일이 너무 큽니다.");
     }
     const input = await response.json();
+    if (requestId !== orbitState.requestId) return;
     if (!orbitState.data || input.generated_utc !== orbitState.data.info.generated_utc ||
         input.input_sha256 !== orbitState.data.info.input_sha256 ||
         input.start_utc !== orbitState.data.info.start_utc) {
       setOrbitData(input, "서버 FDS 결과");
     }
   } catch (error) {
-    orbitEl("orbit-data-state").textContent = error.message;
+    if (requestId === orbitState.requestId) clearOrbitData(error.message);
   }
 }
 
+function chooseOrbitTarget(target) {
+  if (!Object.hasOwn(ORBIT_TARGETS, target) || target === orbitState.target) return;
+  orbitState.target = target;
+  ++orbitState.requestId;
+  clearOrbitData(`${ORBIT_TARGETS[target].name} FDS 결과 확인 중…`);
+  readOrbitServer();
+}
+
 function orbitControls() {
+  orbitEl("orbit-target").addEventListener("change", (event) => chooseOrbitTarget(event.target.value));
   orbitEl("orbit-center").addEventListener("click", () => {
     const sample = sampleAt(orbitState.time);
     if (sample && isCurrentData()) { orbitState.lon = sample.lon; orbitState.lat = sample.lat; orbitRender(true); }

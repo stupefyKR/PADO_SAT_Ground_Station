@@ -176,6 +176,93 @@ assert.equal(next.disabled, true);
 assert.equal(previous.onclick, null);
 assert.equal(next.onclick, null);
 assert.equal(position.textContent, '선택 가능한 PASS 없음');
+
+render({schedule_state: 'absent', schedule_sha256: null, passes: []});
+assert.equal(tag.textContent, 'FDS N13 산출물 대기',
+  'successful API response with no N13 is shown as publication waiting');
+context.mpsPassesUnavailable();
+assert.equal(tag.textContent, 'N13 API 조회 오류',
+  'API failure has a distinct status from an unpublished N13');
+"""
+
+NODE_BOOTSTRAP_TEST = r"""
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+
+const source = fs.readFileSync(process.argv[1], 'utf8');
+const schedule = {schedule_state: 'validated', schedule_sha256: 'a'.repeat(64), passes: []};
+async function makePage(catalogReady, passesReady) {
+  const timers = [];
+  const rendered = [];
+  const errors = [];
+  let unavailable = 0;
+  const node = {addEventListener() {}};
+  const draftTag = {textContent: '', className: ''};
+  const context = {
+    document: {body: {dataset: {page: 'selection-test'}}, visibilityState: 'visible',
+      getElementById: () => node,
+      querySelector: (selector) => selector === '.draft-panel .panel-head .tag' ? draftTag : null},
+    setInterval: (callback, delay) => timers.push({callback, delay}),
+  };
+  vm.createContext(context);
+  vm.runInContext(source, context);
+  context.api = async (path) => {
+    if (path === '/api/session') return {username: 'operator', role: 'planner', csrf: 'x'};
+    if (path === '/api/mps/catalog') {
+      if (!catalogReady) throw new Error('catalog unavailable');
+      return {version: 'test', commands: [], draft_commands: []};
+    }
+    if (path === '/api/mps/passes') {
+      if (!passesReady) throw new Error('schedule unavailable');
+      return schedule;
+    }
+    if (path === '/api/mps/test-sequences') return {items: []};
+    if (path === '/api/fds/orbit') throw new Error('orbit unavailable');
+    if (path === '/api/mps/test-ros-feedback') return null;
+    throw new Error(`unexpected API: ${path}`);
+  };
+  context.value = () => {};
+  context.showError = (message) => errors.push(message);
+  context.renderMpsDraftCatalog = () => {};
+  context.mpsSetOrbit = () => {};
+  context.mpsRenderSequenceEditor = () => {};
+  context.mpsSetN10Feedback = () => {};
+  context.renderMpsPasses = (data, session, drafts) => {
+    draftTag.textContent = 'rendered';
+    rendered.push({data, role: session.role, drafts});
+  };
+  context.mpsPassesUnavailable = () => { unavailable += 1; };
+  await context.workspace('mps');
+  return {timers, rendered, errors, draftTag, get unavailable() { return unavailable; },
+    setCatalogReady(value) { catalogReady = value; },
+    setPassesReady(value) { passesReady = value; }};
+}
+
+(async () => {
+  const catalogOut = await makePage(false, true);
+  assert.equal(catalogOut.unavailable, 0);
+  assert.equal(catalogOut.rendered.length, 1,
+    'a catalog failure must not hide a valid N13 PASS schedule');
+  assert.equal(catalogOut.rendered[0].role, 'viewer',
+    'sequence editing stays locked without the command catalog');
+  assert.equal(catalogOut.draftTag.textContent, '명령 DB 조회 오류');
+  assert.ok(catalogOut.errors.some((message) => message.includes('명령 DB')));
+  catalogOut.setCatalogReady(true);
+  await catalogOut.timers.find(({delay}) => delay === 60000).callback();
+  assert.equal(catalogOut.rendered.at(-1).role, 'planner',
+    'catalog recovery restores the authorized sequence editor');
+  assert.equal(catalogOut.draftTag.textContent, 'rendered');
+
+  const scheduleOut = await makePage(true, false);
+  assert.equal(scheduleOut.unavailable, 1,
+    'N13 API failure is distinct from an absent but successful response');
+  assert.equal(scheduleOut.rendered.length, 0);
+  scheduleOut.setPassesReady(true);
+  await scheduleOut.timers.find(({delay}) => delay === 60000).callback();
+  assert.equal(scheduleOut.rendered.length, 1,
+    'the page retries N13 after an initial API failure');
+})().catch((error) => { console.error(error); process.exitCode = 1; });
 """
 
 
@@ -193,6 +280,15 @@ class MpsPassSelectionTest(unittest.TestCase):
     def test_pass_navigation_and_refresh_preserve_selection(self):
         result = subprocess.run(
             ["node", "-e", NODE_NAV_TEST, str(APP)],
+            capture_output=True, text=True, timeout=10, check=False,
+            env=os.environ.copy(),
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js unavailable")
+    def test_schedule_bootstrap_survives_catalog_failure_and_retries_n13(self):
+        result = subprocess.run(
+            ["node", "-e", NODE_BOOTSTRAP_TEST, str(APP)],
             capture_output=True, text=True, timeout=10, check=False,
             env=os.environ.copy(),
         )

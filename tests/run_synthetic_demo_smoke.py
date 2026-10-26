@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
-from services.sim_ground.receiver import TmReceiver, load_limits
+from services.sim_ground.receiver import ContactGate, TmReceiver, load_limits
 from services.sim_sat.emulator import generate_packet_batch, load_orbit_view
 from services.webapp.tm_preview import load_snapshot
 from tools.build_synthetic_demo import run_once
@@ -35,7 +35,20 @@ def main() -> None:
                                   n11_inbox=base / "n11-inbox")
         _, source = run_once(options)
         assert source == "TLE", source
-        view = load_orbit_view(options.truth_view_dir / "orbit_view.json")
+        truth_path = options.truth_view_dir / "orbit_view.json"
+        view = load_orbit_view(truth_path)
+        truth = json.loads(truth_path.read_text(encoding="utf-8"))
+        yonsei = next(station for station in truth["stations"]
+                      if station["id"] == "yonsei" and station["band"] == "UHF")
+        assert yonsei["passes"], "FDS truth has no Yonsei UHF PASS"
+        first_pass = yonsei["passes"][0]
+        aos = datetime.fromisoformat(first_pass["aos_utc"].replace("Z", "+00:00"))
+        los = datetime.fromisoformat(first_pass["los_utc"].replace("Z", "+00:00"))
+        midpoint_ms = int((aos + (los - aos) / 2).timestamp() * 1000)
+        gate = ContactGate(truth_path)
+        assert gate.active(midpoint_ms), "real FDS Yonsei PASS did not open the link"
+        assert not gate.active(int(aos.timestamp() * 1000) - 1), \
+            "TM link opened before the FDS Yonsei AOS"
         now = datetime.now(timezone.utc).replace(microsecond=0)
         packets, _ = generate_packet_batch(view, now, 0)
         (base / "ros").mkdir()

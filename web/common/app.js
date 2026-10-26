@@ -526,8 +526,8 @@ function renderMpsPasses(schedule, session, drafts) {
   value("mps-passes", schedule.passes.length);
   if (schedule.schedule_state !== "validated") {
     mpsSelectedPass = null; mpsDrawPass(null);
-    tag.textContent = "N13 입력 대기";
-    timeline.textContent = "검증된 FDS 패스 일정이 아직 게시되지 않았습니다.";
+    tag.textContent = "FDS N13 산출물 대기";
+    timeline.textContent = "FDS가 검증된 PASS 일정을 게시하면 자동으로 표시됩니다.";
     return;
   }
   tag.textContent = "N13 검증 완료 · 시험용";
@@ -607,6 +607,29 @@ function renderMpsPasses(schedule, session, drafts) {
   selections[retained >= 0 ? retained : upcoming >= 0 ? upcoming : selections.length - 1].select();
 }
 
+function mpsPassesUnavailable() {
+  const panel = document.querySelector(".passes-panel");
+  panel.querySelector(".panel-head .tag").textContent = "N13 API 조회 오류";
+  panel.querySelector(".timeline").textContent =
+    "MPS에서 PASS 일정을 읽지 못했습니다. FDS 산출물과 MPS 로그를 확인하세요.";
+  document.getElementById("mps-pass-position").textContent = "PASS 일정 조회 오류";
+  for (const id of ["mps-pass-previous", "mps-pass-next"]) {
+    const button = document.getElementById(id);
+    button.disabled = true;
+    button.onclick = null;
+  }
+  value("mps-passes", "—");
+  mpsSelectedPass = null;
+  mpsDrawPass(null);
+}
+
+function mpsMarkDraftUnavailable(catalogReady, draftsReady) {
+  if (catalogReady && draftsReady) return;
+  const tag = document.querySelector(".draft-panel .panel-head .tag");
+  tag.textContent = draftsReady ? "명령 DB 조회 오류" : "초안 조회 오류";
+  tag.className = "tag locked";
+}
+
 async function workspace(page) {
   // The ROS workbench owns the explicitly test-only TM preview controls.
   let session;
@@ -631,39 +654,97 @@ async function workspace(page) {
   } else if (page === "orbit") {
     await initOrbitViewer();
   } else {
-    try {
-      const [catalog, passes, drafts, orbit] = await Promise.all([
-        api("/api/mps/catalog"), api("/api/mps/passes"), api("/api/mps/test-sequences"),
-        api("/api/fds/orbit").catch(() => null)
-      ]);
+    const [catalogResult, passesResult, draftsResult, orbitResult] = await Promise.allSettled([
+      api("/api/mps/catalog"), api("/api/mps/passes"), api("/api/mps/test-sequences"),
+      api("/api/fds/orbit")
+    ]);
+    const startupErrors = [];
+    let catalogReady = catalogResult.status === "fulfilled";
+    let draftsReady = draftsResult.status === "fulfilled";
+    if (catalogReady) {
+      const catalog = catalogResult.value;
       value("mps-version", catalog.version);
       value("mps-commands", catalog.commands.length);
       mpsDraftCommands = catalog.draft_commands || [];
       renderMpsDraftCatalog(mpsDraftCommands);
-      mpsSetOrbit(orbit);
-      renderMpsPasses(passes, session, drafts.items);
       value("mps-catalog-status", `비운용 초안 ${mpsDraftCommands.length}종`);
-      let activeDigest = passes.schedule_sha256;
-      const refresh = async () => {
-        if (document.visibilityState !== "visible") return;
+    } else {
+      value("mps-version", "—");
+      value("mps-commands", "—");
+      value("mps-catalog-status", "명령 DB 조회 오류");
+      startupErrors.push("MPS 명령 DB를 읽지 못했습니다.");
+    }
+    if (!draftsReady) startupErrors.push("MPS 시퀀스 초안을 읽지 못해 편집을 잠갔습니다.");
+    mpsSetOrbit(orbitResult.status === "fulfilled" ? orbitResult.value : null);
+    let scheduleReady = passesResult.status === "fulfilled";
+    let activeDigest = scheduleReady ? passesResult.value.schedule_sha256 : undefined;
+    let activeState = scheduleReady ? passesResult.value.schedule_state : undefined;
+    let scheduleError = !scheduleReady;
+    if (scheduleReady) {
+      const readOnlySession = catalogReady && draftsReady ? session : {...session, role: "viewer"};
+      renderMpsPasses(passesResult.value, readOnlySession,
+        draftsReady ? draftsResult.value.items : []);
+      mpsMarkDraftUnavailable(catalogReady, draftsReady);
+    } else {
+      mpsPassesUnavailable();
+      startupErrors.push("MPS N13 일정 API를 읽지 못했습니다.");
+    }
+    const startupErrorMessage = startupErrors.join(" ");
+    if (startupErrorMessage) showError(startupErrorMessage);
+    const refresh = async () => {
+      if (document.visibilityState !== "visible") return;
+      let catalogRecovered = false;
+      if (!catalogReady) {
         try {
-          const [next, currentOrbit] = await Promise.all([
-            api("/api/mps/passes"), api("/api/fds/orbit").catch(() => null)
-          ]);
-          mpsSetOrbit(currentOrbit);
-          if (next.schedule_sha256 !== activeDigest) {
+          const catalog = await api("/api/mps/catalog");
+          value("mps-version", catalog.version);
+          value("mps-commands", catalog.commands.length);
+          mpsDraftCommands = catalog.draft_commands || [];
+          renderMpsDraftCatalog(mpsDraftCommands);
+          value("mps-catalog-status", `비운용 초안 ${mpsDraftCommands.length}종`);
+          catalogReady = true;
+          catalogRecovered = true;
+        } catch (_) { /* PASS 조회는 명령 DB와 독립적으로 계속 시도한다. */ }
+      }
+      try {
+        const [next, currentOrbit] = await Promise.all([
+          api("/api/mps/passes"), api("/api/fds/orbit").catch(() => null)
+        ]);
+        mpsSetOrbit(currentOrbit);
+        const changed = !scheduleReady || next.schedule_sha256 !== activeDigest ||
+          next.schedule_state !== activeState;
+        if (changed || !draftsReady || catalogRecovered) {
+          if (scheduleReady && next.schedule_sha256 !== activeDigest) {
             showError("FDS PASS 일정이 갱신됐습니다. 이전에 저장하지 않은 시퀀스 변경은 다시 입력하세요.");
-            activeDigest = next.schedule_sha256;
-            const currentDrafts = await api("/api/mps/test-sequences");
-            renderMpsPasses(next, session, currentDrafts.items);
           }
-        } catch (_) { showError("FDS/MPS 일정 갱신에 실패했습니다."); }
-      };
-      setInterval(refresh, 60000);
-      document.getElementById("mps-earth-image")?.addEventListener("load", () => {
-        if (mpsSelectedPass) mpsDrawPass(mpsSelectedPass);
-      });
-    } catch (_) { showError("서브시스템 상태를 읽지 못했습니다."); }
+          const currentDrafts = await api("/api/mps/test-sequences").catch(() => null);
+          draftsReady = currentDrafts !== null;
+          const readOnlySession = catalogReady && draftsReady ? session : {...session, role: "viewer"};
+          renderMpsPasses(next, readOnlySession, draftsReady ? currentDrafts.items : []);
+          mpsMarkDraftUnavailable(catalogReady, draftsReady);
+          scheduleReady = true;
+          activeDigest = next.schedule_sha256;
+          activeState = next.schedule_state;
+        } else if (scheduleError) {
+          document.querySelector(".passes-panel .panel-head .tag").textContent =
+            next.schedule_state === "validated" ? "N13 검증 완료 · 시험용" : "FDS N13 산출물 대기";
+        }
+        scheduleError = false;
+        if (catalogReady && draftsReady && startupErrorMessage) {
+          const alert = document.getElementById("api-error");
+          if (alert?.textContent === startupErrorMessage) alert.hidden = true;
+        }
+      } catch (_) {
+        scheduleError = true;
+        if (!scheduleReady) mpsPassesUnavailable();
+        else document.querySelector(".passes-panel .panel-head .tag").textContent = "N13 API 조회 오류 · 이전 일정";
+        showError("MPS N13 일정 갱신에 실패했습니다.");
+      }
+    };
+    setInterval(refresh, 60000);
+    document.getElementById("mps-earth-image")?.addEventListener("load", () => {
+      if (mpsSelectedPass) mpsDrawPass(mpsSelectedPass);
+    });
     const refreshN10 = async () => {
       if (document.visibilityState !== "visible") return;
       try { mpsSetN10Feedback(await api("/api/mps/test-ros-feedback")); }

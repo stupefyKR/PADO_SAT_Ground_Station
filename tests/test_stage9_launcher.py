@@ -54,7 +54,8 @@ if name == "docker":
         print(os.environ.get("PADO_LAUNCHER_TEST_DOCKER_VERSION", "28.0.0"))
     elif "--services" in args:
         services = ["dgs-ops-gateway", "portal", "ros-api", "mps-api", "ros-core-read",
-                    "mps-core-read", "fds-synthetic-demo", "sim-ground", "sim-satellite"]
+                    "mps-core-read", "fds-synthetic-demo", "fds-iss-display",
+                    "sim-ground", "sim-satellite"]
         if os.environ.get("PADO_LAUNCHER_TEST_SERVICES_INCOMPLETE") == "1":
             services.remove("mps-core-read")
         print("\n".join(services))
@@ -210,6 +211,7 @@ class LauncherLifecycleTests(unittest.TestCase):
                 "mps-core-read": {"network_mode": "none"},
                 "init-token": {"network_mode": "none"},
                 "fds-synthetic-demo": {"network_mode": "none"},
+                "fds-iss-display": {"network_mode": "none"},
                 "sim-volume-init": {
                     "network_mode": "none", "user": "0:0", "read_only": True,
                     "cap_add": ["CHOWN"], "command": SIM_VOLUME_INIT_COMMAND.copy(),

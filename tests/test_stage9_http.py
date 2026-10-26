@@ -116,3 +116,58 @@ class LocalHttpWebTests(unittest.TestCase):
         status, _, stored = self.request(base + "/api/mps/test-sequences", headers=cookie)
         self.assertEqual(status, 200)
         self.assertEqual(stored["items"][0]["steps"], sequence["steps"])
+
+    def test_orbit_targets_are_separate_and_session_gated(self):
+        base = f"http://127.0.0.1:{self.portal.server_port}"
+        try:
+            status, _, _ = self.request(base + "/api/fds/orbit?target=synthetic")
+        except URLError as error:
+            if isinstance(error.reason, PermissionError):
+                self.skipTest("local sandbox denies loopback connections")
+            raise
+        self.assertEqual(status, 401)
+        status, headers, _ = self.request(base + "/api/login", data={
+            "username": "planner01", "password": "valid-password-123"})
+        self.assertEqual(status, 200)
+        cookie = {"Cookie": headers["Set-Cookie"].split(";", 1)[0]}
+        views = {}
+        for target, norad_id in (("synthetic", 99999), ("iss", 25544),
+                                  ("operational", 12345)):
+            view = self.folder / target / "orbit_view.json"
+            view.parent.mkdir()
+            view.write_text(json.dumps({"schema": "fds.orbit-view.v1",
+                                        "norad_id": norad_id}), encoding="utf-8")
+            views[target] = view
+        self.portal.orbit_view = views["synthetic"]
+        self.portal.synthetic_orbit_view = views["synthetic"]
+        self.portal.iss_orbit_view = views["iss"]
+        try:
+            for target, norad_id in (("synthetic", 99999), ("iss", 25544)):
+                status, response_headers, body = self.request(
+                    base + "/api/fds/orbit?target=" + target, headers=cookie)
+                self.assertEqual(status, 200)
+                self.assertEqual(body["norad_id"], norad_id)
+                self.assertEqual(response_headers["Cache-Control"], "no-store")
+            status, _, body = self.request(base + "/api/fds/orbit", headers=cookie)
+            self.assertEqual(status, 200)
+            self.assertEqual(body["norad_id"], 99999)
+            status, _, body = self.request(
+                base + "/api/fds/orbit?target=operational", headers=cookie)
+            self.assertEqual(status, 503)
+            self.portal.operational_orbit_view = views["operational"]
+            status, _, body = self.request(
+                base + "/api/fds/orbit?target=operational", headers=cookie)
+            self.assertEqual(status, 200)
+            self.assertEqual(body["norad_id"], 12345)
+            views["iss"].write_text(json.dumps({"schema": "fds.orbit-view.v1",
+                                                "norad_id": 99999}), encoding="utf-8")
+            status, _, _ = self.request(base + "/api/fds/orbit?target=iss", headers=cookie)
+            self.assertEqual(status, 503)
+            status, _, _ = self.request(
+                base + "/api/fds/orbit?target=synthetic&target=iss", headers=cookie)
+            self.assertEqual(status, 400)
+        finally:
+            self.portal.orbit_view = None
+            self.portal.synthetic_orbit_view = None
+            self.portal.iss_orbit_view = None
+            self.portal.operational_orbit_view = None

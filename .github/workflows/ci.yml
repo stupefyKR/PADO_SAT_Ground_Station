@@ -124,6 +124,18 @@ jobs:
             -Dexec.mainClass=kr.ac.khu.padosat.fds.SyntheticTleSelfTest \
             -Dexec.classpathScope=test \
             "-Dexec.args=$PWD/out/orekit-data-2422a7d06ee2cc3b5a503a47271203b0706f3e82 $PWD/out"
+      - name: Verify fictional ISS display TLE refit
+        run: |
+          mvn --batch-mode --no-transfer-progress -f services/fds/pom.xml test-compile exec:java \
+            -Dexec.mainClass=kr.ac.khu.padosat.fds.IssDisplayTleSelfTest \
+            -Dexec.classpathScope=test \
+            "-Dexec.args=$PWD/out/orekit-data-2422a7d06ee2cc3b5a503a47271203b0706f3e82 $PWD/services/fds/demo/iss-fixed.tle $PWD/out"
+          python3 -m unittest tests.test_build_iss_demo
+          python3 tools/build_iss_demo.py --test-only \
+            --orekit-data "$PWD/out/orekit-data-2422a7d06ee2cc3b5a503a47271203b0706f3e82" \
+            --output-root "$PWD/out/iss-display-smoke" \
+            --view-dir "$PWD/out/fds-iss-view-smoke"
+          test -s out/fds-iss-view-smoke/orbit_view.json
       - name: Verify staged GNSS to published FDS view
         run: |
           cc -std=c11 -Wall -Wextra -Werror -Iservices/mps/core -Ilibgs/include -Ithird_party \
@@ -142,7 +154,7 @@ jobs:
         env:
           PADO_LOCAL_BIND_IP: 127.0.0.1
         run: docker compose -f deploy/stage9/compose.local.yaml build fds-synthetic-demo sim-ground sim-satellite ros-api
-      - name: Verify simulator TM, private TC bridge, and scheduled ROS ACK
+      - name: Verify contact-gated simulator TM, private TC bridge, and ROS ACK
         env:
           PADO_LOCAL_BIND_IP: 127.0.0.1
         run: |
@@ -157,6 +169,51 @@ jobs:
           }
           trap cleanup EXIT
           "${compose[@]}" up -d fds-synthetic-demo sim-ground sim-satellite ros-api
+          truth_ready=false
+          for attempt in {1..60}; do
+            if "${compose[@]}" exec -T sim-ground python3 -c \
+              'from pathlib import Path; assert Path("/fds-view/orbit_view.json").is_file()' \
+              >/dev/null 2>&1; then
+              truth_ready=true
+              break
+            fi
+            sleep 5
+          done
+          if [[ "$truth_ready" != true ]]; then
+            exit 1
+          fi
+          # CI-only contact window in an ephemeral Docker volume. Keep the FDS
+          # truth TLE and samples intact; the receiver must still validate them.
+          # The real pass geometry is checked separately in the offline smoke.
+          "${compose[@]}" exec -T fds-synthetic-demo python3 - <<'PY'
+          import json
+          import os
+          import tempfile
+          from datetime import datetime, timedelta, timezone
+          from pathlib import Path
+
+          path = Path('/app/out/fds-truth/orbit_view.json')
+          document = json.loads(path.read_text(encoding='utf-8'))
+          now = datetime.now(timezone.utc)
+          start = datetime.fromisoformat(document['start_utc'].replace('Z', '+00:00'))
+          end = datetime.fromisoformat(document['end_utc'].replace('Z', '+00:00'))
+          aos = max(start, now - timedelta(seconds=10))
+          los = min(end, now + timedelta(minutes=10))
+          assert los - aos >= timedelta(minutes=8)
+          station = next(item for item in document['stations']
+                         if item['id'] == 'yonsei' and item['band'] == 'UHF')
+          def utc(value):
+              return value.isoformat(timespec='milliseconds').replace('+00:00', 'Z')
+          station['passes'] = [{'aos_utc': utc(aos), 'los_utc': utc(los)}]
+          with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8',
+                                           dir=path.parent, delete=False) as handle:
+              temporary = Path(handle.name)
+              json.dump(document, handle, separators=(',', ':'))
+              handle.flush()
+              os.fsync(handle.fileno())
+          temporary.chmod(0o644)
+          temporary.replace(path)
+          PY
           ready=false
           for attempt in {1..36}; do
             if "${compose[@]}" exec -T sim-ground python3 -c \

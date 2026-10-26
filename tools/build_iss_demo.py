@@ -1,24 +1,26 @@
-"""Run the offline FDS with the user-supplied fixed ISS TLE for the orbit UI demo.
+"""Publish a fictional ISS display trajectory from one fixed historical TLE.
 
-This is a development fixture only. Production FDS input remains N05 TLE / N11 GNSS.
+The old TLE is propagated and refitted at each refresh. It is never a live ISS
+position or an MPS contact schedule. Production input remains N05/N11.
 """
 
 from __future__ import annotations
 
 import argparse
 import os
+import re
+import shutil
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
+import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 if __package__:
     from .publish_fds_view import publish as publish_view
-    from .publish_mps_schedule import publish as publish_schedule
 else:
     from publish_fds_view import publish as publish_view
-    from publish_mps_schedule import publish as publish_schedule
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,6 +30,32 @@ EXPECTED = (
     "1 25544U 98067A   26295.91886925  .00009886  00000-0  18726-3 0  9990",
     "2 25544  51.6334  28.0071 0006866 297.7993  62.2299 15.49005378591551",
 )
+_RUN = re.compile(r"fds-iss-display-(\d{8}T\d{6}Z-[0-9a-f]{8})")
+
+
+def prune_display_runs(output_root: Path, *, keep: int = 8) -> int:
+    """Bound completed ISS-only runs and their generated TLE/config sidecars."""
+    if type(keep) is not int or keep < 1 or output_root.is_symlink() or \
+            not output_root.is_dir():
+        raise ValueError("invalid ISS display retention root")
+    runs = sorted((path for path in output_root.iterdir() if not path.is_symlink() and
+                   path.is_dir() and _RUN.fullmatch(path.name) and
+                   (path / "run.properties").is_file()),
+                  key=lambda path: path.name, reverse=True)
+    removed = 0
+    for run in runs[keep:]:
+        stamp = _RUN.fullmatch(run.name).group(1)
+        sidecars = [output_root / f"iss-display-{stamp}.tle",
+                    output_root / f"iss-display-{stamp}.properties"]
+        if run.parent.resolve() != output_root.resolve() or \
+                any(path.parent.resolve() != output_root.resolve() or path.is_symlink()
+                    for path in sidecars):
+            raise ValueError("ISS display retention target escaped its root")
+        shutil.rmtree(run)
+        for path in sidecars:
+            path.unlink(missing_ok=True)
+        removed += 1
+    return removed
 
 
 def validate_fixture() -> None:
@@ -42,7 +70,8 @@ def validate_fixture() -> None:
 
 def config_text(start: datetime) -> str:
     stamp = start.strftime("%Y-%m-%dT%H:%M:%SZ")
-    return f"""# ISS fixed-TLE display demo only. Coordinates, masks and RF are provisional.
+    return f"""# TEST_ONLY fictional extrapolation of a fixed historical ISS TLE.
+# This is not a current ISS orbit or a real contact schedule.
 expected_norad_id=25544
 start_utc={stamp}
 horizon_hours=72
@@ -67,46 +96,71 @@ station.kari.frequency_example=true
 """
 
 
-def run_once(args: argparse.Namespace, *, now: datetime | None = None) -> tuple[Path, Path]:
-    validate_fixture()
-    if not args.orekit_data.is_dir():
-        raise ValueError("--orekit-data must be an existing directory")
-    now = (now or datetime.now(timezone.utc)).replace(microsecond=0)
-    run = ROOT / "out" / f"fds-iss-demo-{now.strftime('%Y%m%dT%H%M%SZ')}"
-    config = run.parent / f"{run.name}.properties"
-    tle_copy = run.parent / f"{run.name}.tle"
-    config.parent.mkdir(parents=True, exist_ok=True)
-    config.write_text(config_text(now), encoding="utf-8")
-    tle_copy.write_bytes(("\n".join(EXPECTED) + "\n").encode("ascii"))
+def _maven_args(values: list[object]) -> str:
+    result = []
+    for value in values:
+        token = str(value)
+        if any(character in token for character in ('"', "\n", "\r")):
+            raise ValueError("unsupported quote or newline in ISS display argument")
+        result.append(f'"{token}"' if " " in token else token)
+    return " ".join(result)
+
+
+def _java(args: argparse.Namespace, main_class: str, options: list[object]) -> None:
     environment = os.environ.copy()
     if args.maven_repo:
         environment["MAVEN_OPTS"] = (
             environment.get("MAVEN_OPTS", "") +
             f" -Dmaven.repo.local={args.maven_repo.resolve()}"
         ).strip()
-    fds_args = (f"--config {config} --orekit-data {args.orekit_data.resolve()} "
-                f"--tle {tle_copy} --out {run}")
     subprocess.run([str(args.mvn), "-f", str(POM), "test-compile", "exec:java",
-                    "-Dexec.mainClass=kr.ac.khu.padosat.fds.FdsMain",
-                    "-Dexec.classpathScope=test", f"-Dexec.args={fds_args}"],
+                    f"-Dexec.mainClass=kr.ac.khu.padosat.fds.{main_class}",
+                    "-Dexec.classpathScope=test", "-Dexec.args=" + _maven_args(options)],
                    cwd=ROOT, env=environment, check=True)
-    # Both public views are derived from one immutable FDS run. Consumers reject
-    # a transient mismatch while the two pointers are swapped.
-    schedule = publish_schedule(run, args.mps_schedule_dir)
+
+
+def run_once(args: argparse.Namespace, *, now: datetime | None = None) -> Path:
+    validate_fixture()
+    if not args.orekit_data.is_dir():
+        raise ValueError("--orekit-data must be an existing directory")
+    now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).replace(microsecond=0)
+    args.output_root.mkdir(parents=True, exist_ok=True)
+    stamp = now.strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8]
+    run = args.output_root / f"fds-iss-display-{stamp}"
+    config = args.output_root / f"iss-display-{stamp}.properties"
+    tle_copy = args.output_root / f"iss-display-{stamp}.tle"
+    config.write_text(config_text(now), encoding="utf-8")
+    # TLE's day fraction is rounded; use a two-second margin before FDS start.
+    tle_epoch = now - timedelta(seconds=2)
+    _java(args, "IssDisplayTleMain", ["--orekit-data", args.orekit_data.resolve(),
+                                       "--reference", FIXTURE.resolve(),
+                                       "--epoch", tle_epoch.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                                       "--out", tle_copy.resolve()])
+    lines = tle_copy.read_text(encoding="ascii").splitlines()
+    if len(lines) != 2 or any(len(line) != 69 or line[2:7] != "25544"
+                              for line in lines):
+        raise ValueError("ISS display refit returned an unexpected TLE")
+    _java(args, "FdsMain", ["--config", config.resolve(), "--orekit-data",
+                             args.orekit_data.resolve(), "--tle", tle_copy.resolve(),
+                             "--out", run.resolve()])
     published = publish_view(run, args.view_dir)
-    print(f"ISS demo input: {FIXTURE}")
-    print(f"FDS output: {run}")
-    print(f"Portal view: {published}")
-    print(f"MPS N13 schedule: {schedule}")
-    return published, schedule
+    print(f"TEST_ONLY fictional ISS fixed-reference extrapolation: {published}", flush=True)
+    try:
+        removed = prune_display_runs(args.output_root)
+        if removed:
+            print(f"TEST_ONLY removed {removed} expired ISS display runs", flush=True)
+    except (OSError, ValueError) as error:
+        print(f"TEST_ONLY ISS retention warning: {error}", file=sys.stderr, flush=True)
+    return published
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--test-only", action="store_true", required=True)
     parser.add_argument("--orekit-data", required=True, type=Path)
     parser.add_argument("--mvn", default="mvn", type=Path)
-    parser.add_argument("--view-dir", default=ROOT / "out/fds-view", type=Path)
-    parser.add_argument("--mps-schedule-dir", default=ROOT / "out/mps-schedules", type=Path)
+    parser.add_argument("--output-root", default=ROOT / "out/iss-display", type=Path)
+    parser.add_argument("--view-dir", default=ROOT / "out/fds-iss-view", type=Path)
     parser.add_argument("--maven-repo", type=Path, help="optional local Maven cache")
     parser.add_argument("--watch", action="store_true", help="repeat the fixed-TLE test calculation")
     parser.add_argument("--refresh-seconds", type=int, default=900)
