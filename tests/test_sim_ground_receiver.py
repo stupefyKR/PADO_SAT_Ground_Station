@@ -25,6 +25,7 @@ from services.sim_ground.receiver import (
 from services.webapp.tm_preview import load_snapshot
 from tools.pado_packet_codec import PacketError, decode, encode_tc, encode_tm
 from services.sim_sat.emulator import build_command_result, TcReplayState
+from tools.preview_draft_tm import publish_snapshot as real_publish_snapshot
 from tools.run_fds_pipeline import verified_pair
 
 
@@ -61,6 +62,7 @@ class SyntheticTmReceiverTests(unittest.TestCase):
         out.mkdir(exist_ok=True)
         self.temp = tempfile.TemporaryDirectory(dir=out)
         root = Path(self.temp.name)
+        self.root = root
         self.snapshot = root / "test_tm_snapshot.json"
         self.inbox = root / "n11"
         self.receiver = TmReceiver(self.snapshot, self.inbox, load_limits(LIMITS))
@@ -76,6 +78,25 @@ class SyntheticTmReceiverTests(unittest.TestCase):
 
     def _gnss(self, seq=2, stamp=STAMP, **fields):
         return encode_tm("GNSS_PVT", seq, stamp, {**GNSS, **fields})
+
+    def _contact_receiver(self) -> TmReceiver:
+        utc = lambda milliseconds: datetime.fromtimestamp(
+            milliseconds / 1000, timezone.utc).isoformat(timespec="milliseconds").replace(
+                "+00:00", "Z")
+        view = {"schema": "fds.orbit-view.v1",
+                "quality": "PRELIMINARY_NOT_FOR_OPERATIONS", "source": "TLE",
+                "norad_id": 99999, "input_epoch_utc": utc(STAMP),
+                "start_utc": utc(STAMP), "end_utc": utc(STAMP + 180_000),
+                "sample_step_s": 60,
+                "stations": [{"id": "yonsei", "band": "UHF", "passes": [{
+                    "aos_utc": utc(STAMP + 120_000),
+                    "los_utc": utc(STAMP + 180_000)}]}],
+                "samples": [[utc(STAMP + second * 1000), 6_878_000.0,
+                             0.0, 0.0, 0.0, 0.0, 500_000.0, 1.0, 0.0, 0.0]
+                            for second in (0, 60, 120, 180)]}
+        path = self.root / "orbit_view.json"
+        path.write_text(json.dumps(view), encoding="utf-8")
+        return TmReceiver(self.snapshot, self.inbox, load_limits(LIMITS), path)
 
     def test_framing_handles_partial_reads_and_rejects_truncation(self):
         pdu = self._eps()
@@ -98,6 +119,82 @@ class SyntheticTmReceiverTests(unittest.TestCase):
         self.assertEqual(load_snapshot(self.snapshot)["attitude"]["frame"],
                          ATTITUDE_FRAME)
         self.assertEqual(len(list(self.inbox.glob("*.manifest.json"))), 1)
+
+    def test_gated_pass_receives_stored_tm_without_stale_gnss_bridge(self):
+        receiver = self._contact_receiver()
+        received_ms = STAMP + 150_000
+        with self.assertRaisesRegex(ReceiverError, "fresh"):
+            receiver.ingest(self._eps(), received_ms=received_ms)
+        packets = (self._eps(), self._aocs(), self._gnss())
+        stream = b"".join(struct.pack(">I", len(pdu)) + pdu for pdu in packets)
+        with patch("services.sim_ground.receiver.time.time",
+                   return_value=received_ms / 1000):
+            self.assertEqual(receiver.process_connection(_SocketBytes(stream)), 3)
+        preview = load_snapshot(self.snapshot)
+        sample_utc = datetime.fromtimestamp(STAMP / 1000, timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%SZ")
+        received_utc = datetime.fromtimestamp(received_ms / 1000,
+                                              timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        self.assertEqual(preview["sensors"][0]["samples"][0]["utc"], sample_utc)
+        self.assertEqual(preview["received_utc"], received_utc)
+        self.assertEqual(preview["attitude"]["frame"], ATTITUDE_FRAME)
+        self.assertEqual(list(self.inbox.glob("*.manifest.json")), [])
+
+        fresh = self._gnss(3, STAMP + 60_000)
+        stream = struct.pack(">I", len(fresh)) + fresh
+        with patch("services.sim_ground.receiver.time.time",
+                   return_value=received_ms / 1000):
+            self.assertEqual(receiver.process_connection(_SocketBytes(stream)), 1)
+        self.assertEqual(len(list(self.inbox.glob("*.manifest.json"))), 1)
+
+    def test_stored_tm_requires_active_pass_and_is_bounded_to_one_day(self):
+        receiver = self._contact_receiver()
+        with self.assertRaisesRegex(ReceiverError, "active.*contact"):
+            receiver.ingest(self._eps(), received_ms=STAMP + 60_000,
+                            historical=True)
+        with self.assertRaisesRegex(ReceiverError, "active.*contact"):
+            self.receiver.ingest(self._eps(), received_ms=STAMP + 150_000,
+                                 historical=True)
+        too_old = self._eps(stamp=STAMP + 150_000 - 86_401_000)
+        with self.assertRaisesRegex(ReceiverError, "timestamp"):
+            receiver.ingest(too_old, received_ms=STAMP + 150_000,
+                            historical=True)
+
+    def test_stored_tm_burst_publishes_in_bounded_chunks(self):
+        receiver = self._contact_receiver()
+        received_ms = STAMP + 150_000
+        packets = [self._eps(index, STAMP - (1100 - index) * 5000)
+                   for index in range(1100)]
+        stream = b"".join(struct.pack(">I", len(pdu)) + pdu for pdu in packets)
+        with patch("services.sim_ground.receiver.time.time",
+                   return_value=received_ms / 1000), \
+                patch("services.sim_ground.receiver.publish_snapshot",
+                      wraps=real_publish_snapshot) as publish:
+            self.assertEqual(receiver.process_connection(_SocketBytes(stream)), 1100)
+        self.assertEqual(publish.call_count, 2,
+                         "1024-PDU checkpoint plus final close publish")
+        preview = load_snapshot(self.snapshot)
+        self.assertEqual(len(preview["sensors"][0]["samples"]), 721)
+        self.assertEqual(preview["sensors"][0]["samples"][-1]["utc"],
+                         datetime.fromtimestamp((STAMP - 5000) / 1000,
+                                                timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+
+    def test_exact_stored_tm_retry_is_idempotent_and_conflict_is_rejected(self):
+        receiver = self._contact_receiver()
+        received_ms = STAMP + 150_000
+        first = (self._eps(), self._aocs(), self._gnss())
+        frame = lambda pdus: b"".join(struct.pack(">I", len(pdu)) + pdu
+                                      for pdu in pdus)
+        with patch("services.sim_ground.receiver.time.time",
+                   return_value=received_ms / 1000):
+            self.assertEqual(receiver.process_connection(_SocketBytes(frame(first))), 3)
+            self.assertEqual(receiver.process_connection(_SocketBytes(
+                frame(first + (self._eps(3, STAMP + 5000),)))), 1)
+            with self.assertRaisesRegex(ReceiverError, "conflicting"):
+                receiver.process_connection(_SocketBytes(frame((
+                    self._eps(0, STAMP, bus_voltage_v=5.3),))))
+        preview = load_snapshot(self.snapshot)
+        self.assertEqual(len(preview["sensors"][0]["samples"]), 2)
 
     def test_ros_snapshot_attitude_and_throttled_n11_pair(self):
         self.receiver.ingest(self._eps(), received_ms=STAMP)

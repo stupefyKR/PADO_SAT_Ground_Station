@@ -21,24 +21,28 @@ import stat
 import struct
 import sys
 import time
-from collections import deque
+from collections import OrderedDict, deque
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Event, Lock, Thread
 from typing import Any
 
 from tools.bridge_draft_gnss import bridge
-from tools.pado_packet_codec import PacketError, decode, gnss_to_fds_properties
+from tools.pado_packet_codec import PacketError, decode, gnss_to_fds_properties, load_catalog
 from tools.preview_draft_tm import (MAX_SIM_HISTORY_PDUS, build_snapshot,
                                     publish_snapshot)
 from tools.run_fds_pipeline import verified_pair
-from services.sim_sat.emulator import MAX_VIEW_BYTES, parse_orbit_view
+from services.sim_sat.contact import ContactGate
 
 
 FRAME_LENGTH = struct.Struct(">I")
 MIN_PDU_BYTES = 24
 MAX_PDU_BYTES = 200
 MAX_AGE_MS = 120_000
+MAX_BACKLOG_AGE_MS = 24 * 60 * 60 * 1000
+# Three simulated PDU families at the minimum 5 s generation interval.
+MAX_BACKLOG_REPLAY_PDUS = 3 * 24 * 60 * 60 // 5
+BURST_PUBLISH_EVERY = 1024
 HISTORY_WINDOW_MS = 60 * 60 * 1000
 MAX_HISTORY_PER_SOURCE = 721  # 60 minutes inclusive at the simulator's 5 s cadence.
 GNSS_BRIDGE_PERIOD_MS = 300_000
@@ -54,105 +58,6 @@ _DRAFT_GNSS_MANIFEST = re.compile(
 
 class ReceiverError(ValueError):
     """A simulator connection violated its bounded test-only contract."""
-
-
-def _unique_json_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    result = {}
-    for key, value in pairs:
-        if key in result:
-            raise ReceiverError("duplicate FDS contact-view field")
-        result[key] = value
-    return result
-
-
-def _reject_json_constant(value: str) -> None:
-    raise ReceiverError(f"non-finite FDS contact field: {value}")
-
-
-def _contact_utc_ms(value: Any) -> int:
-    if not isinstance(value, str) or not value.endswith("Z"):
-        raise ReceiverError("FDS contact time must be UTC")
-    try:
-        instant = datetime.fromisoformat(value[:-1] + "+00:00")
-    except ValueError as error:
-        raise ReceiverError("invalid FDS contact time") from error
-    if instant.microsecond % 1000:
-        raise ReceiverError("FDS contact time must have millisecond precision")
-    epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
-    delta = instant - epoch
-    return delta.days * 86_400_000 + delta.seconds * 1000 + delta.microseconds // 1000
-
-
-class ContactGate:
-    """Receive a virtual UHF downlink only inside FDS truth PASS windows."""
-
-    def __init__(self, view_path: Path):
-        self.view_path = view_path
-        self._lock = Lock()
-        self._signature: tuple[int, int, int] | None = None
-        self._coverage: tuple[int, int, float] | None = None
-        self._windows: tuple[tuple[int, int], ...] = ()
-
-    def _reload(self) -> None:
-        path = self.view_path
-        if path.is_symlink() or not path.is_file():
-            raise ReceiverError("regular FDS truth contact view required")
-        metadata = path.stat()
-        if not 1 <= metadata.st_size <= MAX_VIEW_BYTES:
-            raise ReceiverError("FDS truth contact view size is invalid")
-        signature = (metadata.st_ino, metadata.st_mtime_ns, metadata.st_size)
-        if signature == self._signature:
-            return
-        raw = path.read_bytes()
-        view = parse_orbit_view(raw)
-        try:
-            document = json.loads(raw.decode("utf-8"),
-                                  object_pairs_hook=_unique_json_pairs,
-                                  parse_constant=_reject_json_constant)
-        except (UnicodeError, ValueError) as error:
-            raise ReceiverError("invalid FDS truth contact view") from error
-        stations = document.get("stations")
-        if not isinstance(stations, list) or not 1 <= len(stations) <= 8:
-            raise ReceiverError("FDS truth stations missing or unbounded")
-        matching = [station for station in stations if isinstance(station, dict) and
-                    station.get("id") == "yonsei" and station.get("band") == "UHF"]
-        if len(matching) != 1:
-            raise ReceiverError("one Yonsei UHF truth station required")
-        passes = matching[0].get("passes")
-        if not isinstance(passes, list) or len(passes) > 256:
-            raise ReceiverError("Yonsei UHF truth passes invalid or unbounded")
-        windows = []
-        previous_los = view.start_s * 1000
-        for contact in passes:
-            if not isinstance(contact, dict):
-                raise ReceiverError("invalid Yonsei UHF truth pass")
-            aos = _contact_utc_ms(contact.get("aos_utc"))
-            los = _contact_utc_ms(contact.get("los_utc"))
-            if not (previous_los <= aos < los <= view.end_s * 1000 and
-                    los - aos <= 2 * 60 * 60 * 1000):
-                raise ReceiverError("Yonsei UHF truth PASS boundaries invalid")
-            windows.append((aos, los))
-            previous_los = los
-        self._coverage = (view.start_s * 1000, view.end_s * 1000,
-                          view.input_epoch_s * 1000)
-        self._windows = tuple(windows)
-        self._signature = signature
-
-    def active(self, now_ms: int) -> bool:
-        if type(now_ms) is not int or now_ms <= 0:
-            return False
-        with self._lock:
-            try:
-                self._reload()
-            except (OSError, ValueError):
-                self._signature = None
-                self._coverage = None
-                self._windows = ()
-                return False
-            start, end, epoch = self._coverage
-            return (start <= now_ms <= end and
-                    0 <= now_ms - epoch < 72 * 60 * 60 * 1000 and
-                    any(aos <= now_ms < los for aos, los in self._windows))
 
 
 class _PendingTc:
@@ -270,6 +175,7 @@ class TmReceiver:
         self.snapshot = snapshot
         self.n11_inbox = n11_inbox
         self.limits = limits
+        self.packet_catalog = load_catalog()
         self.contact_gate = ContactGate(contact_view) if contact_view is not None else None
         # Keep only packet families used by the explicitly configured sensors.
         # GNSS can still feed N11 without consuming the graph history budget.
@@ -281,7 +187,10 @@ class TmReceiver:
         self.last_sequence: int | None = None
         self.last_stamp_ms: int | None = None
         self.last_stamp_by_name: dict[str, int] = {}
+        self.last_ack_stamp_ms: int | None = None
         self.last_gnss_bridge_ms: int | None = None
+        self._backlog_seen: OrderedDict[tuple[str, int, int], bytes] = OrderedDict()
+        self._burst_unpublished = 0
         self._tc_lock = Lock()
         self._tc_pending: _PendingTc | None = None
         self._satellite_connected = False
@@ -295,7 +204,7 @@ class TmReceiver:
         """
         if not 0 < timeout_s <= 30 or (now_ms is not None and type(now_ms) is not int):
             raise ReceiverError("invalid test TC timeout or clock")
-        decoded = decode(packet)
+        decoded = decode(packet, catalog=self.packet_catalog)
         if decoded["kind"] != "TC" or decoded["operational"] is not False or \
                 decoded["execute_at_utc_ms"] != 0:
             raise ReceiverError("immediate draft TC required")
@@ -338,13 +247,8 @@ class TmReceiver:
         if decoded["kind"] != "TM" or decoded["name"] != RESULT_TELEMETRY or \
                 decoded["operational"] is not False or stamp % 1000 or \
                 not 0 <= now_ms // 1000 * 1000 - stamp <= MAX_AGE_MS or \
-                (self.last_stamp_ms is not None and stamp < self.last_stamp_ms) or \
-                self.last_stamp_by_name.get(RESULT_TELEMETRY, -1) >= stamp:
+                (self.last_ack_stamp_ms is not None and stamp <= self.last_ack_stamp_ms):
             raise ReceiverError("invalid simulated COMMAND_RESULT TM timestamp")
-        if self.last_sequence is not None:
-            step = (decoded["sequence"] - self.last_sequence) & 0xffff
-            if not 1 <= step <= 32767:
-                raise ReceiverError("replayed simulated COMMAND_RESULT TM")
         with self._tc_lock:
             request = self._tc_pending
             fields = decoded["fields"]
@@ -357,26 +261,42 @@ class TmReceiver:
                     (fields["result"] == 1 and fields["reason"] in (1, 2, 3, 4) and
                      fields["executed_at_utc_ms"] == 0)):
                 raise ReceiverError("invalid simulated COMMAND_RESULT status")
-            self.last_sequence = decoded["sequence"]
-            self.last_stamp_ms = stamp
-            self.last_stamp_by_name[RESULT_TELEMETRY] = stamp
+            # Live ACKs may interleave with stored, older TM during a PASS.
+            # Their clock and sequence cannot advance the historical TM cursor.
+            self.last_ack_stamp_ms = stamp
             self._tc_pending = None
             request.response = packet
             request.done.set()
 
-    def ingest(self, packet: bytes, *, received_ms: int | None = None) -> dict[str, Any]:
-        """Validate one draft PDU, update the preview, and bridge GNSS sparingly."""
+    def ingest(self, packet: bytes, *, received_ms: int | None = None,
+               historical: bool = False, publish: bool = True) -> dict[str, Any] | None:
+        """Validate draft TM; only the gated stream may request old burst samples."""
         if type(received_ms) is not int and received_ms is not None:
             raise ReceiverError("integer receive UTC milliseconds required")
+        if type(historical) is not bool or type(publish) is not bool or \
+                (not historical and not publish):
+            raise ReceiverError("invalid simulated TM ingress mode")
         now_ms = int(time.time() * 1000) if received_ms is None else received_ms
         received_second_ms = now_ms // 1000 * 1000
-        decoded = decode(packet)
+        if historical and (self.contact_gate is None or
+                           not self.contact_gate.active(now_ms)):
+            raise ReceiverError("stored TM requires active Yonsei UHF contact")
+        decoded = decode(packet, catalog=self.packet_catalog)
         if decoded["kind"] != "TM" or decoded["operational"] is not False or \
                 decoded["name"] not in ALLOWED_TELEMETRY:
             raise ReceiverError("only synthetic draft TM is accepted")
         stamp = decoded["utc_ms"]
-        if stamp % 1000 or not 0 <= received_second_ms - stamp <= MAX_AGE_MS:
+        age_ms = received_second_ms - stamp
+        if stamp % 1000 or not 0 <= age_ms <= (
+                MAX_BACKLOG_AGE_MS if historical else MAX_AGE_MS):
             raise ReceiverError("TM timestamp is not a fresh whole UTC second")
+        if historical:
+            replay_key = (decoded["name"], stamp, decoded["sequence"])
+            previous = self._backlog_seen.get(replay_key)
+            if previous is not None:
+                if previous == packet:
+                    return None
+                raise ReceiverError("conflicting simulated TM replay")
         if self.last_stamp_ms is not None and stamp < self.last_stamp_ms:
             raise ReceiverError("TM timestamp moved backwards")
         if self.last_stamp_by_name.get(decoded["name"], -1) >= stamp:
@@ -394,7 +314,18 @@ class TmReceiver:
             if abs(math.hypot(*q) - 1.0) > 0.02:
                 raise ReceiverError("non-unit synthetic attitude quaternion")
 
-        if decoded["name"] in self.sensor_sources or decoded["name"] == "AOCS_STATE":
+        if historical and not publish:
+            cutoff = stamp - HISTORY_WINDOW_MS
+            for rows in self.sensor_history.values():
+                while rows and rows[0][0] < cutoff:
+                    rows.popleft()
+            if decoded["name"] in self.sensor_sources:
+                self.sensor_history[decoded["name"]].append((stamp, packet))
+            if decoded["name"] == "AOCS_STATE":
+                self.latest_attitude = (stamp, packet)
+            elif self.latest_attitude is not None and self.latest_attitude[0] < cutoff:
+                self.latest_attitude = None
+        elif decoded["name"] in self.sensor_sources or decoded["name"] == "AOCS_STATE":
             cutoff = stamp - HISTORY_WINDOW_MS
             candidate_by_source = {
                 name: [(time_ms, pdu) for time_ms, pdu in history
@@ -427,16 +358,48 @@ class TmReceiver:
         self.last_sequence = decoded["sequence"]
         self.last_stamp_ms = stamp
         self.last_stamp_by_name[decoded["name"]] = stamp
+        if historical:
+            self._backlog_seen[replay_key] = packet
+            if len(self._backlog_seen) > MAX_BACKLOG_REPLAY_PDUS:
+                self._backlog_seen.popitem(last=False)
+            if not publish:
+                self._burst_unpublished += 1
 
         if decoded["name"] == "GNSS_PVT" and (
-                self.last_gnss_bridge_ms is None or
-                stamp - self.last_gnss_bridge_ms >= GNSS_BRIDGE_PERIOD_MS):
+                age_ms <= MAX_AGE_MS and
+                (self.last_gnss_bridge_ms is None or
+                 stamp - self.last_gnss_bridge_ms >= GNSS_BRIDGE_PERIOD_MS)):
             _, manifest = bridge(packet, self.n11_inbox,
                                  created=datetime.fromtimestamp(now_ms / 1000,
                                                                 timezone.utc))
             prune_simulator_n11(self.n11_inbox, manifest, keep=MAX_N11_PAIRS)
             self.last_gnss_bridge_ms = stamp
         return decoded
+
+    def _publish_burst_preview(self, received_ms: int) -> None:
+        """Publish the bounded ROS history once per chunk or socket idle/close."""
+        if not self._burst_unpublished:
+            return
+        if not all(self.sensor_history.values()):
+            self._burst_unpublished = 0
+            return
+        latest = self.last_stamp_ms
+        if latest is None:
+            return
+        cutoff = latest - HISTORY_WINDOW_MS
+        packets = [pdu for rows in self.sensor_history.values()
+                   for stamp, pdu in rows if stamp >= cutoff]
+        if self.latest_attitude is not None and \
+                self.latest_attitude[0] >= cutoff and \
+                "AOCS_STATE" not in self.sensor_sources:
+            packets.append(self.latest_attitude[1])
+        preview = build_snapshot(packets, self.limits,
+                                 received_ms=received_ms // 1000 * 1000,
+                                 max_packets=MAX_SIM_HISTORY_PDUS)
+        if preview["attitude"] is not None:
+            preview["attitude"]["frame"] = ATTITUDE_FRAME
+        publish_snapshot(preview, self.snapshot)
+        self._burst_unpublished = 0
 
     def process_connection(self, connection: socket.socket) -> int:
         """Process a duplex stream; only in-contact TM reaches ROS and FDS."""
@@ -448,6 +411,9 @@ class TmReceiver:
                 received_ms = int(time.time() * 1000)
                 contact_open = self.contact_gate is None or \
                     self.contact_gate.active(received_ms)
+                real_socket = isinstance(connection, socket.socket)
+                data_ready = not real_socket or bool(
+                    select.select([connection], [], [], 0.25)[0])
                 to_send = None
                 with self._tc_lock:
                     request = self._tc_pending
@@ -455,7 +421,11 @@ class TmReceiver:
                         self._tc_pending = None
                         request.error = "simulated TC outside Yonsei UHF contact"
                         request.done.set()
-                    elif request is not None and not request.sent:
+                    elif request is not None and not request.sent and \
+                            (not real_socket or not data_ready):
+                        # Finish a stored downlink before issuing a live TC.
+                        # A request that times out while still queued can be
+                        # removed without a late, unmatched ACK on this stream.
                         request.sent = True
                         to_send = request.packet
                 if to_send is not None:
@@ -464,8 +434,8 @@ class TmReceiver:
                     send_framed_pdu(connection, to_send)
                 # Socket doubles used by unit tests have no descriptor. Live
                 # sockets are polled so queued TC is sent within 250 ms.
-                if isinstance(connection, socket.socket) and not \
-                        select.select([connection], [], [], 0.25)[0]:
+                if real_socket and not data_ready:
+                    self._publish_burst_preview(int(time.time() * 1000))
                     continue
                 packet = read_framed_pdu(connection)
                 if packet is None:
@@ -474,17 +444,26 @@ class TmReceiver:
                 if self.contact_gate is not None and not \
                         self.contact_gate.active(received_ms):
                     continue
-                decoded = decode(packet)
+                decoded = decode(packet, catalog=self.packet_catalog)
                 if decoded["name"] == RESULT_TELEMETRY:
                     self._ingest_command_result(packet, decoded,
                                                 received_ms=received_ms)
                 else:
-                    self.ingest(packet, received_ms=received_ms)
+                    ingested = self.ingest(packet, received_ms=received_ms,
+                                           historical=self.contact_gate is not None,
+                                           publish=self.contact_gate is None)
+                    if ingested is None:
+                        continue  # An exact stored-PDU replay after reconnect.
+                    if self._burst_unpublished >= BURST_PUBLISH_EVERY:
+                        self._publish_burst_preview(received_ms)
                 accepted += 1
         finally:
-            with self._tc_lock:
-                self._satellite_connected = False
-            self._fail_pending("simulated satellite TM stream closed")
+            try:
+                self._publish_burst_preview(int(time.time() * 1000))
+            finally:
+                with self._tc_lock:
+                    self._satellite_connected = False
+                self._fail_pending("simulated satellite TM stream closed")
 
     def serve_forever(self, bind: str, port: int, *, stop: Event | None = None) -> None:
         if not 1 <= port <= 65535:

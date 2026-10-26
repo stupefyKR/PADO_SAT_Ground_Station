@@ -59,17 +59,20 @@ LOCAL_VOLUMES = {
                         ("fds_truth", "/fds-truth", False),
                         ("mps_schedules", "/mps-schedules", False),
                         ("sim_tc_socket", "/sim-tc", False),
+                        ("sim_tm_spool", "/sim-spool", False),
                         ("fds_iss_runs", "/iss-runs", False),
                         ("fds_iss_view", "/iss-view", False)},
     "sim-ground": {("ros_tm_preview", "/tm-preview", False),
                    ("sim_n11_inbox", "/n11-inbox", False),
                    ("sim_tc_socket", "/run/sim-tc", False),
                    ("fds_truth", "/fds-view", True)},
-    "sim-satellite": {("fds_truth", "/fds-view", True)},
+    "sim-satellite": {("fds_truth", "/fds-view", True),
+                      ("sim_tm_spool", "/state", False)},
 }
 SIM_VOLUME_INIT_COMMAND = [
     "chown", "10001:10001", "/tm-preview", "/n11-inbox", "/fds-runs",
-    "/fds-view", "/fds-truth", "/mps-schedules", "/sim-tc", "/iss-runs", "/iss-view",
+    "/fds-view", "/fds-truth", "/mps-schedules", "/sim-tc", "/sim-spool",
+    "/iss-runs", "/iss-view",
 ]
 DEV_VOLUMES = {
     "dgs-ops-gateway": set(),

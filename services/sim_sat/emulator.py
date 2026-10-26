@@ -14,7 +14,9 @@ import argparse
 import bisect
 import json
 import math
+import os
 import select
+import sqlite3
 import socket
 import struct
 import sys
@@ -22,15 +24,18 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Sequence
 
 from tools.pado_packet_codec import PacketError, decode, encode_tm
+from .contact import ContactGate
 
 
 MAX_VIEW_BYTES = 4 * 1024 * 1024
 MAX_SAMPLES = 5000
 VIRTUAL_NORAD_ID = 99999
 DEFAULT_RECEIVER_PORT = 9200
+MAX_SPOOL_SECONDS = 24 * 60 * 60
+FLUSH_CHUNK_PDUS = 512
 MAX_TC_AGE_MS = 120_000
 MAX_TC_REPLAY_ENTRIES = 64  # At most one TC per five-second tick in this demo.
 SIM_READ_ONLY_COMMANDS = frozenset({
@@ -305,6 +310,136 @@ def generate_packet_batch(view: OrbitView, now: datetime, seq: int, *,
     return (eps, attitude, gnss), (seq + 3) & 0xffff
 
 
+class TmSpool:
+    """Durable, bounded virtual spacecraft TM awaiting a Yonsei UHF PASS.
+
+    One row holds one unchanged draft PDU. The generation cursor is committed
+    atomically with all three PDUs, so a normal container restart neither loses
+    queued samples nor regenerates an already transmitted sample.
+    """
+
+    def __init__(self, path: Path, *, interval_s: int = 5,
+                 max_ticks: int | None = None):
+        if type(interval_s) is not int or not 5 <= interval_s <= 60:
+            raise ValueError("5..60 second simulator sample cadence required")
+        if max_ticks is None:
+            max_ticks = MAX_SPOOL_SECONDS // interval_s
+        if (not isinstance(path, Path) or path.is_symlink() or
+                not path.parent.is_dir() or path.parent.is_symlink() or
+                (path.exists() and not path.is_file()) or
+                type(max_ticks) is not int or
+                not 1 <= max_ticks <= MAX_SPOOL_SECONDS // interval_s):
+            raise ValueError("regular bounded simulator spool path required")
+        self.path = path
+        self.interval_s = interval_s
+        self.max_ticks = max_ticks
+        self.connection = sqlite3.connect(path, timeout=5)
+        try:
+            os.chmod(path, 0o600)
+            self.connection.execute("PRAGMA journal_mode=DELETE")
+            self.connection.execute("PRAGMA synchronous=FULL")
+            with self.connection:
+                self.connection.execute("CREATE TABLE IF NOT EXISTS tm_spool ("
+                                        "id INTEGER PRIMARY KEY, sampled_s INTEGER NOT NULL, "
+                                        "packet_index INTEGER NOT NULL, pdu BLOB NOT NULL, "
+                                        "UNIQUE(sampled_s, packet_index))")
+                self.connection.execute("CREATE TABLE IF NOT EXISTS spool_meta ("
+                                        "key TEXT PRIMARY KEY, value INTEGER NOT NULL)")
+                recorded_interval = self.connection.execute(
+                    "SELECT value FROM spool_meta WHERE key = ?", ("interval_s",)).fetchone()
+                if recorded_interval is None:
+                    self.connection.execute("INSERT INTO spool_meta(key,value) VALUES (?,?)",
+                                            ("interval_s", interval_s))
+                elif recorded_interval[0] != interval_s:
+                    raise ValueError("simulator spool cadence changed across restart")
+            result = self.connection.execute("SELECT value FROM spool_meta WHERE key = ?",
+                                             ("last_generated_s",)).fetchone()
+            self.last_generated_s: int | None = result[0] if result is not None else None
+        except BaseException:
+            self.connection.close()
+            raise
+
+    def close(self) -> None:
+        self.connection.close()
+
+    def pending_count(self) -> int:
+        return self.connection.execute("SELECT COUNT(*) FROM tm_spool").fetchone()[0]
+
+    def iter_pending(self, limit: int = FLUSH_CHUNK_PDUS) -> list[tuple[int, bytes]]:
+        if type(limit) is not int or not 1 <= limit <= FLUSH_CHUNK_PDUS:
+            raise ValueError("bounded TM flush size required")
+        return [(row_id, bytes(pdu)) for row_id, pdu in self.connection.execute(
+            "SELECT id, pdu FROM tm_spool ORDER BY id LIMIT ?", (limit,))]
+
+    def mark_sent(self, ids: Sequence[int]) -> None:
+        if (not isinstance(ids, (tuple, list)) or len(ids) > FLUSH_CHUNK_PDUS or
+                any(type(value) is not int or value <= 0 for value in ids)):
+            raise ValueError("bounded simulator spool IDs required")
+        with self.connection:
+            self.connection.executemany("DELETE FROM tm_spool WHERE id = ?",
+                                        ((value,) for value in ids))
+
+    def queue_tick(self, view: OrbitView, now: datetime, *, seed: int = 1) -> bool:
+        if not isinstance(now, datetime) or now.tzinfo is None or \
+                now.utcoffset() != timedelta(0) or now.microsecond:
+            raise ValueError("whole-second UTC simulator sample required")
+        stamp = int((now - _EPOCH).total_seconds())
+        if stamp % self.interval_s:
+            raise ValueError("simulator sample must align to cadence")
+        if self.last_generated_s is not None and stamp <= self.last_generated_s:
+            return False
+        sequence = (4 * (stamp // self.interval_s)) & 0xffff
+        packets, _ = generate_packet_batch(view, now, sequence, seed=seed)
+        dropped = 0
+        with self.connection:
+            self.connection.executemany(
+                "INSERT INTO tm_spool(sampled_s,packet_index,pdu) VALUES (?,?,?)",
+                ((stamp, index, packet) for index, packet in enumerate(packets)))
+            self.connection.execute("INSERT INTO spool_meta(key,value) VALUES (?,?) "
+                                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                                    ("last_generated_s", stamp))
+            cutoff = stamp - self.interval_s * self.max_ticks
+            cursor = self.connection.execute("DELETE FROM tm_spool WHERE sampled_s <= ?",
+                                             (cutoff,))
+            dropped += cursor.rowcount
+            while self.connection.execute("SELECT COUNT(*) FROM tm_spool").fetchone()[0] > \
+                    3 * self.max_ticks:
+                oldest = self.connection.execute(
+                    "SELECT sampled_s FROM tm_spool ORDER BY id LIMIT 1").fetchone()[0]
+                cursor = self.connection.execute(
+                    "DELETE FROM tm_spool WHERE sampled_s = ?", (oldest,))
+                dropped += cursor.rowcount
+        self.last_generated_s = stamp
+        if dropped:
+            print(f"TEST_ONLY TM spool overflow: dropped {dropped} oldest PDUs",
+                  file=sys.stderr, flush=True)
+        return True
+
+
+def flush_pending(spool: TmSpool, connection: socket.socket, gate: ContactGate,
+                  *, clock_ms: Callable[[], int] | None = None,
+                  max_pdus: int = FLUSH_CHUNK_PDUS) -> int:
+    """Send the oldest queued PDUs only in contact, preserving their timestamps.
+
+    Successful ``sendall`` is the local dequeue boundary. There is no RF or
+    application delivery acknowledgement in this TEST_ONLY transport.
+    """
+    if not isinstance(spool, TmSpool) or not 1 <= max_pdus <= FLUSH_CHUNK_PDUS:
+        raise ValueError("bounded simulator flush context required")
+    now_ms = clock_ms or (lambda: int(time.time() * 1000))
+    sent_ids: list[int] = []
+    try:
+        for row_id, packet in spool.iter_pending(max_pdus):
+            if not gate.active(now_ms()):
+                break
+            send_packet_batch(connection, (packet,))
+            sent_ids.append(row_id)
+    finally:
+        if sent_ids:
+            spool.mark_sent(sent_ids)
+    return len(sent_ids)
+
+
 def send_packet_batch(connection: socket.socket, packets: tuple[bytes, ...]) -> None:
     """Send framed draft TM PDUs; a receiver must reject TC and non-draft PDUs."""
     for packet in packets:
@@ -399,12 +534,16 @@ def wait_and_answer_one_tc(connection: socket.socket, tm_sequence: int,
 
 
 def run_forever(orbit_view: Path, host: str, port: int, interval_s: int,
-                seed: int, *, clock: Callable[[], datetime] | None = None,
+                seed: int, spool_path: Path, *,
+                clock: Callable[[], datetime] | None = None,
                 sleeper: Callable[[float], None] = time.sleep) -> None:
-    """Keep the simulated downlink alive while valid FDS output covers now."""
+    """Generate TM every tick, store it, and drain it during virtual contact."""
     clock = clock or (lambda: datetime.now(timezone.utc))
     connection: socket.socket | None = None
     replay = TcReplayState()
+    gate = ContactGate(orbit_view)
+    spool = TmSpool(spool_path, interval_s=interval_s)
+    previous_contact: bool | None = None
     try:
         while True:
             tick_started = time.monotonic()
@@ -413,31 +552,76 @@ def run_forever(orbit_view: Path, host: str, port: int, interval_s: int,
                 moment = clock()
                 if moment.tzinfo is None:
                     raise ValueError("simulator clock must be timezone aware")
-                now = moment.astimezone(timezone.utc).replace(microsecond=0)
-                utc_s = int((now - _EPOCH).total_seconds())
-                # Recover monotone modular sequence after an emulator restart.
-                # Reserve the fourth sequence number in each tick for one
-                # COMMAND_RESULT TM. The next tick remains monotone whether
-                # or not a command arrived.
-                sequence = (4 * (utc_s // interval_s)) & 0xffff
-                packets, _ = generate_packet_batch(view, now, sequence, seed=seed)
-                if connection is None:
-                    connection = socket.create_connection((host, port), timeout=3)
-                    connection.settimeout(3)
-                send_packet_batch(connection, packets)
-                remaining = max(0.0, interval_s - (time.monotonic() - tick_started))
-                if wait_and_answer_one_tc(connection, (sequence + 3) & 0xffff,
-                                          replay, remaining):
-                    sleeper(max(0.0, interval_s - (time.monotonic() - tick_started)))
-            except (OSError, ValueError, PacketError) as error:
+                utc_s = int((moment.astimezone(timezone.utc) - _EPOCH).total_seconds())
+                tick_s = utc_s // interval_s * interval_s
+                # FDS views refresh while the emulator runs. Reconstruct only
+                # missed ticks still covered by the current truth view and the
+                # bounded 24-hour spool; never invent samples beyond coverage.
+                first = tick_s if spool.last_generated_s is None else \
+                    spool.last_generated_s + interval_s
+                first = max(first, tick_s - (spool.max_ticks - 1) * interval_s,
+                            math.ceil(view.start_s / interval_s) * interval_s,
+                            math.ceil(view.input_epoch_s / interval_s) * interval_s)
+                if spool.last_generated_s is not None and \
+                        first > spool.last_generated_s + interval_s:
+                    print("TEST_ONLY TM generation gap outside retained FDS coverage",
+                          file=sys.stderr, flush=True)
+                for sample_s in range(first, min(tick_s, view.end_s) + 1, interval_s):
+                    sample = _EPOCH + timedelta(seconds=sample_s)
+                    spool.queue_tick(view, sample, seed=seed)
+
+                now_ms = int((moment.astimezone(timezone.utc) - _EPOCH).total_seconds() * 1000)
+                contact_open = gate.active(now_ms)
+                if contact_open != previous_contact:
+                    print(f"TEST_ONLY UHF contact {'open' if contact_open else 'closed'}: "
+                          f"queued={spool.pending_count()} PDUs", flush=True)
+                    previous_contact = contact_open
+                if not contact_open:
+                    if connection is not None:
+                        connection.close()
+                        connection = None
+                else:
+                    if connection is None:
+                        connection = socket.create_connection((host, port), timeout=3)
+                        connection.settimeout(3)
+                    # Drain repeatedly within this generation interval. One
+                    # 512-PDU chunk per 5 s would take an entire PASS to move
+                    # a long no-contact history, so keep sending until caught
+                    # up, the link closes, or the next TM generation tick.
+                    sent_this_tick = 0
+                    while (spool.pending_count() and
+                           time.monotonic() - tick_started < interval_s - 0.2 and
+                           gate.active(int(clock().timestamp() * 1000))):
+                        sent = flush_pending(spool, connection, gate,
+                                             clock_ms=lambda: int(clock().timestamp() * 1000))
+                        sent_this_tick += sent
+                        if not sent:
+                            break
+                    if sent_this_tick > 3:
+                        print(f"TEST_ONLY stored TM downlink: sent={sent_this_tick} "
+                              f"remaining={spool.pending_count()} PDUs", flush=True)
+                    if (spool.pending_count() == 0 and
+                            int(clock().timestamp()) // interval_s == tick_s // interval_s and
+                            gate.active(int(clock().timestamp() * 1000))):
+                        # Do not insert a current COMMAND_RESULT ahead of older
+                        # queued TM; that would move packet time/sequence back.
+                        sequence = (4 * (tick_s // interval_s)) & 0xffff
+                        remaining = min(
+                            max(0.0, interval_s - (time.monotonic() - tick_started)),
+                            max(0.0, tick_s + interval_s - clock().timestamp() - 1.0))
+                        if remaining > 0:
+                            wait_and_answer_one_tc(connection, (sequence + 3) & 0xffff,
+                                                   replay, remaining)
+            except (OSError, ValueError, PacketError, sqlite3.Error) as error:
                 if connection is not None:
                     connection.close()
                     connection = None
                 print(f"TEST_ONLY simulated TM waiting: {error}", file=sys.stderr, flush=True)
-                sleeper(max(0.0, interval_s - (time.monotonic() - tick_started)))
+            sleeper(max(0.0, interval_s - (time.monotonic() - tick_started)))
     finally:
         if connection is not None:
             connection.close()
+        spool.close()
 
 
 def main() -> None:
@@ -448,12 +632,14 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=DEFAULT_RECEIVER_PORT)
     parser.add_argument("--interval-seconds", type=int, default=5)
     parser.add_argument("--seed", type=int, default=1)
+    parser.add_argument("--spool", type=Path, required=True)
     args = parser.parse_args()
     if not 1 <= args.port <= 65535 or not 5 <= args.interval_seconds <= 60 or \
             not 0 <= args.seed <= 0xffffffff:
         parser.error("port, 5..60 second cadence or u32 seed invalid")
     try:
-        run_forever(args.orbit_view, args.host, args.port, args.interval_seconds, args.seed)
+        run_forever(args.orbit_view, args.host, args.port, args.interval_seconds,
+                    args.seed, args.spool)
     except KeyboardInterrupt:
         pass
 

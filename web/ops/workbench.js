@@ -45,6 +45,30 @@
   let attitudeViewer = null;
   let attitudeOrbitView = null;
   let attitudeOrbitPending = false;
+  const CURRENT_SAMPLE_AGE_MS = 120_000;
+
+  function freshSample(sample, now = Date.now()) {
+    const age = now - Date.parse(sample.utc);
+    return Number.isFinite(age) && age >= -30_000 && age <= CURRENT_SAMPLE_AGE_MS;
+  }
+
+  function tmTiming(snapshot, now = Date.now()) {
+    const latestUtc = snapshot.sensors.map((sensor) => sensor.samples.at(-1).utc)
+      .sort().at(-1);
+    const latestMs = Date.parse(latestUtc);
+    const receivedMs = Date.parse(snapshot.received_utc);
+    return {latestUtc, delayed: receivedMs - latestMs > CURRENT_SAMPLE_AGE_MS,
+      stale: !freshSample({utc: latestUtc}, now)};
+  }
+
+  function showTmTiming(snapshot, now = Date.now()) {
+    const state = tmTiming(snapshot, now);
+    $("ros-tm-timing").textContent =
+      `수신 UTC ${snapshot.received_utc} · 최근 계측 UTC ${state.latestUtc}` +
+      (state.delayed ? " · 과거 측정 TM 포함" :
+        state.stale ? " · 현재 계측으로 판정하지 않음" : "");
+    return state;
+  }
 
   function activateTab(name, focus = false) {
     const tabs = [...document.querySelectorAll("[data-ros-target]")];
@@ -357,16 +381,19 @@
     for (const sensor of visible) {
       const sample = sensor.samples.at(-1);
       const breached = sample.value < sensor.lower || sample.value > sensor.upper;
+      const current = freshSample(sample);
       const button = document.createElement("button");
       button.type = "button";
       button.setAttribute("aria-current", String(sensor === selectedSensor));
       for (const [text, className] of [
         [sensor.name, "sensor-name"], [`${sample.value} ${sensor.unit}`, "sensor-value"],
-        [sensor.group, "sensor-group"], [breached ? "범위 초과" : "시험 범위 내", "sensor-state"]
+        [sensor.group, "sensor-group"],
+        [current ? (breached ? "범위 초과" : "시험 범위 내") :
+          (breached ? "과거 측정 · 범위 초과" : "과거 측정"), "sensor-state"]
       ]) {
         const span = document.createElement("span");
         span.className = className;
-        if (breached && className === "sensor-state") span.classList.add("alert");
+        if (breached && current && className === "sensor-state") span.classList.add("alert");
         span.textContent = text;
         button.append(span);
       }
@@ -386,14 +413,18 @@
   function renderTrend() {
     const sensor = selectedSensor;
     if (!sensor) return;
-    const end = Date.parse(selectedTm.received_utc);
-    const samples = sensor.samples.filter((sample) => Date.parse(sample.utc) >= end - minutes * 60000);
     const latest = sensor.samples.at(-1);
+    // A batch received during contact may contain older measurements. Chart
+    // time follows the measurement window, never the later downlink time.
+    const end = Date.parse(latest.utc);
+    const samples = sensor.samples.filter((sample) => Date.parse(sample.utc) >= end - minutes * 60000);
     $("selected-sensor").textContent = sensor.name;
     $("latest-value").textContent = `${latest.value} ${sensor.unit}`;
     $("limit-values").textContent = `${sensor.lower} / ${sensor.upper} ${sensor.unit}`;
-    $("selected-state").textContent =
-      latest.value < sensor.lower || latest.value > sensor.upper ? "범위 초과 · 시험" : "범위 내 · 시험";
+    $("selected-state").textContent = freshSample(latest) ?
+      (latest.value < sensor.lower || latest.value > sensor.upper ?
+        "범위 초과 · 시험" : "범위 내 · 시험") :
+      "과거 측정 · 현재 판정 불가";
     const chart = $("telemetry-chart");
     chart.replaceChildren(svg("path", {class: "chart-grid",
       d: "M40 35H770 M40 95H770 M40 155H770 M40 215H770 M40 35V215 M220 35V215 M400 35V215 M580 35V215 M770 35V215"}));
@@ -418,12 +449,15 @@
       chart.append(svg("text", {x: 45, y: 235, fill: "#b8a76d", "font-size": 12},
         `하한 ${sensor.lower} ${sensor.unit}`));
     }
+    const eventEnd = Date.parse(tmTiming(selectedTm).latestUtc);
     const events = selectedTm.sensors.flatMap((item) => item.samples
-      .filter((sample) => Date.parse(sample.utc) >= end - minutes * 60000 &&
+      .filter((sample) => Date.parse(sample.utc) >= eventEnd - minutes * 60000 &&
+        Date.parse(sample.utc) <= eventEnd &&
         (sample.value < item.lower || sample.value > item.upper))
       .map((sample) => ({sensor: item, sample})))
       .sort((a, b) => b.sample.utc.localeCompare(a.sample.utc));
-    $("event-count").textContent = `선택 구간 · 시험 ${events.length}건`;
+    $("event-count").textContent =
+      `${tmTiming(selectedTm).stale ? "과거 측정" : "선택"} 구간 · 시험 ${events.length}건`;
     const rows = $("alarm-rows");
     rows.replaceChildren();
     if (!events.length) empty(rows, 4, "선택 구간에 시험 한계 초과가 없습니다.");
@@ -450,7 +484,7 @@
     const tmAge = attitude ? now - Date.parse(attitude.utc) : Infinity;
     const publishedTmStale = tmSource === "published" &&
       (!attitude || !publishedReachable || !Number.isFinite(tmAge) ||
-       tmAge < -30 * 1000 || tmAge > 5 * 60 * 1000);
+       tmAge < -30 * 1000 || tmAge > CURRENT_SAMPLE_AGE_MS);
     if (publishedTmStale) {
       source = attitude ? "마지막 시험 TM · 오래됨" : "시험 자세 TM 미수신";
       const tmState = attitude ? "마지막 TM 오래됨" : "자세 TM 미수신";
@@ -503,6 +537,7 @@
   }
   function loadTm(data, sourceLabel = "수동 시험용 정규화 TM") {
     selectedTm = normalizedTm(data);
+    const timing = showTmTiming(selectedTm);
     selectedSensor = selectedTm.sensors.find((item) => item.id === selectedSensor?.id) ||
       selectedTm.sensors[0];
     window.rosTestPreviewActive = true;
@@ -511,9 +546,11 @@
     $("sensor-filter").disabled = false;
     document.querySelectorAll("[data-range]").forEach((button) => button.disabled = false);
     $("sensor-count").textContent = `${selectedTm.sensors.length}개 · 시험`;
-    $("ros-data-state").textContent = "시험 TM 스냅샷";
+    $("ros-data-state").textContent = timing.delayed ? "과거 TM 수신 · 시험" :
+      timing.stale ? "과거 측정 · 시험" : "시험 TM 스냅샷";
     $("ros-last-tm").textContent = selectedTm.received_utc;
-    $("chart-source").textContent = `데이터 소스: ${sourceLabel} · 실제 위성 TM 아님`;
+    $("chart-source").textContent =
+      `데이터 소스: ${sourceLabel} · 측정 UTC ${timing.latestUtc} · 실제 위성 TM 아님`;
     $("demo-toggle").textContent = "합성 예시 보기";
     $("attitude-quaternion").textContent = selectedTm.attitude ?
       selectedTm.attitude.quaternion_wxyz.map((x) => x.toFixed(4)).join(", ") : "—";
@@ -542,12 +579,22 @@
       $("ros-alarm-state").textContent = "현재 판정 불가";
       return;
     }
-    const breached = selectedTm.sensors.filter((sensor) => {
+    const now = Date.now();
+    const fresh = selectedTm.sensors.filter((sensor) => freshSample(sensor.samples.at(-1), now));
+    if (!fresh.length) {
+      count.textContent = "현재 판정 불가 · 과거 TM";
+      list.textContent = "수신된 계측은 과거 표본입니다. 한계 초과 이력은 이벤트에서 확인할 수 있습니다.";
+      $("ros-alarm-state").textContent = "현재 판정 불가";
+      return;
+    }
+    const breached = fresh.filter((sensor) => {
       const value = sensor.samples.at(-1).value;
       return value < sensor.lower || value > sensor.upper;
     });
     const label = tmSource === "published" ? "게시 시험 표본" : "불러온 시험 표본";
-    count.textContent = `${label} · ${breached.length}개 초과`;
+    const olderCount = selectedTm.sensors.length - fresh.length;
+    count.textContent = `${label} · ${breached.length}개 초과` +
+      (olderCount ? ` · ${olderCount}개 과거` : "");
     $("ros-alarm-state").textContent = breached.length ?
       `시험 표본 초과 ${breached.length}개` : "시험 표본 범위 내";
     if (!breached.length) {
@@ -577,11 +624,17 @@
   function markPublishedAge() {
     if (tmSource !== "published" || !selectedTm) return;
     const old = Date.now() - Date.parse(selectedTm.received_utc) > 5 * 60 * 1000;
-    $("ros-data-state").textContent = old ? "게시된 시험 TM 오래됨" : "게시된 시험 TM";
-    if (old) $("chart-source").textContent =
-      "데이터 소스: 게시된 시험 TM · 5분 이상 갱신 없음 · 실제 위성 TM 아님";
+    const timing = showTmTiming(selectedTm);
+    $("ros-data-state").textContent = old ? "게시된 시험 TM 오래됨" :
+      timing.delayed ? "과거 TM 수신 · 시험" :
+        timing.stale ? "최근 계측 없음 · 시험" : "게시된 시험 TM";
+    $("chart-source").textContent = "데이터 소스: 게시된 시험 TM · " +
+      `측정 UTC ${timing.latestUtc}` +
+      (old ? " · 5분 이상 새 수신 없음" : timing.delayed ? " · 과거 TM 포함" : "") +
+      " · 실제 위성 TM 아님";
+    renderSensors();
     renderCurrentAlerts();
-    if (old) renderAttitude(selectedTm.attitude);
+    renderAttitude(selectedTm.attitude);
   }
   async function refreshPublishedTm() {
     if (tmSource !== "published" || previewPending) return;

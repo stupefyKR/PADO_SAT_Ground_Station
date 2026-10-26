@@ -156,7 +156,7 @@ services:
       dockerfile: docker/stage9/SimTm.Dockerfile
     user: "0:0"
     # Existing FDS runs may be private (0700); only volume roots need write ownership.
-    command: ["chown", "10001:10001", "/tm-preview", "/n11-inbox", "/fds-runs", "/fds-view", "/fds-truth", "/mps-schedules", "/sim-tc", "/iss-runs", "/iss-view"]
+    command: ["chown", "10001:10001", "/tm-preview", "/n11-inbox", "/fds-runs", "/fds-view", "/fds-truth", "/mps-schedules", "/sim-tc", "/sim-spool", "/iss-runs", "/iss-view"]
     volumes:
       - ros_tm_preview:/tm-preview
       - sim_n11_inbox:/n11-inbox
@@ -165,6 +165,7 @@ services:
       - fds_truth:/fds-truth
       - mps_schedules:/mps-schedules
       - sim_tc_socket:/sim-tc
+      - sim_tm_spool:/sim-spool
       - fds_iss_runs:/iss-runs
       - fds_iss_view:/iss-view
     network_mode: none
@@ -195,12 +196,13 @@ services:
     build:
       context: ../..
       dockerfile: docker/stage9/SimTm.Dockerfile
-    command: ["python3", "-m", "services.sim_sat.emulator", "--test-only", "--orbit-view", "/fds-view/orbit_view.json", "--host", "sim-ground", "--port", "9200", "--interval-seconds", "5", "--seed", "1"]
+    command: ["python3", "-m", "services.sim_sat.emulator", "--test-only", "--orbit-view", "/fds-view/orbit_view.json", "--host", "sim-ground", "--port", "9200", "--interval-seconds", "5", "--seed", "1", "--spool", "/state/test_tm_spool.sqlite3"]
     depends_on:
       sim-ground: {condition: service_started}
       fds-synthetic-demo: {condition: service_started}
     volumes:
       - fds_truth:/fds-view:ro
+      - sim_tm_spool:/state
     networks: [sim_tm]
     read_only: true
     cap_drop: [ALL]
@@ -223,6 +225,7 @@ volumes:
   fds_iss_runs:
   fds_iss_view:
   sim_n11_inbox:
+  sim_tm_spool:
   sim_tc_socket:
 networks:
   entry:

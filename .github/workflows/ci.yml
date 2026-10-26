@@ -182,6 +182,36 @@ jobs:
           if [[ "$truth_ready" != true ]]; then
             exit 1
           fi
+          # Close the virtual link briefly and verify the on-board Docker
+          # volume accumulates TM before opening the CI-only contact below.
+          "${compose[@]}" exec -T fds-synthetic-demo python3 - <<'PY'
+          import json
+          import os
+          import tempfile
+          from pathlib import Path
+
+          path = Path('/app/out/fds-truth/orbit_view.json')
+          document = json.loads(path.read_text(encoding='utf-8'))
+          station = next(item for item in document['stations']
+                         if item['id'] == 'yonsei' and item['band'] == 'UHF')
+          station['passes'] = []
+          with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8',
+                                           dir=path.parent, delete=False) as handle:
+              temporary = Path(handle.name)
+              json.dump(document, handle, separators=(',', ':'))
+              handle.flush()
+              os.fsync(handle.fileno())
+          temporary.chmod(0o644)
+          temporary.replace(path)
+          PY
+          sleep 7
+          "${compose[@]}" exec -T sim-satellite python3 - <<'PY'
+          import sqlite3
+          with sqlite3.connect('file:/state/test_tm_spool.sqlite3?mode=ro', uri=True) as db:
+              queued = db.execute('SELECT COUNT(*) FROM tm_spool').fetchone()[0]
+          assert queued >= 3, queued
+          print('out-of-contact stored PDUs:', queued)
+          PY
           # CI-only contact window in an ephemeral Docker volume. Keep the FDS
           # truth TLE and samples intact; the receiver must still validate them.
           # The real pass geometry is checked separately in the offline smoke.
@@ -219,14 +249,25 @@ jobs:
             if "${compose[@]}" exec -T sim-ground python3 -c \
               'import json; from pathlib import Path; p=json.loads(Path("/tm-preview/test_tm_snapshot.json").read_text()); assert p["non_operational"] is True and p["attitude"] is not None and len(list(Path("/n11-inbox").glob("*.manifest.json"))) >= 1' \
               >/dev/null 2>&1; then
-              ready=true
-              break
+              if "${compose[@]}" exec -T sim-satellite python3 -c \
+                'import sqlite3; db=sqlite3.connect("file:/state/test_tm_spool.sqlite3?mode=ro",uri=True); assert db.execute("SELECT COUNT(*) FROM tm_spool").fetchone()[0] <= 3' \
+                >/dev/null 2>&1; then
+                ready=true
+                break
+              fi
             fi
             sleep 5
           done
           if [[ "$ready" != true ]]; then
             exit 1
           fi
+          "${compose[@]}" exec -T sim-satellite python3 - <<'PY'
+          import sqlite3
+          with sqlite3.connect('file:/state/test_tm_spool.sqlite3?mode=ro', uri=True) as db:
+              queued = db.execute('SELECT COUNT(*) FROM tm_spool').fetchone()[0]
+          assert queued <= 3, queued
+          print('in-contact remaining PDUs:', queued)
+          PY
           "${compose[@]}" exec -T ros-api python3 - <<'PY'
           import time
           from pathlib import Path
