@@ -1,6 +1,7 @@
 """Windows-portable local HTTP portal/API contract; no Docker or TLS required."""
 
 import hashlib
+import base64
 import json
 import tempfile
 import threading
@@ -198,6 +199,56 @@ class LocalHttpWebTests(unittest.TestCase):
         mesh_path.write_bytes(b"x" * (4 * 1024 * 1024 + 1))
         status, _, _ = self.request(base + "/assets/pado-sat-deployed-mesh.json",
                                     headers=cookie)
+        self.assertEqual(status, 503)
+
+    def test_cad_appearance_and_surface_images_are_private_and_bounded(self):
+        base = f"http://127.0.0.1:{self.portal.server_port}"
+        assets = self.folder / "assets"
+        assets.mkdir()
+        manifest = assets / "pado-sat-appearance.json"
+        manifest.write_text(json.dumps({"schema": "pado.cad-appearance.v1"}),
+                            encoding="utf-8")
+        png = base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aQF8AAAAASUVORK5CYII=")
+        images = [assets / f"pado-sat-surface-{face}.png"
+                  for face in ("front", "rear", "top", "end")]
+        for image in images:
+            image.write_bytes(png)
+        self.portal.static_root = self.folder
+        private_paths = ["/assets/pado-sat-appearance.json"] + [
+            "/assets/" + image.name for image in images]
+        try:
+            for path in private_paths:
+                status, _, _ = self.request(base + path)
+                self.assertEqual(status, 401, path)
+        except URLError as error:
+            if isinstance(error.reason, PermissionError):
+                self.skipTest("local sandbox denies loopback connections")
+            raise
+        status, headers, _ = self.request(base + "/api/login", data={
+            "username": "planner01", "password": "valid-password-123"})
+        self.assertEqual(status, 200)
+        cookie = {"Cookie": headers["Set-Cookie"].split(";", 1)[0]}
+        status, headers, body = self.request(base + private_paths[0], headers=cookie)
+        self.assertEqual(status, 200)
+        self.assertEqual(headers["Content-Type"], "application/json")
+        self.assertEqual(headers["Cache-Control"], "no-store")
+        self.assertEqual(body["schema"], "pado.cad-appearance.v1")
+        for path in private_paths[1:]:
+            with urlopen(Request(base + path, headers=cookie), timeout=3) as response:
+                self.assertEqual(response.status, 200)
+                self.assertEqual(response.headers["Content-Type"], "image/png")
+                self.assertEqual(response.headers["Cache-Control"], "no-store")
+                self.assertEqual(response.read(), png)
+        for path in ("/assets/pado-sat-surface-unlisted.png",
+                     "/assets/%2e%2e/pado-sat-surface-front.png"):
+            status, _, _ = self.request(base + path, headers=cookie)
+            self.assertEqual(status, 404)
+        images[0].write_bytes(b"x" * (4 * 1024 * 1024 + 1))
+        status, _, _ = self.request(base + private_paths[1], headers=cookie)
+        self.assertEqual(status, 503)
+        images[1].unlink()
+        status, _, _ = self.request(base + private_paths[2], headers=cookie)
         self.assertEqual(status, 503)
 
     def test_public_badge_is_exact_and_only_badge_is_browser_cached(self):

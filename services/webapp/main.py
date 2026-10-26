@@ -42,6 +42,17 @@ MAX_ORBIT_VIEW = 4 * 1024 * 1024
 MAX_CAD_MESH = 4 * 1024 * 1024
 ORBIT_TARGETS = {"synthetic", "iss", "operational"}
 BRAND_ASSET = "/assets/pado-sat-badge-ec9020cb.png"
+# These spacecraft geometry/appearance files share the authenticated CAD
+# boundary. Image names are explicit so arbitrary uploaded files are never
+# reachable through the static endpoint.
+CAD_ASSETS = {
+    "/assets/pado-sat-deployed-mesh.json": MAX_CAD_MESH,
+    "/assets/pado-sat-appearance.json": 128 * 1024,
+    "/assets/pado-sat-surface-front.png": 4 * 1024 * 1024,
+    "/assets/pado-sat-surface-rear.png": 4 * 1024 * 1024,
+    "/assets/pado-sat-surface-top.png": 4 * 1024 * 1024,
+    "/assets/pado-sat-surface-end.png": 4 * 1024 * 1024,
+}
 ASSETS = {
     "/login": ("login/index.html", "text/html; charset=utf-8"),
     "/ops": ("ops/index.html", "text/html; charset=utf-8"),
@@ -52,9 +63,15 @@ ASSETS = {
     "/assets/app.js": ("common/app.js", "text/javascript; charset=utf-8"),
     "/assets/ros-workbench.js": ("ops/workbench.js", "text/javascript; charset=utf-8"),
     "/assets/ros-attitude-math.js": ("ops/attitude_math.js", "text/javascript; charset=utf-8"),
+    "/assets/ros-attitude-gl.js": ("ops/attitude_gl.js", "text/javascript; charset=utf-8"),
     "/assets/ros-attitude-viewer.js": ("ops/attitude_viewer.js", "text/javascript; charset=utf-8"),
     "/assets/ros-workbench.css": ("ops/workbench.css", "text/css; charset=utf-8"),
     "/assets/pado-sat-deployed-mesh.json": ("assets/pado-sat-deployed-mesh.json", "application/json"),
+    "/assets/pado-sat-appearance.json": ("assets/pado-sat-appearance.json", "application/json"),
+    "/assets/pado-sat-surface-front.png": ("assets/pado-sat-surface-front.png", "image/png"),
+    "/assets/pado-sat-surface-rear.png": ("assets/pado-sat-surface-rear.png", "image/png"),
+    "/assets/pado-sat-surface-top.png": ("assets/pado-sat-surface-top.png", "image/png"),
+    "/assets/pado-sat-surface-end.png": ("assets/pado-sat-surface-end.png", "image/png"),
     "/assets/mps-workflow.css": ("mps/workflow.css", "text/css; charset=utf-8"),
     "/assets/mps-live.js": ("mps/live.js", "text/javascript; charset=utf-8"),
     "/assets/orbit.js": ("orbit/orbit.js", "text/javascript; charset=utf-8"),
@@ -553,8 +570,8 @@ class Handler(BaseHTTPRequestHandler):
             self._proxy(PROXY_ROUTES[path], session.username, session.role)
             return
         if path in ASSETS:
-            if path in ("/ops", "/mps", "/orbit", "/assets/pado-sat-deployed-mesh.json") and not self._session():
-                if path == "/assets/pado-sat-deployed-mesh.json":
+            if (path in ("/ops", "/mps", "/orbit") or path in CAD_ASSETS) and not self._session():
+                if path in CAD_ASSETS:
                     self._error(HTTPStatus.UNAUTHORIZED, "login_required")
                 else:
                     self._send(HTTPStatus.FOUND, extra={"Location": "/login"})
@@ -562,12 +579,13 @@ class Handler(BaseHTTPRequestHandler):
             relative, content_type = ASSETS[path]
             source = self.server.static_root / relative
             try:
-                if path == "/assets/pado-sat-deployed-mesh.json" and (
-                        source.is_symlink() or source.stat().st_size > MAX_CAD_MESH):
-                    raise OSError("CAD mesh is absent or oversized")
+                limit = CAD_ASSETS.get(path)
+                if limit is not None and (source.is_symlink() or not source.is_file() or
+                                          not 1 <= source.stat().st_size <= limit):
+                    raise OSError("CAD asset is absent or oversized")
                 data = source.read_bytes()
-                if path == "/assets/pado-sat-deployed-mesh.json" and len(data) > MAX_CAD_MESH:
-                    raise OSError("CAD mesh is oversized")
+                if limit is not None and not 1 <= len(data) <= limit:
+                    raise OSError("CAD asset is oversized")
             except OSError:
                 self._error(HTTPStatus.SERVICE_UNAVAILABLE, "asset_unavailable")
                 return

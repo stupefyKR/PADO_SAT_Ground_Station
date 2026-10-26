@@ -8,6 +8,10 @@ window.rosAttitudeViewer = (() => {
   const MAX_VERTICES = 40000;
   const MAX_TRIANGLES = 25000;
   const MAX_MATERIALS = 64;
+  const MAX_APPEARANCE_BYTES = 64 * 1024;
+  const MAX_TEXTURE_TRIANGLES = 512;
+  const MAX_TEXTURE_PIXELS = 16 * 1024 * 1024;
+  const MAX_TOTAL_TEXTURE_PIXELS = 32 * 1024 * 1024;
   const DEFAULT_YAW = -1.0;
   const DEFAULT_PITCH = 0.62;
   const AXES = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
@@ -75,7 +79,113 @@ window.rosAttitudeViewer = (() => {
     const normals = triangles.map(([a, b, c]) => unit(cross(
       adjusted[b].map((value, axis) => value - adjusted[a][axis]),
       adjusted[c].map((value, axis) => value - adjusted[a][axis]))));
-    return {vertices: adjusted, triangles, colors, normals};
+    return {vertices: adjusted, triangles, colors, normals, centre, scale};
+  }
+
+  function quadMapper(quad) {
+    // Homography from the unit square to the supplied source-image quadrilateral.
+    // This undoes the perspective already present in a CAD screenshot.
+    const [[x0, y0], [x1, y1], [x2, y2], [x3, y3]] = quad;
+    const dx1 = x1 - x2, dx2 = x3 - x2, dx3 = x0 - x1 + x2 - x3;
+    const dy1 = y1 - y2, dy2 = y3 - y2, dy3 = y0 - y1 + y2 - y3;
+    const determinant = dx1 * dy2 - dx2 * dy1;
+    let g = 0, h = 0;
+    if (Math.abs(dx3) + Math.abs(dy3) > 1e-10) {
+      if (Math.abs(determinant) < 1e-10) throw Error("텍스처 사각형이 퇴화했습니다.");
+      g = (dx3 * dy2 - dx2 * dy3) / determinant;
+      h = (dx1 * dy3 - dx3 * dy1) / determinant;
+    }
+    const a = x1 - x0 + g * x1, b = x3 - x0 + h * x3;
+    const d = y1 - y0 + g * y1, e = y3 - y0 + h * y3;
+    const denominators = [1, 1 + g, 1 + h, 1 + g + h];
+    if (denominators.some((value) => !Number.isFinite(value) || value <= 1e-6))
+      throw Error("텍스처 사각형의 투영이 유효하지 않습니다.");
+    return (s, t) => {
+      const denominator = g * s + h * t + 1;
+      return [(a * s + b * t + x0) / denominator,
+        (d * s + e * t + y0) / denominator];
+    };
+  }
+
+  function appearanceFromJson(raw, mesh) {
+    const finite = (value) => typeof value === "number" && Number.isFinite(value);
+    const point = (value, dimensions) => Array.isArray(value) && value.length === dimensions &&
+      value.every((entry) => finite(entry) && Math.abs(entry) < 1e7);
+    if (!mesh || !point(mesh.centre, 3) || !finite(mesh.scale) || mesh.scale <= 0 ||
+        !raw || raw.schema !== "pado.cad-appearance.v1" || !raw.textures ||
+        typeof raw.textures !== "object" || Array.isArray(raw.textures) ||
+        !Array.isArray(raw.patches) || raw.patches.length < 1 || raw.patches.length > 12)
+      throw Error("CAD 표면 이미지 형식이 유효하지 않습니다.");
+    const textures = Object.entries(raw.textures);
+    if (textures.length < 1 || textures.length > 12 || textures.some(([id, url]) =>
+      !/^[a-z][a-z0-9-]{0,47}$/.test(id) || typeof url !== "string" ||
+      !/^\/assets\/pado-sat-surface-[a-z0-9-]+\.png$/.test(url)))
+      throw Error("허용된 로컬 CAD 표면 이미지만 사용할 수 있습니다.");
+    const textureIds = new Set(textures.map(([id]) => id));
+    const patchIds = new Set();
+    const triangles = [];
+    for (const patch of raw.patches) {
+      if (!patch || typeof patch.id !== "string" || !/^[a-z][a-z0-9-]{0,47}$/.test(patch.id) ||
+          patchIds.has(patch.id) || !textureIds.has(patch.texture) ||
+          !Array.isArray(patch.corners) || patch.corners.length !== 4 ||
+          !patch.corners.every((corner) => point(corner, 3)) ||
+          !Array.isArray(patch.image_quad) || patch.image_quad.length !== 4 ||
+          !patch.image_quad.every((corner) => point(corner, 2) &&
+            corner.every((entry) => entry >= 0 && entry <= 1)) ||
+          !point(patch.normal, 3) || !unit(patch.normal) ||
+          !Array.isArray(patch.subdivisions) || patch.subdivisions.length !== 2 ||
+          !patch.subdivisions.every((value) => Number.isInteger(value) && value >= 1 && value <= 16))
+        throw Error("CAD 표면 패치가 유효하지 않습니다.");
+      patchIds.add(patch.id);
+      const [nu, nv] = patch.subdivisions;
+      if (triangles.length + 2 * nu * nv > MAX_TEXTURE_TRIANGLES)
+        throw Error("CAD 텍스처 삼각형 수가 허용 범위를 넘습니다.");
+      const q = patch.image_quad;
+      let orientation = 0;
+      for (let index = 0; index < 4; index++) {
+        const a = q[index], b = q[(index + 1) % 4], c = q[(index + 2) % 4];
+        const turn = (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]);
+        if (Math.abs(turn) < 1e-8 || (orientation && Math.sign(turn) !== orientation))
+          throw Error("텍스처 사각형은 볼록해야 합니다.");
+        orientation = Math.sign(turn);
+      }
+      const normal = unit(patch.normal);
+      const corners = patch.corners.map((corner) => corner.map((value, axis) =>
+        (value - mesh.centre[axis]) * mesh.scale));
+      if (corners.some((corner) => corner.some((value) => Math.abs(value) > 2)))
+        throw Error("CAD 표면 패치가 형상 범위를 벗어났습니다.");
+      const edgeA = corners[1].map((value, axis) => value - corners[0][axis]);
+      const edgeB = corners[3].map((value, axis) => value - corners[0][axis]);
+      if (length(cross(edgeA, edgeB)) < 1e-9 || corners.some((corner) =>
+        Math.abs(dot(corner.map((value, axis) => value - corners[0][axis]), normal)) > 1e-5))
+        throw Error("CAD 표면 패치는 지정된 법선의 평면이어야 합니다.");
+      let cornerOrientation = 0;
+      for (let index = 0; index < 4; index++) {
+        const a = corners[index], b = corners[(index + 1) % 4], c = corners[(index + 2) % 4];
+        const turn = dot(cross(b.map((value, axis) => value - a[axis]),
+          c.map((value, axis) => value - b[axis])), normal);
+        if (Math.abs(turn) < 1e-9 ||
+            (cornerOrientation && Math.sign(turn) !== cornerOrientation))
+          throw Error("CAD 표면 사각형은 볼록해야 합니다.");
+        cornerOrientation = Math.sign(turn);
+      }
+      const mapImage = quadMapper(q);
+      const grid = [];
+      for (let v = 0; v <= nv; v++) for (let u = 0; u <= nu; u++) {
+        const s = u / nu, t = v / nv;
+        const weights = [(1 - s) * (1 - t), s * (1 - t), s * t, (1 - s) * t];
+        grid.push({position: [0, 1, 2].map((axis) =>
+          corners.reduce((sum, corner, index) => sum + corner[axis] * weights[index], 0)),
+        uv: mapImage(s, t)});
+      }
+      for (let v = 0; v < nv; v++) for (let u = 0; u < nu; u++) {
+        const a = grid[v * (nu + 1) + u], b = grid[v * (nu + 1) + u + 1];
+        const c = grid[(v + 1) * (nu + 1) + u + 1], d = grid[(v + 1) * (nu + 1) + u];
+        for (const vertices of [[a, b, c], [a, c, d]])
+          triangles.push({texture: patch.texture, normal, vertices});
+      }
+    }
+    return {textures: Object.fromEntries(textures), triangles};
   }
 
   function cameraBasis(yaw, pitch) {
@@ -99,6 +209,9 @@ window.rosAttitudeViewer = (() => {
       this.ctx = canvas.getContext("2d", {alpha: false});
       this.onStatus = onStatus;
       this.mesh = null;
+      this.appearance = null;
+      this.glRenderer = null;
+      this.textureCache = new Map();
       this.directions = null;
       this.yaw = DEFAULT_YAW;
       this.pitch = DEFAULT_PITCH;
@@ -135,6 +248,7 @@ window.rosAttitudeViewer = (() => {
     }
 
     async load(url) {
+      this.appearance = null;
       this.onStatus("CAD 형상 불러오는 중");
       try {
         const response = await fetch(url, {credentials: "same-origin", cache: "no-store"});
@@ -145,13 +259,115 @@ window.rosAttitudeViewer = (() => {
         if (bytes.byteLength < 32 || bytes.byteLength > MAX_BYTES)
           throw Error("CAD 파일 크기가 유효하지 않습니다.");
         this.mesh = meshFromJson(JSON.parse(new TextDecoder("utf-8", {fatal: true}).decode(bytes)));
+        this.configureGraphics();
         this.onStatus("PADO-SAT CAD · 축 정렬 추정");
       } catch (error) {
         this.mesh = null;
+        this.configureGraphics();
         this.onStatus(`CAD 형상 표시 불가 · ${error.message}`);
       }
       this.requestDraw();
       return !!this.mesh;
+    }
+
+    configureGraphics() {
+      try { this.glRenderer?.dispose(); } catch (_) { /* Already lost context. */ }
+      this.glRenderer = null;
+      if (this.mesh) {
+        try { this.glRenderer = window.rosAttitudeGl?.create(this.mesh) || null; }
+        catch (_) { this.glRenderer = null; }
+      }
+    }
+
+    loadTexture(url) {
+      if (this.textureCache.has(url)) return this.textureCache.get(url);
+      const pending = new Promise((resolve) => {
+        if (typeof Image === "undefined") { resolve(null); return; }
+        const image = new Image();
+        let timer = null;
+        const finish = (value) => {
+          if (timer !== null && typeof clearTimeout === "function") clearTimeout(timer);
+          image.onload = null;
+          image.onerror = null;
+          resolve(value);
+        };
+        image.onload = () => {
+          const width = image.naturalWidth || image.width;
+          const height = image.naturalHeight || image.height;
+          if (!Number.isInteger(width) || !Number.isInteger(height) ||
+              width < 1 || height < 1 || width > 4096 || height > 4096 ||
+              width * height > MAX_TEXTURE_PIXELS) { finish(null); return; }
+          let source = image;
+          // The supplied CAD captures have a pure white background. Remove
+          // only those nearly-white pixels in the working canvas; PNG bytes
+          // and every coloured surface pixel remain unchanged on disk.
+          if (typeof document !== "undefined") {
+            try {
+              const canvas = document.createElement("canvas");
+              canvas.width = width; canvas.height = height;
+              const ctx = canvas.getContext("2d", {willReadFrequently: true});
+              ctx.drawImage(image, 0, 0);
+              const pixels = ctx.getImageData(0, 0, width, height);
+              for (let index = 0; index < pixels.data.length; index += 4)
+                if (pixels.data[index] > 252 && pixels.data[index + 1] > 252 &&
+                    pixels.data[index + 2] > 252) pixels.data[index + 3] = 0;
+              ctx.putImageData(pixels, 0, 0);
+              source = canvas;
+            } catch (_) { /* Colour-only CAD remains available if readback fails. */ }
+          }
+          finish({image: source, width, height});
+        };
+        image.onerror = () => finish(null);
+        image.decoding = "async";
+        if (typeof setTimeout === "function") timer = setTimeout(() => finish(null), 10000);
+        image.src = url;
+      });
+      this.textureCache.set(url, pending);
+      return pending;
+    }
+
+    async loadAppearance(url = "/assets/pado-sat-appearance.json") {
+      const mesh = this.mesh;
+      this.appearance = null;
+      try {
+        if (!mesh || url !== "/assets/pado-sat-appearance.json")
+          throw Error("CAD 형상과 지정된 로컬 표면 설정이 필요합니다.");
+        const response = await fetch(url, {credentials: "same-origin", cache: "no-store"});
+        if (!response.ok) throw Error(`표면 설정 응답 ${response.status}`);
+        if (Number(response.headers.get("content-length") || 0) > MAX_APPEARANCE_BYTES)
+          throw Error("CAD 표면 설정이 허용 크기를 넘습니다.");
+        const bytes = await response.arrayBuffer();
+        if (bytes.byteLength < 16 || bytes.byteLength > MAX_APPEARANCE_BYTES)
+          throw Error("CAD 표면 설정 크기가 유효하지 않습니다.");
+        const compiled = appearanceFromJson(JSON.parse(
+          new TextDecoder("utf-8", {fatal: true}).decode(bytes)), mesh);
+        const images = new Map(), unique = new Set();
+        let totalPixels = 0;
+        // Load sequentially so the pixel budget is checked before decoding
+        // every image in a malformed manifest at once.
+        for (const [id, path] of Object.entries(compiled.textures)) {
+          const asset = await this.loadTexture(path);
+          images.set(id, asset);
+          if (asset && !unique.has(asset)) {
+            unique.add(asset);
+            totalPixels += asset.width * asset.height;
+            if (totalPixels > MAX_TOTAL_TEXTURE_PIXELS)
+              throw Error("CAD 표면 이미지의 전체 크기가 너무 큽니다.");
+          }
+        }
+        if (this.mesh !== mesh) return false;
+        const triangles = compiled.triangles.filter((triangle) => images.get(triangle.texture))
+          .map((triangle) => ({...triangle, asset: images.get(triangle.texture)}));
+        if (!triangles.length) throw Error("표면 이미지를 불러오지 못했습니다.");
+        this.appearance = {triangles};
+        this.onStatus(this.glRenderer ? "PADO-SAT CAD · 제공 이미지 적용" :
+          "PADO-SAT CAD · 표면 이미지 3D 표시 불가 · 재질색 표시");
+      } catch (error) {
+        this.appearance = null;
+        this.onStatus(`PADO-SAT CAD · 재질색 표시 · ${error.message}`);
+      }
+      this.requestDraw();
+      return !!this.appearance;
     }
 
     setDirections(directions) {
@@ -250,7 +466,7 @@ window.rosAttitudeViewer = (() => {
           1.3, 24, 24),
       })) : [];
       if (this.mesh) {
-        this.drawMesh(project, basis.eye);
+        this.drawMesh(project, basis.eye, basis, pixels);
         this.drawBodyAxes(axes, origin);
         this.drawAxisLabels(axes, origin);
       } else {
@@ -383,11 +599,28 @@ window.rosAttitudeViewer = (() => {
       }
     }
 
-    drawMesh(project, eye) {
+    drawMesh(project, eye, basis = null, pixels = null) {
+      if (basis && this.glRenderer) {
+        let layer = null;
+        try {
+          layer = this.glRenderer.render(basis, pixels, this.canvas.width,
+            this.canvas.height, this.appearance);
+        } catch (_) { /* The existing colour renderer is the safe fallback. */ }
+        if (layer) {
+          this.ctx.drawImage(layer, 0, 0);
+          return;
+        }
+        try { this.glRenderer.dispose(); } catch (_) { /* Context may be lost. */ }
+        this.glRenderer = null;
+        if (this.appearance)
+          this.onStatus("PADO-SAT CAD · 표면 이미지 3D 표시 불가 · 재질색 표시");
+      }
       const {vertices, triangles, colors, normals} = this.mesh;
       const projected = vertices.map(project);
       const faces = triangles.map(([a, b, c, material], index) => ({a, b, c, material, index,
         depth: (projected[a].depth + projected[b].depth + projected[c].depth) / 3}));
+      // Canvas fallback intentionally keeps flat CAD colours. Painter sorting
+      // cannot reliably occlude screenshot decals on the detailed STEP mesh.
       faces.sort((a, b) => a.depth - b.depth);
       const ctx = this.ctx;
       for (const face of faces) {
@@ -539,5 +772,6 @@ window.rosAttitudeViewer = (() => {
     }
   }
 
-  return {create: (canvas, onStatus) => new Viewer(canvas, onStatus), meshFromJson};
+  return {create: (canvas, onStatus) => new Viewer(canvas, onStatus), meshFromJson,
+    appearanceFromJson};
 })();

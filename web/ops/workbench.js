@@ -688,7 +688,10 @@
       try {
         attitudeViewer = window.rosAttitudeViewer.create($("attitude-canvas"),
           (state) => { $("attitude-model-state").textContent = state; });
-        attitudeViewer.load("/assets/pado-sat-deployed-mesh.json");
+        attitudeViewer.load("/assets/pado-sat-deployed-mesh.json").then((loaded) => {
+          if (loaded) return attitudeViewer.loadAppearance("/assets/pado-sat-appearance.json");
+          return false;
+        }).catch(() => {});
         $("attitude-reset-camera").addEventListener("click", () => attitudeViewer.reset());
       } catch (_) {
         attitudeViewer = null;

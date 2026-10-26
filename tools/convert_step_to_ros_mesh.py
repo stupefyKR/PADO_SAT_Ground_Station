@@ -26,11 +26,11 @@ from OCP.TopoDS import TopoDS
 
 
 PALETTE = [
-    {"name": "bus_aluminum", "color": "#B9C7CF"},
+    {"name": "bus_aluminum", "color": "#B4B7B5"},
     {"name": "solar_cell", "color": "#151B22"},
     {"name": "panel_trim", "color": "#E5BF58"},
     {"name": "panel_frame", "color": "#58636C"},
-    {"name": "antenna", "color": "#AA704D"},
+    {"name": "antenna", "color": "#9DA2A3"},
 ]
 
 
