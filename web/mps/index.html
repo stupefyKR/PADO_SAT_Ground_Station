@@ -1,12 +1,12 @@
 <!doctype html>
-<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PADO-SAT · MPS 계획</title><link rel="stylesheet" href="/assets/style.css"><link rel="stylesheet" href="/assets/mps-workflow.css"></head>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PADO-SAT · MPS 계획</title><link rel="icon" type="image/png" href="/assets/pado-sat-badge-ec9020cb.png"><link rel="stylesheet" href="/assets/style.css"><link rel="stylesheet" href="/assets/mps-workflow.css"></head>
 <body data-page="mps">
 <div class="global-clock" role="group" aria-label="현재 시각">
   <div class="global-clock-zone"><span class="global-clock-label">UTC</span><time id="utc-clock">---- -- -- --:--:--</time></div>
   <span class="global-clock-divider" aria-hidden="true"></span>
   <div class="global-clock-zone"><span class="global-clock-label">한국 시각 · KST (UTC+9)</span><time id="kst-clock">---- -- -- --:--:--</time></div>
 </div>
-<div class="shell"><aside class="sidebar"><a class="brand" href="/ops"><span class="brand-mark">P<span>·</span></span><span>PADO-SAT<small>GROUND CONTROL</small></span></a><div class="nav-label">WORKSPACE</div><nav aria-label="주 메뉴"><a href="/ops">ROS <span>위성 관제</span></a><a class="active" aria-current="page" href="/mps">MPS <span>임무 계획</span></a><a href="/orbit">ORBIT <span>위성 위치</span></a></nav><div class="side-foot"><span class="status-dot unknown"></span> 개발 기준선 <small>승인·출력 차단</small></div></aside>
+<div class="shell"><aside class="sidebar"><a class="brand" href="/ops"><img class="brand-mark" src="/assets/pado-sat-badge-ec9020cb.png" alt=""><span>PADO-SAT<small>GROUND CONTROL</small></span></a><div class="nav-label">WORKSPACE</div><nav aria-label="주 메뉴"><a href="/ops">ROS <span>위성 관제</span></a><a class="active" aria-current="page" href="/mps">MPS <span>임무 계획</span></a><a href="/orbit">ORBIT <span>위성 위치</span></a></nav><div class="side-foot"><span class="status-dot unknown"></span> 개발 기준선 <small>승인·출력 차단</small></div></aside>
 <div class="main-area"><header class="topbar"><div><span class="eyebrow">MISSION / MPS</span><h1>임무 계획</h1></div><div class="top-right"><span id="user-badge" class="user-badge">확인 중</span><button id="logout" class="ghost">로그아웃</button></div></header>
 <main class="content"><div class="notice"><strong>PLANNING BASELINE</strong><span>FDS PASS 일정과 시험용 TC 시퀀스를 검토합니다. 충돌 검사·승인·송출은 사용할 수 없습니다.</span></div>
 <section class="status-strip" aria-label="계획 상태"><div><span>계획 상태</span><strong>시험 초안</strong></div><div><span>명령 DB 버전</span><strong id="mps-version">확인 중</strong></div><div><span>운용 명령</span><strong id="mps-commands">—</strong></div><div><span>예측 패스</span><strong id="mps-passes">—</strong></div><div><span>출력</span><strong>차단</strong></div></section>

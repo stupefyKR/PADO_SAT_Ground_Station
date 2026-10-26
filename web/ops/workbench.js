@@ -445,11 +445,30 @@
     }
     let directions = null;
     let state = "자세 TM 표본 없음";
-    if (attitude && attitude.frame !== "SIM_BODY_TO_ITRF_NADIR") {
+    let source = attitude ? "시험 자세 TM 수신" : "데이터 없음";
+    const now = Date.now();
+    const tmAge = attitude ? now - Date.parse(attitude.utc) : Infinity;
+    const publishedTmStale = tmSource === "published" &&
+      (!attitude || !publishedReachable || !Number.isFinite(tmAge) ||
+       tmAge < -30 * 1000 || tmAge > 5 * 60 * 1000);
+    if (publishedTmStale) {
+      source = attitude ? "마지막 시험 TM · 오래됨" : "시험 자세 TM 미수신";
+      const tmState = attitude ? "마지막 TM 오래됨" : "자세 TM 미수신";
+      try {
+        directions = window.rosAttitudeMath?.predictNadir({
+          orbitView: attitudeOrbitView, utc: new Date(now).toISOString()
+        }) || null;
+      } catch (_) { directions = null; }
+      if (directions) {
+        source = "FDS 예상 자세 · 시험";
+        state = `FDS 예상 · 수신 TM 아님 · ${directions.utc} · +Z-지구 0.0°`;
+      } else {
+        state = attitudeOrbitView ?
+          `${tmState} · FDS 예상 자세 산출 대기` :
+          `${tmState} · FDS 위치·태양 자료 대기`;
+      }
+    } else if (attitude && attitude.frame !== "SIM_BODY_TO_ITRF_NADIR") {
       state = "방향 산출을 지원하지 않는 자세 좌표계";
-    } else if (attitude && tmSource === "published" && (!publishedReachable ||
-               Date.now() - Date.parse(attitude.utc) > 5 * 60 * 1000)) {
-      state = "시험 TM이 오래됐거나 새 입력이 없습니다";
     } else if (attitude && !attitudeOrbitView) {
       state = "FDS 위치·태양 자료 대기";
     } else if (attitude) {
@@ -461,7 +480,10 @@
           (Math.acos(Math.max(-1, Math.min(1, directions.earthAlignment))) * 180 / Math.PI).toFixed(1)}° · 시험` :
         "TM·FDS 시각 또는 위성 식별자 불일치";
     }
+    if (tmSource === "manual" && attitude) source = "불러온 시험 자세 TM";
+    if (tmSource === "example" && attitude) source = "합성 예시 TM";
     attitudeViewer.setDirections(directions);
+    $("attitude-source").textContent = source;
     $("attitude-direction-state").textContent = state;
   }
 
@@ -493,7 +515,6 @@
     $("ros-last-tm").textContent = selectedTm.received_utc;
     $("chart-source").textContent = `데이터 소스: ${sourceLabel} · 실제 위성 TM 아님`;
     $("demo-toggle").textContent = "합성 예시 보기";
-    $("attitude-source").textContent = selectedTm.attitude ? "시험 자세 TM 수신" : "데이터 없음";
     $("attitude-quaternion").textContent = selectedTm.attitude ?
       selectedTm.attitude.quaternion_wxyz.map((x) => x.toFixed(4)).join(", ") : "—";
     $("attitude-frame").textContent = selectedTm.attitude?.frame || "미정";

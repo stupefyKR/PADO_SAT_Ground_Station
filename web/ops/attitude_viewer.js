@@ -11,6 +11,19 @@ window.rosAttitudeViewer = (() => {
   const DEFAULT_YAW = Math.PI / 4;
   const DEFAULT_PITCH = 0.62;
   const AXES = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+  const AXIS_COLORS = ["#ee8e84", "#a6d78d", "#8fbef0"];
+  const STARFIELD = (() => {
+    // Stable on every frame, including while the camera is being dragged.
+    let seed = 0x506144;
+    const next = () => {
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+      return seed / 0x100000000;
+    };
+    return Array.from({length: 90}, () => ({
+      x: next(), y: next(), radius: 0.45 + next() * 1.15,
+      alpha: 0.18 + next() * 0.48,
+    }));
+  })();
   const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
   const cross = (a, b) => [a[1] * b[2] - a[2] * b[1],
     a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
@@ -178,13 +191,9 @@ window.rosAttitudeViewer = (() => {
     draw() {
       const canvas = this.canvas, ctx = this.ctx;
       const width = canvas.width, height = canvas.height;
-      ctx.fillStyle = "#081722";
+      ctx.fillStyle = "#07131f";
       ctx.fillRect(0, 0, width, height);
-      ctx.strokeStyle = "#254052";
-      ctx.lineWidth = 1;
-      for (let x = 40; x < width; x += 52) {
-        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, height); ctx.stroke();
-      }
+      this.drawStars();
       const basis = cameraBasis(this.yaw, this.pitch);
       const pixels = Math.min(width, height) * 0.33 * this.zoom;
       const project = (position) => {
@@ -194,27 +203,106 @@ window.rosAttitudeViewer = (() => {
           y: height / 2 - dot(position, basis.up) * pixels * perspective, depth};
       };
       const origin = project([0, 0, 0]);
-      // Direction arrows are display vectors only, never distance/size scale.
-      if (this.mesh && this.directions) {
-        this.drawDirectionLine(origin, project(unit(this.directions.earthBody).map((v) => v * 1.55)), "#70b8e9");
-        this.drawDirectionLine(origin, project(unit(this.directions.sunBody).map((v) => v * 1.55)), "#f0c568");
-      }
-      if (this.mesh) this.drawDirectionLine(origin, project([0, 0, 1.25]), "#83d9cf", 1.5);
-      if (this.mesh) this.drawMesh(project, basis.eye);
-      else {
+      const axes = this.mesh ? AXES.map((direction) => ({
+        positive: this.fitDirection(project, direction, 1.5, 30, 30),
+        negative: this.fitDirection(project, direction.map((value) => -value),
+          1.3, 24, 24),
+      })) : [];
+      // Bodies show directions from the satellite, not physical distance or size.
+      const bodies = this.mesh && this.directions ? [
+        {kind: "earth", point: this.fitDirection(project, this.directions.earthBody,
+          1.9, 74, 38)},
+        {kind: "sun", point: this.fitDirection(project, this.directions.sunBody,
+          1.9, 72, 36)},
+      ].sort((a, b) => a.point.depth - b.point.depth) : [];
+      if (this.mesh) {
+        this.drawBodyAxes(axes, origin);
+        for (const body of bodies) this.drawDirectionGuide(origin, body.point,
+          body.kind === "earth" ? "#68a9d9" : "#e7b966", body.kind === "earth" ? 24 : 21);
+        for (const body of bodies) if (body.point.depth < 0) this.drawCelestial(body);
+        this.drawMesh(project, basis.eye);
+        for (const body of bodies) if (body.point.depth >= 0) this.drawCelestial(body);
+        this.drawAxisLabels(axes, origin);
+      } else {
         ctx.fillStyle = "#a9bdc7";
         ctx.font = "16px Malgun Gothic, sans-serif";
         ctx.textAlign = "center";
         ctx.fillText("CAD 형상을 불러오는 중이거나 표시할 수 없습니다", width / 2, height / 2);
       }
-      if (this.mesh) this.drawMarker(project([0, 0, 1.25]), "+Z 본체축", "#83d9cf");
-      if (this.mesh && this.directions) {
-        this.drawMarker(project(unit(this.directions.earthBody).map((v) => v * 1.55)),
-          "지구 방향", "#70b8e9", "earth");
-        this.drawMarker(project(unit(this.directions.sunBody).map((v) => v * 1.55)),
-          "태양 방향", "#f0c568", "sun");
+    }
+
+    drawStars() {
+      const ctx = this.ctx;
+      ctx.fillStyle = "#d9e9f2";
+      for (const star of STARFIELD) {
+        ctx.globalAlpha = star.alpha;
+        ctx.beginPath();
+        ctx.arc(star.x * this.canvas.width, star.y * this.canvas.height,
+          star.radius, 0, Math.PI * 2);
+        ctx.fill();
       }
-      if (this.mesh) this.drawAxisGizmo(basis);
+      ctx.globalAlpha = 1;
+    }
+
+    fitDirection(project, direction, distance, marginX, marginY) {
+      // Reduce only illustrative display distance to keep direction objects in view.
+      // The projected ray remains aligned with the body-frame direction.
+      const vector = unit(direction);
+      const at = (amount) => project(vector.map((value) => value * amount));
+      const inside = (point) => point.x >= marginX &&
+        point.x <= this.canvas.width - marginX &&
+        point.y >= marginY && point.y <= this.canvas.height - marginY;
+      if (inside(at(distance))) return at(distance);
+      let low = 0, high = distance;
+      for (let attempt = 0; attempt < 16; attempt++) {
+        const mid = (low + high) / 2;
+        if (inside(at(mid))) low = mid;
+        else high = mid;
+      }
+      return at(low);
+    }
+
+    drawBodyAxes(axes, origin) {
+      const ctx = this.ctx;
+      for (let axis = 0; axis < AXES.length; axis++) {
+        const {positive, negative} = axes[axis];
+        ctx.strokeStyle = AXIS_COLORS[axis];
+        ctx.globalAlpha = 0.28;
+        ctx.lineWidth = 1.4;
+        ctx.beginPath(); ctx.moveTo(negative.x, negative.y);
+        ctx.lineTo(origin.x, origin.y); ctx.stroke();
+        ctx.globalAlpha = 0.9;
+        ctx.lineWidth = 2.5;
+        ctx.beginPath(); ctx.moveTo(origin.x, origin.y);
+        ctx.lineTo(positive.x, positive.y); ctx.stroke();
+        const angle = Math.atan2(positive.y - origin.y, positive.x - origin.x);
+        ctx.beginPath(); ctx.moveTo(positive.x, positive.y);
+        ctx.lineTo(positive.x - Math.cos(angle - 0.42) * 10,
+          positive.y - Math.sin(angle - 0.42) * 10);
+        ctx.moveTo(positive.x, positive.y);
+        ctx.lineTo(positive.x - Math.cos(angle + 0.42) * 10,
+          positive.y - Math.sin(angle + 0.42) * 10);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    drawAxisLabels(axes, origin) {
+      const ctx = this.ctx;
+      ctx.font = "bold 13px Consolas, monospace";
+      ctx.textAlign = "center";
+      for (let axis = 0; axis < AXES.length; axis++) {
+        const point = axes[axis].positive;
+        const dx = point.x - origin.x, dy = point.y - origin.y;
+        const distance = Math.hypot(dx, dy) || 1;
+        const x = clamp(point.x + dx / distance * 18 - (axis === 0 ? 26 : 0),
+          20, this.canvas.width - 20);
+        const y = clamp(point.y + dy / distance * 18 + 4, 20, this.canvas.height - 12);
+        ctx.fillStyle = "#07131fe0";
+        ctx.fillRect(x - 16, y - 15, 32, 21);
+        ctx.fillStyle = AXIS_COLORS[axis];
+        ctx.fillText(["+X", "+Y", "+Z"][axis], x, y);
+      }
     }
 
     drawMesh(project, eye) {
@@ -234,83 +322,108 @@ window.rosAttitudeViewer = (() => {
       }
     }
 
-    drawDirectionLine(from, to, color, width = 2) {
+    drawDirectionGuide(from, to, color, radius) {
       const ctx = this.ctx;
       ctx.strokeStyle = color;
-      ctx.globalAlpha = 0.72;
-      ctx.lineWidth = width;
-      ctx.beginPath(); ctx.moveTo(from.x, from.y); ctx.lineTo(to.x, to.y); ctx.stroke();
-      if (width >= 2) {
-        const angle = Math.atan2(to.y - from.y, to.x - from.x);
-        const tipX = to.x - Math.cos(angle) * 17;
-        const tipY = to.y - Math.sin(angle) * 17;
-        ctx.beginPath();
-        ctx.moveTo(tipX, tipY);
-        ctx.lineTo(tipX - Math.cos(angle - 0.48) * 9,
-          tipY - Math.sin(angle - 0.48) * 9);
-        ctx.moveTo(tipX, tipY);
-        ctx.lineTo(tipX - Math.cos(angle + 0.48) * 9,
-          tipY - Math.sin(angle + 0.48) * 9);
-        ctx.stroke();
-      }
+      ctx.globalAlpha = 0.36;
+      ctx.lineWidth = 1.3;
+      const dx = to.x - from.x, dy = to.y - from.y;
+      const span = Math.hypot(dx, dy) || 1;
+      ctx.beginPath(); ctx.moveTo(from.x, from.y);
+      ctx.lineTo(to.x - dx / span * radius, to.y - dy / span * radius);
+      ctx.stroke();
       ctx.globalAlpha = 1;
     }
 
-    drawMarker(point, label, color, kind = "axis") {
+    drawCelestial({kind, point}) {
       const ctx = this.ctx;
-      const radius = kind === "axis" ? 5 : 13;
-      if (kind === "sun") {
-        ctx.strokeStyle = "#f0c568";
-        ctx.lineWidth = 2;
-        for (let ray = 0; ray < 8; ray++) {
-          const angle = ray * Math.PI / 4;
-          ctx.beginPath();
-          ctx.moveTo(point.x + Math.cos(angle) * 16, point.y + Math.sin(angle) * 16);
-          ctx.lineTo(point.x + Math.cos(angle) * 22, point.y + Math.sin(angle) * 22);
-          ctx.stroke();
-        }
-      }
-      ctx.fillStyle = color;
-      ctx.beginPath(); ctx.arc(point.x, point.y, radius, 0, Math.PI * 2); ctx.fill();
-      ctx.strokeStyle = "#e7f3f5"; ctx.lineWidth = 1.5; ctx.stroke();
+      const {x, y} = point;
+      const radius = kind === "earth" ? 23 : 20;
+      const glow = ctx.createRadialGradient(x, y, radius * 0.3,
+        x, y, radius * 1.75);
       if (kind === "earth") {
-        ctx.fillStyle = "#90cba4";
-        ctx.beginPath();
-        ctx.arc(point.x - 3, point.y + 1, 4, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.beginPath();
-        ctx.arc(point.x + 5, point.y - 4, 2.5, 0, Math.PI * 2);
-        ctx.fill();
+        glow.addColorStop(0, "#59a7d060");
+        glow.addColorStop(1, "#59a7d000");
+      } else {
+        glow.addColorStop(0, "#ffd07780");
+        glow.addColorStop(1, "#f5a52900");
       }
-      if (kind === "sun") {
-        ctx.fillStyle = "#fff2be";
-        ctx.beginPath(); ctx.arc(point.x - 4, point.y - 4, 4, 0, Math.PI * 2); ctx.fill();
-      }
+      ctx.fillStyle = glow;
+      ctx.beginPath(); ctx.arc(x, y, radius * 1.75, 0, Math.PI * 2); ctx.fill();
+      if (kind === "earth") this.drawEarth(x, y, radius);
+      else this.drawSun(x, y, radius);
+      const label = kind === "earth" ? "지구" : "태양";
+      const color = kind === "earth" ? "#95ccef" : "#f5d082";
+      const labelX = clamp(x + radius + 15, 30, this.canvas.width - 30);
+      const labelY = clamp(y + 4, 20, this.canvas.height - 8);
+      ctx.fillStyle = "#07131fe0";
+      ctx.fillRect(labelX - 23, labelY - 16, 46, 22);
+      ctx.fillStyle = color;
       ctx.font = "bold 13px Malgun Gothic, sans-serif";
-      ctx.textAlign = "left";
-      const x = clamp(point.x + 14, 8, this.canvas.width - 98);
-      const y = clamp(point.y + 5, 18, this.canvas.height - 8);
-      ctx.fillStyle = "#071521d9";
-      ctx.fillRect(x - 5, y - 16, 96, 22);
-      ctx.fillStyle = color; ctx.fillText(label, x, y);
+      ctx.textAlign = "center";
+      ctx.fillText(label, labelX, labelY);
     }
 
-    drawAxisGizmo(basis) {
+    drawEarth(x, y, radius) {
       const ctx = this.ctx;
-      const ox = 69, oy = this.canvas.height - 64;
-      const colors = ["#f2a99a", "#a7db99", "#8dc1f5"];
-      ctx.font = "bold 12px Consolas, monospace";
-      ctx.textAlign = "left";
-      for (let axis = 0; axis < 3; axis++) {
-        const dx = dot(AXES[axis], basis.right) * 31;
-        const dy = -dot(AXES[axis], basis.up) * 31;
-        ctx.strokeStyle = colors[axis]; ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.moveTo(ox, oy); ctx.lineTo(ox + dx, oy + dy); ctx.stroke();
-        ctx.fillStyle = colors[axis];
-        ctx.fillText(["+X", "+Y", "+Z"][axis], ox + dx + 4, oy + dy + 3);
+      const sea = ctx.createRadialGradient(x - 8, y - 9, 1,
+        x + 5, y + 5, radius * 1.3);
+      sea.addColorStop(0, "#7dc7ea");
+      sea.addColorStop(0.55, "#286eaa");
+      sea.addColorStop(1, "#0b294c");
+      ctx.save();
+      ctx.beginPath(); ctx.arc(x, y, radius, 0, Math.PI * 2); ctx.clip();
+      ctx.fillStyle = sea;
+      ctx.fillRect(x - radius, y - radius, radius * 2, radius * 2);
+      ctx.fillStyle = "#81ba8b";
+      ctx.beginPath();
+      ctx.moveTo(x - 17, y - 8); ctx.lineTo(x - 9, y - 13);
+      ctx.lineTo(x - 3, y - 9); ctx.lineTo(x - 6, y - 3);
+      ctx.lineTo(x - 2, y + 2); ctx.lineTo(x - 8, y + 7);
+      ctx.lineTo(x - 12, y + 3); ctx.lineTo(x - 18, y + 2); ctx.closePath(); ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(x + 6, y - 8); ctx.lineTo(x + 16, y - 5);
+      ctx.lineTo(x + 18, y + 2); ctx.lineTo(x + 12, y + 5);
+      ctx.lineTo(x + 10, y + 12); ctx.lineTo(x + 4, y + 8);
+      ctx.lineTo(x + 5, y + 1); ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = "#deeff7";
+      ctx.globalAlpha = 0.58;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(x - 3, y + 2, radius * 0.71, 3.65, 5.25); ctx.stroke();
+      ctx.beginPath(); ctx.arc(x + 5, y - 4, radius * 0.62, 0.35, 1.8); ctx.stroke();
+      ctx.restore();
+      ctx.strokeStyle = "#9fd9ee";
+      ctx.globalAlpha = 0.72;
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(x, y, radius, 0, Math.PI * 2); ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+
+    drawSun(x, y, radius) {
+      const ctx = this.ctx;
+      ctx.strokeStyle = "#f5bd63";
+      ctx.globalAlpha = 0.75;
+      ctx.lineWidth = 1.8;
+      for (let ray = 0; ray < 12; ray++) {
+        const angle = ray * Math.PI / 6;
+        ctx.beginPath();
+        ctx.moveTo(x + Math.cos(angle) * (radius + 5),
+          y + Math.sin(angle) * (radius + 5));
+        ctx.lineTo(x + Math.cos(angle) * (radius + 15),
+          y + Math.sin(angle) * (radius + 15));
+        ctx.stroke();
       }
-      ctx.fillStyle = "#d7e9ec";
-      ctx.beginPath(); ctx.arc(ox, oy, 3, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = 1;
+      const surface = ctx.createRadialGradient(x - 7, y - 8, 1,
+        x + 5, y + 5, radius * 1.35);
+      surface.addColorStop(0, "#fff8ca");
+      surface.addColorStop(0.58, "#ffcc67");
+      surface.addColorStop(1, "#d8802a");
+      ctx.fillStyle = surface;
+      ctx.beginPath(); ctx.arc(x, y, radius, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = "#ffe5a0";
+      ctx.lineWidth = 1;
+      ctx.stroke();
     }
   }
 

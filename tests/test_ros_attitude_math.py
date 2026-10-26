@@ -15,6 +15,7 @@ const scope = {};
 vm.createContext(scope);
 vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), scope);
 const compute = scope.rosAttitudeMath.compute;
+const predictNadir = scope.rosAttitudeMath.predictNadir;
 const t0 = '2026-10-26T05:00:00.000Z';
 const t1 = '2026-10-26T05:01:00.000Z';
 const view = (position, sun) => ({
@@ -57,6 +58,41 @@ assert.equal(compute({attitude: {...attitude([1, 0, 0, 0]), frame: 'TEST_FRAME'}
   orbitView: sample}), null);
 assert.equal(compute({attitude: attitude([1, 0, 0, 0],
   '2026-10-26T05:02:00.000Z'), orbitView: sample}), null);
+
+// FDS position samples imply along-track +Y. Nadir is ITRF -X, so the
+// right-handed simulated body basis is +X=ITRF +Y, +Y=ITRF -Z, +Z=ITRF -X.
+const predictedView = {
+  ...view([6878000, 0, 0], [0, 0, -1]),
+  samples: [
+    [t0, 6878000, 0, 0, 0, 0, 500000, 0, 0, -1],
+    [t1, 6878000, 420000, 0, 0, 0, 500000, 0, 0, -1]
+  ]
+};
+const prediction = predictNadir({orbitView: predictedView,
+  utc: '2026-10-26T05:00:30.000Z'});
+assert.equal(prediction.provenance, 'FDS_TEST_NADIR_PREDICTION');
+near(prediction.earthBody, [0, 0, 1]);
+near(prediction.sunBody, [0, 1, 0]);
+assert.equal(prediction.earthAlignment, 1);
+assert.equal(prediction.utc, '2026-10-26T05:00:30.000Z');
+assert.ok(predictNadir({orbitView: predictedView, utc: t0}),
+  'one-sided derivative at FDS coverage start');
+assert.ok(predictNadir({orbitView: {...predictedView, source:'TLE'}, utc: t1}),
+  'TLE view and one-sided derivative at coverage end');
+
+// Predicted directions must never be advertised for another satellite, stale
+// input, missing coverage, malformed Sun or a motionless position series.
+assert.equal(predictNadir({orbitView: {...predictedView, norad_id:25544}, utc:t0}), null);
+assert.equal(predictNadir({orbitView: {...predictedView,
+  quality:'VALIDATED_FOR_OPERATIONS'}, utc:t0}), null);
+assert.equal(predictNadir({orbitView: {...predictedView,
+  input_epoch_utc:'2026-10-23T04:59:59.000Z'}, utc:t1}), null);
+assert.equal(predictNadir({orbitView: predictedView,
+  utc:'2026-10-26T05:02:00.000Z'}), null);
+assert.equal(predictNadir({orbitView: {...predictedView,
+  samples: predictedView.samples.map((row) => row.slice(0,7).concat([0,0,0]))},
+  utc:t0}), null);
+assert.equal(predictNadir({orbitView:view([6878000,0,0],[0,0,-1]), utc:t0}), null);
 """
 
 

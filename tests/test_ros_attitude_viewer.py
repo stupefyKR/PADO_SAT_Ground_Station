@@ -20,8 +20,13 @@ const raw = {schema: 'pado.cad-mesh.v1',
   triangles: [[0,1,2,0]], materials: [{color:'#7199ad'}]};
 const handlers = {};
 const ctx = {};
+const labels = [];
+let arcs = 0;
 for (const name of ['fillRect','stroke','beginPath','moveTo','lineTo','closePath',
-  'fill','arc','fillText']) ctx[name] = () => {};
+  'fill','clip','save','restore']) ctx[name] = () => {};
+ctx.arc = () => { arcs++; };
+ctx.fillText = (value) => { labels.push(value); };
+ctx.createRadialGradient = () => ({addColorStop() {}});
 const canvas = {width: 760, height: 500, getContext: () => ctx,
   addEventListener: (name, callback) => { handlers[name] = callback; },
   setPointerCapture() {}, focus() {}};
@@ -43,6 +48,7 @@ assert.throws(() => module.meshFromJson({...raw, triangles:Array(25001).fill([0,
 (async () => {
   const statuses = [];
   const viewer = module.create(canvas, (status) => statuses.push(status));
+  assert.ok(arcs >= 90, 'stable starfield replaces the vertical background grid');
   assert.equal(await viewer.load('/assets/missing.json'), false);
   assert.match(statuses.at(-1), /표시 불가/);
   assert.equal(viewer.mesh, null);
@@ -53,10 +59,28 @@ assert.throws(() => module.meshFromJson({...raw, triangles:Array(25001).fill([0,
   assert.equal(viewer.directions, null, 'zero direction is never rendered');
   viewer.setDirections({earthBody:[0,0,1], sunBody:[1,0,0]});
   assert.ok(viewer.directions);
+  for (const label of ['+X', '+Y', '+Z', '지구', '태양'])
+    assert.ok(labels.includes(label), `missing scene label: ${label}`);
+  assert.ok(!labels.includes('+Z 본체축'), 'detached +Z body-axis marker was removed');
+  const objectScreens = {earth: [], sun: []};
+  const drawCelestial = viewer.drawCelestial;
+  viewer.drawCelestial = function(body) {
+    objectScreens[body.kind].push([body.point.x, body.point.y]);
+    return drawCelestial.call(this, body);
+  };
+  viewer.draw();
+  for (const kind of ['earth', 'sun']) {
+    const [x, y] = objectScreens[kind].at(-1);
+    assert.ok(x >= 0 && x <= canvas.width && y >= 0 && y <= canvas.height,
+      `${kind} remains in the scene at the initial camera angle`);
+  }
+  const beforeDrag = objectScreens.earth.at(-1);
   const oldYaw = viewer.yaw;
   handlers.pointerdown({pointerId:1,clientX:40,clientY:20});
   handlers.pointermove({pointerId:1,clientX:70,clientY:20});
   assert.ok(viewer.yaw > oldYaw, 'drag rotates the 3D orbit camera');
+  assert.notDeepEqual(objectScreens.earth.at(-1), beforeDrag,
+    'Earth object follows the orbit-camera projection');
   const oldZoom = viewer.zoom;
   handlers.wheel({deltaY:-1,preventDefault(){}});
   assert.ok(viewer.zoom > oldZoom, 'wheel zooms the orbit camera');

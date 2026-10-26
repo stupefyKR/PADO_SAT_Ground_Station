@@ -41,12 +41,14 @@ MAX_UPSTREAM = 65536
 MAX_ORBIT_VIEW = 4 * 1024 * 1024
 MAX_CAD_MESH = 4 * 1024 * 1024
 ORBIT_TARGETS = {"synthetic", "iss", "operational"}
+BRAND_ASSET = "/assets/pado-sat-badge-ec9020cb.png"
 ASSETS = {
     "/login": ("login/index.html", "text/html; charset=utf-8"),
     "/ops": ("ops/index.html", "text/html; charset=utf-8"),
     "/mps": ("mps/index.html", "text/html; charset=utf-8"),
     "/orbit": ("orbit/index.html", "text/html; charset=utf-8"),
     "/assets/style.css": ("common/style.css", "text/css; charset=utf-8"),
+    BRAND_ASSET: ("assets/pado-sat-badge-ec9020cb.png", "image/png"),
     "/assets/app.js": ("common/app.js", "text/javascript; charset=utf-8"),
     "/assets/ros-workbench.js": ("ops/workbench.js", "text/javascript; charset=utf-8"),
     "/assets/ros-attitude-math.js": ("ops/attitude_math.js", "text/javascript; charset=utf-8"),
@@ -228,11 +230,12 @@ class Handler(BaseHTTPRequestHandler):
         super().setup()
 
     def _send(self, status: int, body: bytes = b"", content_type: str =
-              "application/json; charset=utf-8", extra: dict[str, str] | None = None) -> None:
+              "application/json; charset=utf-8", extra: dict[str, str] | None = None,
+              *, cache_control: str = "no-store") -> None:
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
+        self.send_header("Cache-Control", cache_control)
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "no-referrer")
@@ -568,7 +571,11 @@ class Handler(BaseHTTPRequestHandler):
             except OSError:
                 self._error(HTTPStatus.SERVICE_UNAVAILABLE, "asset_unavailable")
                 return
-            self._send(HTTPStatus.OK, data, content_type)
+            # The filename is content-fingerprinted; only this public badge is
+            # browser-cached. Session pages, APIs and private CAD stay no-store.
+            cache_control = ("private, max-age=604800, immutable"
+                             if path == BRAND_ASSET else "no-store")
+            self._send(HTTPStatus.OK, data, content_type, cache_control=cache_control)
             return
         self._error(HTTPStatus.NOT_FOUND, "not_found")
 

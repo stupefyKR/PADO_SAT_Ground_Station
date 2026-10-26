@@ -1,5 +1,6 @@
 """Windows-portable local HTTP portal/API contract; no Docker or TLS required."""
 
+import hashlib
 import json
 import tempfile
 import threading
@@ -10,7 +11,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from services.webapp.auth import AuthStore
-from services.webapp.main import AppServer, initialize_internal_token
+from services.webapp.main import AppServer, BRAND_ASSET, initialize_internal_token
 
 
 class FakeHasher:
@@ -198,3 +199,26 @@ class LocalHttpWebTests(unittest.TestCase):
         status, _, _ = self.request(base + "/assets/pado-sat-deployed-mesh.json",
                                     headers=cookie)
         self.assertEqual(status, 503)
+
+    def test_public_badge_is_exact_and_only_badge_is_browser_cached(self):
+        base = f"http://127.0.0.1:{self.portal.server_port}"
+        try:
+            with urlopen(base + BRAND_ASSET, timeout=3) as response:
+                badge = response.read()
+                self.assertEqual(response.status, 200)
+                self.assertEqual(response.headers["Content-Type"], "image/png")
+                self.assertEqual(response.headers["Cache-Control"],
+                                 "private, max-age=604800, immutable")
+        except URLError as error:
+            if isinstance(error.reason, PermissionError):
+                self.skipTest("local sandbox denies loopback connections")
+            raise
+        self.assertEqual(hashlib.sha256(badge).hexdigest(),
+                         "ec9020cbb16ce13101b8c7912764ca9c86f25fcafdfa72fe172385f898428150")
+        with urlopen(base + "/login", timeout=3) as response:
+            self.assertEqual(response.headers["Cache-Control"], "no-store")
+        for page in ("login", "ops", "mps", "orbit"):
+            html = (Path(__file__).resolve().parents[1] / "web" / page /
+                    "index.html").read_text(encoding="utf-8")
+            self.assertIn(f'rel="icon" type="image/png" href="{BRAND_ASSET}"', html)
+            self.assertIn(f'src="{BRAND_ASSET}"', html)

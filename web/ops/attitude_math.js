@@ -28,6 +28,10 @@
       a[0] * b[1] - a[1] * b[0]];
   }
 
+  function dot(a, b) {
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  }
+
   function bodyVector(itrf, quaternion) {
     const length = Math.hypot(...quaternion);
     if (!Number.isFinite(length) || Math.abs(length - 1) > 0.02) return null;
@@ -67,23 +71,28 @@
     sun: [7, 8, 9].map((index) => a[index] + fraction * (b[index] - a[index]))};
   }
 
+  function eligibleViewAt(view, utcMs) {
+    if (!view || view.schema !== "fds.orbit-view.v1" ||
+        view.quality !== "PRELIMINARY_NOT_FOR_OPERATIONS" ||
+        view.norad_id !== 99999 || !["TLE", "GNSS"].includes(view.source) ||
+        !Number.isFinite(utcMs)) return null;
+    const epochMs = Date.parse(view.input_epoch_utc);
+    const startMs = Date.parse(view.start_utc);
+    const endMs = Date.parse(view.end_utc);
+    if (![epochMs, startMs, endMs].every(Number.isFinite) ||
+        !(startMs < endMs) || utcMs < startMs || utcMs > endMs ||
+        utcMs < epochMs || utcMs - epochMs >= MAX_INPUT_AGE_MS) return null;
+    return {startMs, endMs};
+  }
+
   function compute({attitude, orbitView} = {}) {
     if (!attitude || attitude.frame !== FRAME ||
         !Array.isArray(attitude.quaternion_wxyz) ||
         attitude.quaternion_wxyz.length !== 4 ||
         !attitude.quaternion_wxyz.every((value) =>
-          typeof value === "number" && Number.isFinite(value)) ||
-        !orbitView || orbitView.schema !== "fds.orbit-view.v1" ||
-        orbitView.quality !== "PRELIMINARY_NOT_FOR_OPERATIONS" ||
-        orbitView.norad_id !== 99999 ||
-        !["TLE", "GNSS"].includes(orbitView.source)) return null;
+          typeof value === "number" && Number.isFinite(value))) return null;
     const utcMs = Date.parse(attitude.utc);
-    const epochMs = Date.parse(orbitView.input_epoch_utc);
-    const startMs = Date.parse(orbitView.start_utc);
-    const endMs = Date.parse(orbitView.end_utc);
-    if (![utcMs, epochMs, startMs, endMs].every(Number.isFinite) ||
-        utcMs < startMs || utcMs > endMs ||
-        utcMs < epochMs || utcMs - epochMs >= MAX_INPUT_AGE_MS) return null;
+    if (!eligibleViewAt(orbitView, utcMs)) return null;
     const sample = sampleAt(orbitView, utcMs);
     if (!sample || norm(sample.position) < 6.3e6 || norm(sample.position) > 8e6 ||
         norm(sample.sun) < 0.9 || norm(sample.sun) > 1.1) return null;
@@ -96,5 +105,42 @@
       earthAlignment: earthBody[2]};
   }
 
-  global.rosAttitudeMath = Object.freeze({compute});
+  function predictNadir({orbitView, utc} = {}) {
+    // TEST_ONLY: this is the simulator's expected nadir mode, not received TM.
+    // Reuse FDS ITRF positions and Sun vectors; no separate orbit propagation.
+    const utcMs = Date.parse(utc);
+    const coverage = eligibleViewAt(orbitView, utcMs);
+    if (!coverage) return null;
+    const sample = sampleAt(orbitView, utcMs);
+    if (!sample || norm(sample.position) < 6.3e6 ||
+        norm(sample.position) > 8e6 || norm(sample.sun) < 0.9 ||
+        norm(sample.sun) > 1.1) return null;
+    const earthItrf = unit(sample.position.map((value) => -value));
+    const sunItrf = unit(sample.sun);
+    // The simulator uses body +Z nadir and body +X along-track. A central
+    // difference of nearby FDS positions estimates its ITRF velocity; at a
+    // coverage edge use the available one-sided interval.
+    const halfStepMs = Math.min(30_000, orbitView.sample_step_s * 500);
+    const beforeMs = Math.max(coverage.startMs, utcMs - halfStepMs);
+    const afterMs = Math.min(coverage.endMs, utcMs + halfStepMs);
+    if (!(beforeMs < afterMs)) return null;
+    const before = sampleAt(orbitView, beforeMs);
+    const after = sampleAt(orbitView, afterMs);
+    if (!before || !after) return null;
+    const velocity = before.position.map((value, axis) =>
+      (after.position[axis] - value) / ((afterMs - beforeMs) / 1000));
+    const x = unit(velocity.map((value, axis) =>
+      value - dot(velocity, earthItrf) * earthItrf[axis]));
+    if (!x) return null;
+    const y = unit(cross(earthItrf, x));
+    if (!y) return null;
+    const sunBody = unit([dot(sunItrf, x), dot(sunItrf, y),
+      dot(sunItrf, earthItrf)]);
+    if (!sunBody) return null;
+    return {utc: new Date(utcMs).toISOString(), earthBody: [0, 0, 1],
+      sunBody, earthItrf, sunItrf, earthAlignment: 1,
+      provenance: "FDS_TEST_NADIR_PREDICTION"};
+  }
+
+  global.rosAttitudeMath = Object.freeze({compute, predictNadir});
 })(globalThis);
