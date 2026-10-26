@@ -9,6 +9,7 @@ import unittest
 
 VIEWER = Path(__file__).resolve().parents[1] / "web/ops/attitude_viewer.js"
 ASSET = Path(__file__).resolve().parents[1] / "web/assets/pado-sat-deployed-mesh.json"
+EARTH_ASSET = Path(__file__).resolve().parents[1] / "web/assets/earth-blue-marble-october.jpg"
 
 NODE_TEST = r"""
 const assert = require('node:assert/strict');
@@ -21,17 +22,33 @@ const raw = {schema: 'pado.cad-mesh.v1',
 const handlers = {};
 const ctx = {};
 const labels = [];
+const axisMarkers = [];
+const earthFrames = [];
+const skyDraws = [];
 let arcs = 0;
 for (const name of ['fillRect','stroke','beginPath','moveTo','lineTo','closePath',
-  'fill','clip','save','restore']) ctx[name] = () => {};
-ctx.arc = () => { arcs++; };
+  'fill','clip','save','restore','setLineDash']) ctx[name] = () => {};
+ctx.arc = (x, y, radius) => {
+  arcs++;
+  if (radius === 10) axisMarkers.push([x, y]);
+  if (radius === 88) skyDraws.push('sun');
+};
+ctx.drawImage = () => { skyDraws.push('earth'); };
 ctx.fillText = (value) => { labels.push(value); };
 ctx.createRadialGradient = () => ({addColorStop() {}});
-const canvas = {width: 760, height: 500, getContext: () => ctx,
+ctx.createLinearGradient = () => ({addColorStop() {}});
+ctx.createImageData = (width, height) => ({width, height,
+  data: new Uint8ClampedArray(width * height * 4)});
+const earthCtx = {createImageData: ctx.createImageData,
+  putImageData: (frame) => { earthFrames.push(frame); }};
+const document = {createElement: () => ({width: 0, height: 0,
+  getContext: () => earthCtx})};
+const canvas = {width: 420, height: 300, getContext: () => ctx,
   addEventListener: (name, callback) => { handlers[name] = callback; },
   setPointerCapture() {}, focus() {}};
 let responseOK = false;
-const context = {window: {}, TextDecoder, requestAnimationFrame: (callback) => callback(),
+const context = {window: {}, document, TextDecoder,
+  requestAnimationFrame: (callback) => callback(),
   fetch: async () => responseOK ? {
     ok: true, headers: {get: () => String(JSON.stringify(raw).length)},
     arrayBuffer: async () => new TextEncoder().encode(JSON.stringify(raw)).buffer,
@@ -59,33 +76,69 @@ assert.throws(() => module.meshFromJson({...raw, triangles:Array(25001).fill([0,
   assert.equal(viewer.directions, null, 'zero direction is never rendered');
   viewer.setDirections({earthBody:[0,0,1], sunBody:[1,0,0]});
   assert.ok(viewer.directions);
-  for (const label of ['+X', '+Y', '+Z', '지구', '태양'])
+  const limb = earthFrames.at(-1);
+  assert.ok(limb, 'spatial Earth horizon produces an image layer');
+  const opaquePixels = limb.data.filter((_, index) => index % 4 === 3 &&
+    limb.data[index] === 255).length;
+  assert.ok(opaquePixels > 0 && opaquePixels < limb.width * limb.height,
+    'default camera shows a large Earth limb with both planet and open space');
+  let leftEarth = 0;
+  for (let y = 0; y < limb.height; y++)
+    for (let x = 0; x < Math.floor(limb.width / 2); x++)
+      if (limb.data[(y * limb.width + x) * 4 + 3] === 255) leftEarth++;
+  assert.ok(leftEarth / opaquePixels > 0.8,
+    'default camera places the Earth limb on the left behind the satellite');
+  for (const label of ['+X', '+Y', '+Z'])
     assert.ok(labels.includes(label), `missing scene label: ${label}`);
   assert.ok(!labels.includes('+Z 본체축'), 'detached +Z body-axis marker was removed');
-  const objectScreens = {earth: [], sun: []};
-  const drawCelestial = viewer.drawCelestial;
-  viewer.drawCelestial = function(body) {
-    objectScreens[body.kind].push([body.point.x, body.point.y]);
-    return drawCelestial.call(this, body);
-  };
-  viewer.draw();
-  for (const kind of ['earth', 'sun']) {
-    const [x, y] = objectScreens[kind].at(-1);
-    assert.ok(x >= 0 && x <= canvas.width && y >= 0 && y <= canvas.height,
-      `${kind} remains in the scene at the initial camera angle`);
+  assert.equal(typeof viewer.drawCelestial, 'undefined',
+    'small decorative Earth and Sun icons are removed');
+  const trace = [];
+  const skyAngles = [];
+  for (const name of ['drawSpaceScene', 'drawMesh', 'drawBodyAxes']) {
+    const original = viewer[name];
+    viewer[name] = function(...args) {
+      trace.push(name);
+      if (name === 'drawSpaceScene') skyAngles.push(
+        args[0].eye.reduce((sum, value, index) =>
+          sum + value * this.directions.earthBody[index], 0));
+      return original.apply(this, args);
+    };
   }
-  const beforeDrag = objectScreens.earth.at(-1);
+  viewer.draw();
+  assert.deepEqual(trace.slice(-3), ['drawSpaceScene', 'drawMesh', 'drawBodyAxes'],
+    'distant Earth/Sun render behind the spacecraft and centered axes overlay it');
+  const beforeDrag = skyAngles.at(-1);
   const oldYaw = viewer.yaw;
   handlers.pointerdown({pointerId:1,clientX:40,clientY:20});
   handlers.pointermove({pointerId:1,clientX:70,clientY:20});
   assert.ok(viewer.yaw > oldYaw, 'drag rotates the 3D orbit camera');
-  assert.notDeepEqual(objectScreens.earth.at(-1), beforeDrag,
-    'Earth object follows the orbit-camera projection');
+  assert.notEqual(skyAngles.at(-1), beforeDrag,
+    'Earth direction changes relative to the camera while the spacecraft stays centered');
   const oldZoom = viewer.zoom;
   handlers.wheel({deltaY:-1,preventDefault(){}});
   assert.ok(viewer.zoom > oldZoom, 'wheel zooms the orbit camera');
   handlers.keydown({key:'Home',preventDefault(){}});
   assert.equal(viewer.zoom, 1, 'keyboard can restore the camera');
+  viewer.yaw = Math.PI / 2;
+  viewer.pitch = 0;
+  const earthLayerCount = earthFrames.length;
+  viewer.draw();
+  assert.equal(earthFrames.length, earthLayerCount,
+    'Earth is out of sight when its direction is behind the camera');
+  assert.ok(axisMarkers.some(([x, y]) => x === canvas.width / 2 &&
+    y === canvas.height / 2), 'camera-aligned +Z uses a centered end-on axis marker');
+  for (const label of ['+X', '+Y', '+Z'])
+    assert.ok(labels.includes(label), `${label} remains identified at an end-on angle`);
+  viewer.yaw = 0;
+  viewer.setDirections({earthBody:[0,0,1], sunBody:[0,-1,0]});
+  assert.ok(skyDraws.includes('sun'),
+    'Sun is shown as a distant source in the same scene when it enters view');
+  viewer.yaw = -Math.PI / 2;
+  const beforeEclipse = skyDraws.length;
+  viewer.setDirections({earthBody:[0,0,1], sunBody:[0,0,1]});
+  assert.deepEqual(skyDraws.slice(beforeEclipse), ['sun', 'earth'],
+    'Earth is composited over the Sun when their sky directions coincide');
 })().catch((error) => { console.error(error); process.exitCode = 1; });
 """
 
@@ -125,6 +178,7 @@ class RosAttitudeViewerTest(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("node"), "Node.js unavailable")
     def test_bounded_mesh_and_camera_controls(self):
+        self.assertTrue(EARTH_ASSET.is_file(), "Local Earth texture is missing")
         result = subprocess.run(
             ["node", "-e", NODE_TEST, str(VIEWER)], capture_output=True,
             text=True, timeout=10, check=False, env=os.environ.copy(),

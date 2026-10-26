@@ -7,6 +7,8 @@
   const FRAME = "SIM_BODY_TO_ITRF_NADIR";
   const MAX_SAMPLE_GAP_MS = 120_000;
   const MAX_INPUT_AGE_MS = 72 * 3_600_000;
+  // A spherical display model; the trajectory and attitude remain FDS/TM data.
+  const EARTH_DISPLAY_RADIUS_M = 6_378_137;
 
   function finiteVector(values) {
     return Array.isArray(values) && values.length === 3 &&
@@ -41,6 +43,24 @@
     const doubled = cross(q, itrf).map((value) => 2 * value);
     const remainder = cross(q, doubled);
     return unit(itrf.map((value, axis) => value + w * doubled[axis] + remainder[axis]));
+  }
+
+  function bodyAxesItrf(quaternion) {
+    const qLength = Math.hypot(...quaternion);
+    if (!Number.isFinite(qLength) || Math.abs(qLength - 1) > 0.02) return null;
+    const [w, x, y, z] = quaternion.map((value) => value / qLength);
+    const vector = [x, y, z];
+    return [[1, 0, 0], [0, 1, 0], [0, 0, 1]].map((axis) => {
+      const doubled = cross(vector, axis).map((value) => 2 * value);
+      const remainder = cross(vector, doubled);
+      return axis.map((value, index) => value + w * doubled[index] + remainder[index]);
+    });
+  }
+
+  function earthAngularRadius(position) {
+    const distance = norm(position);
+    return distance > EARTH_DISPLAY_RADIUS_M ?
+      Math.asin(EARTH_DISPLAY_RADIUS_M / distance) : null;
   }
 
   function sampleAt(view, utcMs) {
@@ -94,14 +114,18 @@
     const utcMs = Date.parse(attitude.utc);
     if (!eligibleViewAt(orbitView, utcMs)) return null;
     const sample = sampleAt(orbitView, utcMs);
-    if (!sample || norm(sample.position) < 6.3e6 || norm(sample.position) > 8e6 ||
+    if (!sample || norm(sample.position) <= EARTH_DISPLAY_RADIUS_M ||
+        norm(sample.position) > 8e6 ||
         norm(sample.sun) < 0.9 || norm(sample.sun) > 1.1) return null;
     const earthItrf = unit(sample.position.map((value) => -value));
     const sunItrf = unit(sample.sun);
     const earthBody = bodyVector(earthItrf, attitude.quaternion_wxyz);
     const sunBody = bodyVector(sunItrf, attitude.quaternion_wxyz);
-    if (!earthBody || !sunBody) return null;
+    const bodyToItrf = bodyAxesItrf(attitude.quaternion_wxyz);
+    if (!earthBody || !sunBody || !bodyToItrf) return null;
     return {utc: attitude.utc, earthBody, sunBody, earthItrf, sunItrf,
+      bodyToItrf, satelliteItrf: sample.position,
+      earthAngularRadiusRad: earthAngularRadius(sample.position),
       earthAlignment: earthBody[2]};
   }
 
@@ -112,7 +136,7 @@
     const coverage = eligibleViewAt(orbitView, utcMs);
     if (!coverage) return null;
     const sample = sampleAt(orbitView, utcMs);
-    if (!sample || norm(sample.position) < 6.3e6 ||
+    if (!sample || norm(sample.position) <= EARTH_DISPLAY_RADIUS_M ||
         norm(sample.position) > 8e6 || norm(sample.sun) < 0.9 ||
         norm(sample.sun) > 1.1) return null;
     const earthItrf = unit(sample.position.map((value) => -value));
@@ -138,7 +162,10 @@
       dot(sunItrf, earthItrf)]);
     if (!sunBody) return null;
     return {utc: new Date(utcMs).toISOString(), earthBody: [0, 0, 1],
-      sunBody, earthItrf, sunItrf, earthAlignment: 1,
+      sunBody, earthItrf, sunItrf, bodyToItrf: [x, y, earthItrf],
+      satelliteItrf: sample.position,
+      earthAngularRadiusRad: earthAngularRadius(sample.position),
+      earthAlignment: 1,
       provenance: "FDS_TEST_NADIR_PREDICTION"};
   }
 

@@ -8,7 +8,7 @@ window.rosAttitudeViewer = (() => {
   const MAX_VERTICES = 40000;
   const MAX_TRIANGLES = 25000;
   const MAX_MATERIALS = 64;
-  const DEFAULT_YAW = Math.PI / 4;
+  const DEFAULT_YAW = -2.6;
   const DEFAULT_PITCH = 0.62;
   const AXES = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
   const AXIS_COLORS = ["#ee8e84", "#a6d78d", "#8fbef0"];
@@ -79,8 +79,8 @@ window.rosAttitudeViewer = (() => {
   }
 
   function cameraBasis(yaw, pitch) {
-    // Body +X is visually up; at the initial isometric view +Y goes left and
-    // +Z goes right, matching the user-supplied axis illustration.
+    // Body +X is visually up. Start on the -Y/-Z side so nadir Earth (+Z in
+    // the test attitude) forms a left-side limb behind the spacecraft.
     const eye = [Math.sin(pitch), Math.cos(pitch) * Math.cos(yaw),
       Math.cos(pitch) * Math.sin(yaw)];
     const right = unit(cross([1, 0, 0], eye));
@@ -105,8 +105,33 @@ window.rosAttitudeViewer = (() => {
       this.zoom = 1;
       this.pending = false;
       this.pointer = null;
+      this.preview = false;
+      this.refineTimer = null;
+      this.earthTexture = null;
+      this.earthLayer = null;
+      this.loadEarthTexture();
       this.installControls();
       this.draw();
+    }
+
+    loadEarthTexture() {
+      if (typeof Image === "undefined" || typeof document === "undefined") return;
+      const image = new Image();
+      image.onload = () => {
+        try {
+          const canvas = document.createElement("canvas");
+          canvas.width = 1600;
+          canvas.height = 800;
+          const ctx = canvas.getContext("2d", {willReadFrequently: true});
+          ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+          this.earthTexture = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        } catch (_) {
+          this.earthTexture = null;
+        }
+        this.requestDraw();
+      };
+      image.onerror = () => this.requestDraw();
+      image.src = "/assets/earth-blue-marble-october.jpg";
     }
 
     async load(url) {
@@ -161,10 +186,14 @@ window.rosAttitudeViewer = (() => {
         this.requestDraw();
       });
       for (const name of ["pointerup", "pointercancel", "lostpointercapture"])
-        canvas.addEventListener(name, () => { this.pointer = null; });
+        canvas.addEventListener(name, () => {
+          this.pointer = null;
+          this.requestDraw();
+        });
       canvas.addEventListener("wheel", (event) => {
         event.preventDefault();
         this.zoom = clamp(this.zoom * (event.deltaY < 0 ? 1.12 : 1 / 1.12), 0.6, 2.3);
+        this.queueRefine();
         this.requestDraw();
       }, {passive: false});
       canvas.addEventListener("keydown", (event) => {
@@ -178,8 +207,19 @@ window.rosAttitudeViewer = (() => {
         else if (event.key === "Home") this.reset();
         else return;
         event.preventDefault();
+        this.queueRefine();
         this.requestDraw();
       });
+    }
+
+    queueRefine() {
+      if (typeof setTimeout !== "function") return;
+      this.preview = true;
+      clearTimeout(this.refineTimer);
+      this.refineTimer = setTimeout(() => {
+        this.preview = false;
+        this.requestDraw();
+      }, 180);
     }
 
     requestDraw() {
@@ -196,6 +236,7 @@ window.rosAttitudeViewer = (() => {
       this.drawStars();
       const basis = cameraBasis(this.yaw, this.pitch);
       const pixels = Math.min(width, height) * 0.33 * this.zoom;
+      this.drawSpaceScene(basis, pixels);
       const project = (position) => {
         const depth = dot(position, basis.eye);
         const perspective = 4.3 / (4.3 - depth);
@@ -208,20 +249,9 @@ window.rosAttitudeViewer = (() => {
         negative: this.fitDirection(project, direction.map((value) => -value),
           1.3, 24, 24),
       })) : [];
-      // Bodies show directions from the satellite, not physical distance or size.
-      const bodies = this.mesh && this.directions ? [
-        {kind: "earth", point: this.fitDirection(project, this.directions.earthBody,
-          1.9, 74, 38)},
-        {kind: "sun", point: this.fitDirection(project, this.directions.sunBody,
-          1.9, 72, 36)},
-      ].sort((a, b) => a.point.depth - b.point.depth) : [];
       if (this.mesh) {
-        this.drawBodyAxes(axes, origin);
-        for (const body of bodies) this.drawDirectionGuide(origin, body.point,
-          body.kind === "earth" ? "#68a9d9" : "#e7b966", body.kind === "earth" ? 24 : 21);
-        for (const body of bodies) if (body.point.depth < 0) this.drawCelestial(body);
         this.drawMesh(project, basis.eye);
-        for (const body of bodies) if (body.point.depth >= 0) this.drawCelestial(body);
+        this.drawBodyAxes(axes, origin);
         this.drawAxisLabels(axes, origin);
       } else {
         ctx.fillStyle = "#a9bdc7";
@@ -245,8 +275,8 @@ window.rosAttitudeViewer = (() => {
     }
 
     fitDirection(project, direction, distance, marginX, marginY) {
-      // Reduce only illustrative display distance to keep direction objects in view.
-      // The projected ray remains aligned with the body-frame direction.
+      // Keep the projected body-axis endpoints within the canvas. Their rays
+      // still pass through the model origin in the actual body-frame direction.
       const vector = unit(direction);
       const at = (amount) => project(vector.map((value) => value * amount));
       const inside = (point) => point.x >= marginX &&
@@ -264,18 +294,36 @@ window.rosAttitudeViewer = (() => {
 
     drawBodyAxes(axes, origin) {
       const ctx = this.ctx;
+      ctx.save();
+      ctx.lineCap = "round";
+      const segment = (from, to, color, width, alpha, dashes) => {
+        ctx.setLineDash(dashes);
+        ctx.globalAlpha = alpha;
+        ctx.beginPath(); ctx.moveTo(from.x, from.y); ctx.lineTo(to.x, to.y);
+        ctx.strokeStyle = "#06101a"; ctx.lineWidth = width + 3; ctx.stroke();
+        ctx.strokeStyle = color; ctx.lineWidth = width; ctx.stroke();
+      };
+      let endOnAxis = -1;
       for (let axis = 0; axis < AXES.length; axis++) {
         const {positive, negative} = axes[axis];
-        ctx.strokeStyle = AXIS_COLORS[axis];
-        ctx.globalAlpha = 0.28;
-        ctx.lineWidth = 1.4;
-        ctx.beginPath(); ctx.moveTo(negative.x, negative.y);
-        ctx.lineTo(origin.x, origin.y); ctx.stroke();
-        ctx.globalAlpha = 0.9;
-        ctx.lineWidth = 2.5;
-        ctx.beginPath(); ctx.moveTo(origin.x, origin.y);
-        ctx.lineTo(positive.x, positive.y); ctx.stroke();
+        const color = AXIS_COLORS[axis];
+        const span = Math.hypot(positive.x - origin.x, positive.y - origin.y);
+        // All three axes pass through the satellite centre. Draw on top of the
+        // CAD so the body never hides an axis completely; dashed negative arms
+        // still distinguish the half pointing away from each positive arrow.
+        if (Math.hypot(negative.x - origin.x, negative.y - origin.y) >= 12)
+          segment(negative, origin, color, 1.5, 0.65, [5, 5]);
+        if (span < 18) {
+          // A line viewed end-on has zero projected length. Use the standard
+          // dot/cross sight-line marker at the *same* body-frame origin.
+          endOnAxis = axis;
+          continue;
+        }
+        segment(origin, positive, color, 2.5, 0.95, []);
         const angle = Math.atan2(positive.y - origin.y, positive.x - origin.x);
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = "#06101a"; ctx.lineWidth = 5.5;
         ctx.beginPath(); ctx.moveTo(positive.x, positive.y);
         ctx.lineTo(positive.x - Math.cos(angle - 0.42) * 10,
           positive.y - Math.sin(angle - 0.42) * 10);
@@ -283,8 +331,35 @@ window.rosAttitudeViewer = (() => {
         ctx.lineTo(positive.x - Math.cos(angle + 0.42) * 10,
           positive.y - Math.sin(angle + 0.42) * 10);
         ctx.stroke();
+        ctx.strokeStyle = color; ctx.lineWidth = 2.5; ctx.stroke();
       }
+      ctx.setLineDash([]);
       ctx.globalAlpha = 1;
+      if (endOnAxis >= 0) {
+        const color = AXIS_COLORS[endOnAxis];
+        const positive = axes[endOnAxis].positive;
+        ctx.fillStyle = "#07131f";
+        ctx.beginPath(); ctx.arc(origin.x, origin.y, 10, 0, 2 * Math.PI); ctx.fill();
+        ctx.strokeStyle = color; ctx.lineWidth = 2.3; ctx.stroke();
+        if (positive.depth >= origin.depth) {
+          ctx.fillStyle = color;
+          ctx.beginPath(); ctx.arc(origin.x, origin.y, 3, 0, 2 * Math.PI); ctx.fill();
+        } else {
+          ctx.strokeStyle = color; ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(origin.x - 3, origin.y - 3);
+          ctx.lineTo(origin.x + 3, origin.y + 3);
+          ctx.moveTo(origin.x + 3, origin.y - 3);
+          ctx.lineTo(origin.x - 3, origin.y + 3);
+          ctx.stroke();
+        }
+      } else {
+        ctx.setLineDash([]);
+        ctx.fillStyle = "#07131f";
+        ctx.beginPath(); ctx.arc(origin.x, origin.y, 4, 0, 2 * Math.PI); ctx.fill();
+        ctx.strokeStyle = "#e7edf3"; ctx.lineWidth = 1.4; ctx.stroke();
+      }
+      ctx.restore();
     }
 
     drawAxisLabels(axes, origin) {
@@ -294,10 +369,13 @@ window.rosAttitudeViewer = (() => {
       for (let axis = 0; axis < AXES.length; axis++) {
         const point = axes[axis].positive;
         const dx = point.x - origin.x, dy = point.y - origin.y;
-        const distance = Math.hypot(dx, dy) || 1;
-        const x = clamp(point.x + dx / distance * 18 - (axis === 0 ? 26 : 0),
+        const distance = Math.hypot(dx, dy);
+        const endOn = distance < 18;
+        const x = clamp(endOn ? origin.x + 33 :
+          point.x + dx / distance * 18 - (axis === 0 ? 26 : 0),
           20, this.canvas.width - 20);
-        const y = clamp(point.y + dy / distance * 18 + 4, 20, this.canvas.height - 12);
+        const y = clamp(endOn ? origin.y - 14 :
+          point.y + dy / distance * 18 + 4, 20, this.canvas.height - 12);
         ctx.fillStyle = "#07131fe0";
         ctx.fillRect(x - 16, y - 15, 32, 21);
         ctx.fillStyle = AXIS_COLORS[axis];
@@ -322,108 +400,142 @@ window.rosAttitudeViewer = (() => {
       }
     }
 
-    drawDirectionGuide(from, to, color, radius) {
-      const ctx = this.ctx;
-      ctx.strokeStyle = color;
-      ctx.globalAlpha = 0.36;
-      ctx.lineWidth = 1.3;
-      const dx = to.x - from.x, dy = to.y - from.y;
-      const span = Math.hypot(dx, dy) || 1;
-      ctx.beginPath(); ctx.moveTo(from.x, from.y);
-      ctx.lineTo(to.x - dx / span * radius, to.y - dy / span * radius);
-      ctx.stroke();
-      ctx.globalAlpha = 1;
+    drawSpaceScene(basis, pixels) {
+      if (!this.directions) return;
+      const earth = unit(this.directions.earthBody);
+      const sun = unit(this.directions.sunBody);
+      const angle = this.directions.earthAngularRadiusRad;
+      // The radius is computed from the FDS satellite position. A test-only
+      // direction supplied without that field uses the 500 km demo altitude.
+      const radius = Number.isFinite(angle) && angle > 0 && angle < Math.PI / 2 ?
+        angle : Math.asin(6378137 / (6378137 + 500000));
+      this.drawSunDisc(basis, pixels, sun);
+      this.drawEarthHorizon(basis, pixels, earth, sun, radius);
     }
 
-    drawCelestial({kind, point}) {
+    drawSunDisc(basis, pixels, sun) {
+      // Project a distant direction onto the same orbit-camera view as the CAD.
+      // A source outside the camera hemisphere stays out of sight.
+      const depth = -dot(sun, basis.eye);
+      if (depth <= 0.02) return;
+      const focal = pixels * 4.3;
+      const x = this.canvas.width / 2 + dot(sun, basis.right) * focal / depth;
+      const y = this.canvas.height / 2 - dot(sun, basis.up) * focal / depth;
+      if (x < -100 || x > this.canvas.width + 100 ||
+          y < -100 || y > this.canvas.height + 100) return;
       const ctx = this.ctx;
-      const {x, y} = point;
-      const radius = kind === "earth" ? 23 : 20;
-      const glow = ctx.createRadialGradient(x, y, radius * 0.3,
-        x, y, radius * 1.75);
-      if (kind === "earth") {
-        glow.addColorStop(0, "#59a7d060");
-        glow.addColorStop(1, "#59a7d000");
-      } else {
-        glow.addColorStop(0, "#ffd07780");
-        glow.addColorStop(1, "#f5a52900");
+      const halo = ctx.createRadialGradient(x, y, 1, x, y, 88);
+      halo.addColorStop(0, "rgba(255,248,205,0.96)");
+      halo.addColorStop(0.09, "rgba(255,216,133,0.68)");
+      halo.addColorStop(0.38, "rgba(255,193,91,0.13)");
+      halo.addColorStop(1, "rgba(255,193,91,0)");
+      ctx.fillStyle = halo;
+      ctx.beginPath(); ctx.arc(x, y, 88, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = "#fff8da";
+      ctx.beginPath(); ctx.arc(x, y, Math.max(4, focal * 0.00465), 0, Math.PI * 2); ctx.fill();
+    }
+
+    drawEarthHorizon(basis, pixels, earth, sun, angularRadius) {
+      if (typeof document === "undefined") return;
+      const centreAngle = Math.acos(clamp(-dot(earth, basis.eye), -1, 1));
+      const cornerAngle = Math.atan(Math.hypot(this.canvas.width, this.canvas.height) /
+        (2 * pixels * 4.3));
+      if (centreAngle > angularRadius + cornerAngle + 0.04) return;
+      // Dragging uses a coarse sky buffer while the CAD stays at full canvas
+      // resolution. A full sky render follows when the operator stops moving.
+      const moving = this.pointer || this.preview;
+      const scale = moving ?
+        Math.min(1, 300 / this.canvas.width, 180 / this.canvas.height) :
+        Math.min(1, 700 / this.canvas.width, 420 / this.canvas.height);
+      const width = Math.max(1, Math.round(this.canvas.width * scale));
+      const height = Math.max(1, Math.round(this.canvas.height * scale));
+      if (!this.earthLayer) {
+        const canvas = document.createElement("canvas");
+        this.earthLayer = {canvas, ctx: canvas.getContext("2d")};
       }
-      ctx.fillStyle = glow;
-      ctx.beginPath(); ctx.arc(x, y, radius * 1.75, 0, Math.PI * 2); ctx.fill();
-      if (kind === "earth") this.drawEarth(x, y, radius);
-      else this.drawSun(x, y, radius);
-      const label = kind === "earth" ? "지구" : "태양";
-      const color = kind === "earth" ? "#95ccef" : "#f5d082";
-      const labelX = clamp(x + radius + 15, 30, this.canvas.width - 30);
-      const labelY = clamp(y + 4, 20, this.canvas.height - 8);
-      ctx.fillStyle = "#07131fe0";
-      ctx.fillRect(labelX - 23, labelY - 16, 46, 22);
-      ctx.fillStyle = color;
-      ctx.font = "bold 13px Malgun Gothic, sans-serif";
-      ctx.textAlign = "center";
-      ctx.fillText(label, labelX, labelY);
-    }
-
-    drawEarth(x, y, radius) {
-      const ctx = this.ctx;
-      const sea = ctx.createRadialGradient(x - 8, y - 9, 1,
-        x + 5, y + 5, radius * 1.3);
-      sea.addColorStop(0, "#7dc7ea");
-      sea.addColorStop(0.55, "#286eaa");
-      sea.addColorStop(1, "#0b294c");
-      ctx.save();
-      ctx.beginPath(); ctx.arc(x, y, radius, 0, Math.PI * 2); ctx.clip();
-      ctx.fillStyle = sea;
-      ctx.fillRect(x - radius, y - radius, radius * 2, radius * 2);
-      ctx.fillStyle = "#81ba8b";
-      ctx.beginPath();
-      ctx.moveTo(x - 17, y - 8); ctx.lineTo(x - 9, y - 13);
-      ctx.lineTo(x - 3, y - 9); ctx.lineTo(x - 6, y - 3);
-      ctx.lineTo(x - 2, y + 2); ctx.lineTo(x - 8, y + 7);
-      ctx.lineTo(x - 12, y + 3); ctx.lineTo(x - 18, y + 2); ctx.closePath(); ctx.fill();
-      ctx.beginPath();
-      ctx.moveTo(x + 6, y - 8); ctx.lineTo(x + 16, y - 5);
-      ctx.lineTo(x + 18, y + 2); ctx.lineTo(x + 12, y + 5);
-      ctx.lineTo(x + 10, y + 12); ctx.lineTo(x + 4, y + 8);
-      ctx.lineTo(x + 5, y + 1); ctx.closePath(); ctx.fill();
-      ctx.strokeStyle = "#deeff7";
-      ctx.globalAlpha = 0.58;
-      ctx.lineWidth = 1.5;
-      ctx.beginPath(); ctx.arc(x - 3, y + 2, radius * 0.71, 3.65, 5.25); ctx.stroke();
-      ctx.beginPath(); ctx.arc(x + 5, y - 4, radius * 0.62, 0.35, 1.8); ctx.stroke();
-      ctx.restore();
-      ctx.strokeStyle = "#9fd9ee";
-      ctx.globalAlpha = 0.72;
-      ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.arc(x, y, radius, 0, Math.PI * 2); ctx.stroke();
-      ctx.globalAlpha = 1;
-    }
-
-    drawSun(x, y, radius) {
-      const ctx = this.ctx;
-      ctx.strokeStyle = "#f5bd63";
-      ctx.globalAlpha = 0.75;
-      ctx.lineWidth = 1.8;
-      for (let ray = 0; ray < 12; ray++) {
-        const angle = ray * Math.PI / 6;
-        ctx.beginPath();
-        ctx.moveTo(x + Math.cos(angle) * (radius + 5),
-          y + Math.sin(angle) * (radius + 5));
-        ctx.lineTo(x + Math.cos(angle) * (radius + 15),
-          y + Math.sin(angle) * (radius + 15));
-        ctx.stroke();
+      const layer = this.earthLayer;
+      if (!layer.ctx || !layer.ctx.createImageData || !layer.ctx.putImageData) return;
+      if (layer.canvas.width !== width || layer.canvas.height !== height) {
+        layer.canvas.width = width;
+        layer.canvas.height = height;
       }
-      ctx.globalAlpha = 1;
-      const surface = ctx.createRadialGradient(x - 7, y - 8, 1,
-        x + 5, y + 5, radius * 1.35);
-      surface.addColorStop(0, "#fff8ca");
-      surface.addColorStop(0.58, "#ffcc67");
-      surface.addColorStop(1, "#d8802a");
-      ctx.fillStyle = surface;
-      ctx.beginPath(); ctx.arc(x, y, radius, 0, Math.PI * 2); ctx.fill();
-      ctx.strokeStyle = "#ffe5a0";
-      ctx.lineWidth = 1;
-      ctx.stroke();
+      const output = layer.ctx.createImageData(width, height);
+      const target = output.data;
+      const source = this.earthTexture?.data;
+      const sourceWidth = this.earthTexture?.width || 0;
+      const sourceHeight = this.earthTexture?.height || 0;
+      const columns = this.directions.bodyToItrf;
+      const mapped = Array.isArray(columns) && columns.length === 3 &&
+        columns.every((axis) => Array.isArray(axis) && axis.length === 3 &&
+          axis.every(Number.isFinite));
+      const transform = mapped ? columns : [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+      const distance = 1 / Math.sin(angularRadius);
+      const cx = earth[0] * distance, cy = earth[1] * distance,
+        cz = earth[2] * distance;
+      const horizon = distance * distance - 1;
+      const focal = pixels * 4.3 * scale;
+      const halfWidth = width / 2, halfHeight = height / 2;
+      let hasEarth = false;
+      for (let py = 0; py < height; py++) {
+        const vertical = (halfHeight - py - 0.5) / focal;
+        for (let px = 0; px < width; px++) {
+          const horizontal = (px + 0.5 - halfWidth) / focal;
+          const inverse = 1 / Math.sqrt(1 + horizontal * horizontal +
+            vertical * vertical);
+          const rx = (-basis.eye[0] + basis.right[0] * horizontal +
+            basis.up[0] * vertical) * inverse;
+          const ry = (-basis.eye[1] + basis.right[1] * horizontal +
+            basis.up[1] * vertical) * inverse;
+          const rz = (-basis.eye[2] + basis.right[2] * horizontal +
+            basis.up[2] * vertical) * inverse;
+          const approach = rx * cx + ry * cy + rz * cz;
+          if (approach <= 0) continue;
+          const discriminant = approach * approach - horizon;
+          const index = (py * width + px) * 4;
+          if (discriminant < 0) {
+            // A narrow atmosphere just outside the physical horizon.
+            if (discriminant > -0.022) {
+              const strength = 1 + discriminant / 0.022;
+              target[index] = 58;
+              target[index + 1] = 145;
+              target[index + 2] = 221;
+              target[index + 3] = Math.round(55 * strength * strength);
+            }
+            continue;
+          }
+          hasEarth = true;
+          const distanceToSurface = approach - Math.sqrt(discriminant);
+          const nx = rx * distanceToSurface - cx;
+          const ny = ry * distanceToSurface - cy;
+          const nz = rz * distanceToSurface - cz;
+          let red = 30, green = 88, blue = 139;
+          if (source) {
+            const ex = nx * transform[0][0] + ny * transform[1][0] + nz * transform[2][0];
+            const ey = nx * transform[0][1] + ny * transform[1][1] + nz * transform[2][1];
+            const ez = nx * transform[0][2] + ny * transform[1][2] + nz * transform[2][2];
+            const longitude = Math.atan2(ey, ex);
+            const latitude = Math.asin(clamp(ez, -1, 1));
+            const tx = Math.min(sourceWidth - 1,
+              Math.floor((longitude / (2 * Math.PI) + 0.5) * sourceWidth));
+            const ty = Math.min(sourceHeight - 1,
+              Math.floor((0.5 - latitude / Math.PI) * sourceHeight));
+            const sourceIndex = (ty * sourceWidth + tx) * 4;
+            red = source[sourceIndex];
+            green = source[sourceIndex + 1];
+            blue = source[sourceIndex + 2];
+          }
+          const sunlight = Math.max(0, nx * sun[0] + ny * sun[1] + nz * sun[2]);
+          const illumination = 0.24 + 0.76 * Math.sqrt(sunlight);
+          const rim = Math.pow(1 - clamp(Math.sqrt(discriminant), 0, 1), 6);
+          target[index] = Math.min(255, red * illumination + 36 * rim);
+          target[index + 1] = Math.min(255, green * illumination + 96 * rim);
+          target[index + 2] = Math.min(255, blue * illumination + 150 * rim);
+          target[index + 3] = 255;
+        }
+      }
+      if (!hasEarth) return;
+      layer.ctx.putImageData(output, 0, 0);
+      this.ctx.drawImage(layer.canvas, 0, 0, this.canvas.width, this.canvas.height);
     }
   }
 
