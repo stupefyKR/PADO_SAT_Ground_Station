@@ -34,25 +34,26 @@ const near = (actual, expected) => {
     `${value} differs from ${expected[index]} at ${index}`));
 };
 
-// Identity body->ITRF: nadir in +Z, Sun in +X.
+// Identity body->ITRF: nadir in -X, Sun in +Z.
 const identity = compute({attitude: attitude([1, 0, 0, 0]),
-  orbitView: view([0, 0, -6878000], [1, 0, 0])});
-near(identity.earthBody, [0, 0, 1]);
-near(identity.sunBody, [1, 0, 0]);
-near(identity.satelliteItrf, [0, 0, -6878000]);
+  orbitView: view([6878000, 0, 0], [0, 0, 1])});
+near(identity.earthBody, [-1, 0, 0]);
+near(identity.sunBody, [0, 0, 1]);
+near(identity.satelliteItrf, [6878000, 0, 0]);
 identity.bodyToItrf.forEach((axis, index) => near(axis,
   [[1,0,0],[0,1,0],[0,0,1]][index]));
 assert.ok(identity.earthAngularRadiusRad > 1.1 && identity.earthAngularRadiusRad < 1.3);
 assert.ok(identity.earthAlignment > 0.999999);
 
-// Body +Z is ITRF +X after +90 deg about Y. Inverse rotation must recover +Z.
+// Body -X is ITRF +Z after +90 deg about Y. Inverse rotation must recover -X.
 const root = Math.sqrt(0.5);
 const rotated = compute({attitude: attitude([root, 0, root, 0],
   '2026-10-26T05:00:30.000Z'),
-  orbitView: view([-6878000, 0, 0], [0, 0, -1])});
-near(rotated.earthBody, [0, 0, 1]);
-near(rotated.sunBody, [1, 0, 0]);
-near(rotated.bodyToItrf[2], [1, 0, 0]);
+  orbitView: view([0, 0, -6878000], [1, 0, 0])});
+near(rotated.earthBody, [-1, 0, 0]);
+near(rotated.sunBody, [0, 0, 1]);
+near(rotated.bodyToItrf[0], [0, 0, -1]);
+assert.ok(rotated.earthAlignment > 0.999999);
 
 // An unrelated satellite, unsupported quaternion frame, or missing time
 // coverage cannot be presented as a physical Earth/Sun direction.
@@ -65,7 +66,8 @@ assert.equal(compute({attitude: attitude([1, 0, 0, 0],
   '2026-10-26T05:02:00.000Z'), orbitView: sample}), null);
 
 // FDS position samples imply along-track +Y. Nadir is ITRF -X, so the
-// right-handed simulated body basis is +X=ITRF +Y, +Y=ITRF -Z, +Z=ITRF -X.
+// right-handed simulated body basis is +X radial outward, +Y=ITRF -Z,
+// +Z along-track (with the radial velocity component removed).
 const predictedView = {
   ...view([6878000, 0, 0], [0, 0, -1]),
   samples: [
@@ -76,16 +78,16 @@ const predictedView = {
 const prediction = predictNadir({orbitView: predictedView,
   utc: '2026-10-26T05:00:30.000Z'});
 assert.equal(prediction.provenance, 'FDS_TEST_NADIR_PREDICTION');
-near(prediction.earthBody, [0, 0, 1]);
+near(prediction.earthBody, [-1, 0, 0]);
 near(prediction.sunBody, [0, 1, 0]);
-assert.ok(prediction.bodyToItrf[0][1] > 0.99,
-  'body +X follows the projected along-track direction');
+assert.ok(prediction.bodyToItrf[2][1] > 0.99,
+  'body +Z follows the projected along-track direction');
 assert.ok(Math.abs(prediction.bodyToItrf[0].reduce((sum, value, i) =>
   sum + value * prediction.bodyToItrf[2][i], 0)) < 1e-9);
 near(prediction.bodyToItrf[1], [0, 0, -1]);
-const nadir = [-6878000, -210000, 0];
-const nadirLength = Math.hypot(...nadir);
-near(prediction.bodyToItrf[2], nadir.map((value) => value / nadirLength));
+const radial = [6878000, 210000, 0];
+const radialLength = Math.hypot(...radial);
+near(prediction.bodyToItrf[0], radial.map((value) => value / radialLength));
 near(prediction.satelliteItrf, [6878000, 210000, 0]);
 assert.ok(prediction.earthAngularRadiusRad > 1.1 && prediction.earthAngularRadiusRad < 1.3);
 assert.equal(prediction.earthAlignment, 1);

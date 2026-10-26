@@ -106,7 +106,7 @@ FDS 산출물 대기는 화면에서 따로 표시한다.
 
 ```text
 fds-synthetic-demo ── TLE 기반 truth 궤도 ──→ sim-satellite
-         │                                  │ 5초마다 +Z Nadir 자세와 EPS/AOCS/GNSS TM 생성
+         │                                  │ 5초마다 -X Nadir 자세와 EPS/AOCS/GNSS TM 생성
          │                                  ▼
          │                            24시간 TM 저장소
          │                                  │ 연세대 UHF PASS에서 생성 시각 순서로 전송
@@ -119,7 +119,7 @@ fds-synthetic-demo ── TLE 기반 truth 궤도 ──→ sim-satellite
 
 `sim-satellite`는 FDS가 TLE로 만든 **별도 truth 파일**만 읽는다. 이후 GNSS로
 다시 계산한 운영자 화면 파일을 위성 위치의 원천으로 되먹이지 않는다.
-위성 기체 +Z는 지구 중심, +X는 궤도 진행 방향을 향한다. `sim-satellite`는
+위성 기체 -X는 지구 중심, +Z는 궤도 진행 방향을 향한다. `sim-satellite`는
 PASS 밖에서도 5초마다 EPS·AOCS·GNSS의 원본 시각이 담긴 시험 PDU를 생성해
 자체 SQLite 볼륨에 보관한다. 연세대 UHF PASS(AOS 이상, LOS 미만)가 열리면
 가장 오래된 PDU부터 연속 전송한다. 전송이 끊기거나 LOS에 도달하면 미전송분을

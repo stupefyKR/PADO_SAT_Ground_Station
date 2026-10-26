@@ -74,7 +74,7 @@ assert.throws(() => module.meshFromJson({...raw, triangles:Array(25001).fill([0,
   assert.match(statuses.at(-1), /CAD/);
   viewer.setDirections({earthBody:[0,0,0], sunBody:[1,0,0]});
   assert.equal(viewer.directions, null, 'zero direction is never rendered');
-  viewer.setDirections({earthBody:[0,0,1], sunBody:[1,0,0]});
+  viewer.setDirections({earthBody:[-1,0,0], sunBody:[0,0,1]});
   assert.ok(viewer.directions);
   const limb = earthFrames.at(-1);
   assert.ok(limb, 'spatial Earth horizon produces an image layer');
@@ -120,23 +120,23 @@ assert.throws(() => module.meshFromJson({...raw, triangles:Array(25001).fill([0,
   assert.ok(viewer.zoom > oldZoom, 'wheel zooms the orbit camera');
   handlers.keydown({key:'Home',preventDefault(){}});
   assert.equal(viewer.zoom, 1, 'keyboard can restore the camera');
-  viewer.yaw = Math.PI / 2;
+  viewer.yaw = Math.PI;
   viewer.pitch = 0;
   const earthLayerCount = earthFrames.length;
   viewer.draw();
   assert.equal(earthFrames.length, earthLayerCount,
     'Earth is out of sight when its direction is behind the camera');
   assert.ok(axisMarkers.some(([x, y]) => x === canvas.width / 2 &&
-    y === canvas.height / 2), 'camera-aligned +Z uses a centered end-on axis marker');
+    y === canvas.height / 2), 'camera-aligned X uses a centered end-on axis marker');
   for (const label of ['+X', '+Y', '+Z'])
     assert.ok(labels.includes(label), `${label} remains identified at an end-on angle`);
   viewer.yaw = 0;
-  viewer.setDirections({earthBody:[0,0,1], sunBody:[0,-1,0]});
+  viewer.setDirections({earthBody:[0,1,0], sunBody:[-1,0,0]});
   assert.ok(skyDraws.includes('sun'),
     'Sun is shown as a distant source in the same scene when it enters view');
-  viewer.yaw = -Math.PI / 2;
+  viewer.yaw = 0;
   const beforeEclipse = skyDraws.length;
-  viewer.setDirections({earthBody:[0,0,1], sunBody:[0,0,1]});
+  viewer.setDirections({earthBody:[-1,0,0], sunBody:[-1,0,0]});
   assert.deepEqual(skyDraws.slice(beforeEclipse), ['sun', 'earth'],
     'Earth is composited over the Sun when their sky directions coincide');
 })().catch((error) => { console.error(error); process.exitCode = 1; });

@@ -126,7 +126,7 @@
     return {utc: attitude.utc, earthBody, sunBody, earthItrf, sunItrf,
       bodyToItrf, satelliteItrf: sample.position,
       earthAngularRadiusRad: earthAngularRadius(sample.position),
-      earthAlignment: earthBody[2]};
+      earthAlignment: -earthBody[0]};
   }
 
   function predictNadir({orbitView, utc} = {}) {
@@ -141,7 +141,7 @@
         norm(sample.sun) > 1.1) return null;
     const earthItrf = unit(sample.position.map((value) => -value));
     const sunItrf = unit(sample.sun);
-    // The simulator uses body +Z nadir and body +X along-track. A central
+    // The simulator uses body -X nadir and body +Z along-track. A central
     // difference of nearby FDS positions estimates its ITRF velocity; at a
     // coverage edge use the available one-sided interval.
     const halfStepMs = Math.min(30_000, orbitView.sample_step_s * 500);
@@ -153,16 +153,17 @@
     if (!before || !after) return null;
     const velocity = before.position.map((value, axis) =>
       (after.position[axis] - value) / ((afterMs - beforeMs) / 1000));
-    const x = unit(velocity.map((value, axis) =>
-      value - dot(velocity, earthItrf) * earthItrf[axis]));
-    if (!x) return null;
-    const y = unit(cross(earthItrf, x));
+    const x = earthItrf.map((value) => -value);
+    const z = unit(velocity.map((value, axis) =>
+      value - dot(velocity, x) * x[axis]));
+    if (!z) return null;
+    const y = unit(cross(z, x));
     if (!y) return null;
     const sunBody = unit([dot(sunItrf, x), dot(sunItrf, y),
-      dot(sunItrf, earthItrf)]);
+      dot(sunItrf, z)]);
     if (!sunBody) return null;
-    return {utc: new Date(utcMs).toISOString(), earthBody: [0, 0, 1],
-      sunBody, earthItrf, sunItrf, bodyToItrf: [x, y, earthItrf],
+    return {utc: new Date(utcMs).toISOString(), earthBody: [-1, 0, 0],
+      sunBody, earthItrf, sunItrf, bodyToItrf: [x, y, z],
       satelliteItrf: sample.position,
       earthAngularRadiusRad: earthAngularRadius(sample.position),
       earthAlignment: 1,

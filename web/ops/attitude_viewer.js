@@ -8,7 +8,7 @@ window.rosAttitudeViewer = (() => {
   const MAX_VERTICES = 40000;
   const MAX_TRIANGLES = 25000;
   const MAX_MATERIALS = 64;
-  const DEFAULT_YAW = -2.6;
+  const DEFAULT_YAW = -1.0;
   const DEFAULT_PITCH = 0.62;
   const AXES = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
   const AXIS_COLORS = ["#ee8e84", "#a6d78d", "#8fbef0"];
@@ -79,11 +79,11 @@ window.rosAttitudeViewer = (() => {
   }
 
   function cameraBasis(yaw, pitch) {
-    // Body +X is visually up. Start on the -Y/-Z side so nadir Earth (+Z in
-    // the test attitude) forms a left-side limb behind the spacecraft.
-    const eye = [Math.sin(pitch), Math.cos(pitch) * Math.cos(yaw),
-      Math.cos(pitch) * Math.sin(yaw)];
-    const right = unit(cross([1, 0, 0], eye));
+    // Body +Z (along-track in the test attitude) is the camera's up reference.
+    // The initial +X/-Y view puts nadir Earth (-X) behind the left of the CAD.
+    const eye = [Math.cos(pitch) * Math.cos(yaw), Math.cos(pitch) * Math.sin(yaw),
+      Math.sin(pitch)];
+    const right = unit(cross([0, 0, 1], eye));
     const up = cross(eye, right);
     return {eye, right, up};
   }

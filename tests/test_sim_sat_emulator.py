@@ -79,17 +79,25 @@ class SimulatorEmulatorTests(unittest.TestCase):
         attitude = decode(packets[1])["fields"]
         quaternion = tuple(attitude[f"q_{axis}"] for axis in "wxyz")
         self.assertAlmostEqual(math.hypot(*quaternion), 1, places=6)
-        # Rotate body +Z through q. The result must point toward Earth center.
+        # Rotate body -X through q. It must point toward Earth center, while
+        # body +Z follows the velocity projected onto the local orbital plane.
         w, x, y, z = quaternion
+        rotated_minus_x = (-(1 - 2 * (y * y + z * z)),
+                           -2 * (x * y + w * z), -2 * (x * z - w * y))
         rotated_z = (2 * (x * z + w * y), 2 * (y * z - w * x),
                      1 - 2 * (x * x + y * y))
         radial = tuple(component / math.hypot(*position) for component in position)
-        self.assertLess(math.dist(rotated_z, tuple(-component for component in radial)),
+        self.assertLess(math.dist(rotated_minus_x, tuple(-component for component in radial)),
                         1e-5)
+        radial_speed = sum(a * b for a, b in zip(velocity, radial))
+        tangential = tuple(velocity[i] - radial_speed * radial[i] for i in range(3))
+        along_track = tuple(component / math.hypot(*tangential) for component in tangential)
+        self.assertLess(math.dist(rotated_z, along_track), 1e-5)
 
     def test_body_rates_follow_the_nadir_quaternion_rotation(self):
-        # In this fixed-plane prograde orbit, +Z faces nadir and +X follows
-        # velocity, so the body rotates about -Y relative to ITRF.
+        # In this fixed-plane prograde orbit, -X faces nadir and +Z follows
+        # velocity. +Y remains opposite the orbit normal, so the body rotates
+        # about -Y relative to ITRF.
         for seconds in (0, 155, 540):
             with self.subTest(seconds=seconds):
                 packets, _ = generate_packet_batch(

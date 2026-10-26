@@ -209,17 +209,17 @@ def _unit(vector: tuple[float, ...]) -> tuple[float, ...]:
 
 def _nadir_axes(position: tuple[float, ...],
                 velocity: tuple[float, ...]) -> tuple[tuple[float, ...], ...]:
-    """Body basis in ITRF: +Z nadir, +X along-track, +Y right-handed."""
-    z = tuple(-value for value in _unit(position))
-    tangential = tuple(velocity[i] - _dot(velocity, z) * z[i] for i in range(3))
-    x = _unit(tangential)
+    """Body basis in ITRF: -X nadir, +Z along-track, +Y right-handed."""
+    x = _unit(position)
+    tangential = tuple(velocity[i] - _dot(velocity, x) * x[i] for i in range(3))
+    z = _unit(tangential)
     y = _unit(_cross(z, x))
     return x, y, z
 
 
 def _nadir_quaternion(position: tuple[float, ...],
                       velocity: tuple[float, ...]) -> tuple[float, float, float, float]:
-    """Body-to-ITRF: body +Z points to Earth; +X points along track."""
+    """Body-to-ITRF: body -X points to Earth; +Z points along track."""
     x, y, z = _nadir_axes(position, velocity)
     # Rotation matrix columns are the body axes expressed in ITRF.
     m = ((x[0], y[0], z[0]), (x[1], y[1], z[1]), (x[2], y[2], z[2]))

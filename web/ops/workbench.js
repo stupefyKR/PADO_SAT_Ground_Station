@@ -495,7 +495,7 @@
       } catch (_) { directions = null; }
       if (directions) {
         source = "FDS 예상 자세 · 시험";
-        state = `FDS 예상 · 수신 TM 아님 · ${directions.utc} · +Z-지구 0.0°`;
+        state = `FDS 예상 · 수신 TM 아님 · ${directions.utc} · −X-지구 0.0°`;
       } else {
         state = attitudeOrbitView ?
           `${tmState} · FDS 예상 자세 산출 대기` :
@@ -510,7 +510,7 @@
         directions = window.rosAttitudeMath?.compute({attitude, orbitView: attitudeOrbitView}) || null;
       } catch (_) { directions = null; }
       state = directions ?
-        `지구·태양 방향 · +Z-지구 ${
+        `지구·태양 방향 · −X-지구 ${
           (Math.acos(Math.max(-1, Math.min(1, directions.earthAlignment))) * 180 / Math.PI).toFixed(1)}° · 시험` :
         "TM·FDS 시각 또는 위성 식별자 불일치";
     }
