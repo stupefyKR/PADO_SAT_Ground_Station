@@ -25,7 +25,7 @@ import org.orekit.utils.IERSConventions;
  * TEST_ONLY fictitious PADO-SAT orbit, never an observed N05 TLE.
  *
  * <p>The reference is a near-circular 500 km J2 sun-synchronous orbit with
- * nominal 06:00 mean local time of the ascending node. Every refresh is fitted
+ * nominal 12:00 mean local time of the ascending node. Every refresh is fitted
  * to the same propagated reference state; changing the TLE epoch does not reset
  * the orbital phase. The J2 design is a first-order approximation, not a
  * precision orbit or a replacement for observed elements.</p>
@@ -33,7 +33,7 @@ import org.orekit.utils.IERSConventions;
 public final class SyntheticTleMain {
     public static final int SATELLITE_NUMBER = 99999;
     public static final double ALTITUDE_M = 500_000.0;
-    public static final double TARGET_LTAN_HOURS = 6.0;
+    public static final double TARGET_LTAN_HOURS = 12.0;
     public static final Instant REFERENCE_EPOCH = Instant.parse("2026-10-23T00:00:00Z");
 
     private static final double J2 = 1.08262668e-3;

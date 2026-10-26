@@ -135,7 +135,7 @@ gs_fds_exchange pull-n05 HOST PORT USER PRIVATE_KEY HOST_KEY_SHA256 REMOTE_DIR F
 ### 가상 PADO-SAT SSO 화면 시험 (로컬 스택 기본값)
 
 실제 위성 TLE가 아직 없으므로 `tools/build_synthetic_demo.py --test-only`가 **고도 약 500 km,
-상승교점 지방 평균 태양시(LTAN) 약 06시**의 가상 태양동기궤도(SSO) TLE를 만든다.
+상승교점 지방 평균 태양시(LTAN) 약 12시**의 가상 태양동기궤도(SSO) TLE를 만든다.
 TLE의 epoch와 궤도 위상은 시험 실행 시각에 맞춰 갱신한다. FDS는 이 TLE를
 기존 SGP4 경로로 전파해 현재 UTC부터 최대 72시간의 궤도 보기와 두 지상국의
 PASS 일정을 만든다. 이 TLE는 위성 추적에서 얻은 궤도결정 결과가 아니며
@@ -147,6 +147,10 @@ python3 tools/build_synthetic_demo.py --test-only --orekit-data /path/to/orekit-
 ```
 
 로컬 Compose의 `fds-synthetic-demo`는 독립 컨테이너에서 15분마다 다시 계산한다.
+현재 시험은 `ltan12-v1` 시나리오의 별도 실행·N11·TM 저장 경로를 사용한다.
+이전 06시 궤도의 GNSS가 새 궤도의 초기 상태로 선택되지 않도록 기존 자료를
+보존한 채 경로를 분리한다. LTAN은 실제 남→북 적도 통과에서 UTC와 ITRF 경도로
+검산하며, 12시는 승교점이 지방 평균 태양시 정오에 해당한다.
 먼저 TLE만 사용한 궤도 truth를 별도 `fds-truth` 볼륨에 게시해 가상 위성의
 위치 기준으로 쓴다. `sim-satellite`는 이 위치 표본으로부터 5초마다
 `EPS_PDU1`, `AOCS_STATE`, `GNSS_PVT` **시험용 응용 PDU**를 만든다. 전용

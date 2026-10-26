@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -34,6 +35,7 @@ else:
 
 ROOT = Path(__file__).resolve().parents[1]
 POM = ROOT / "services/fds/pom.xml"
+SIMULATION_SCENARIO_ID = "ltan12-v1"
 _GROUP = re.compile(r"fds-synthetic-truth-(\d{8}T\d{6}Z-[0-9a-f]{8})")
 _N11_DIGEST = re.compile(r"[0-9a-f]{64}")
 
@@ -179,6 +181,22 @@ def _latest_gnss(args: argparse.Namespace) -> Path | None:
     return body
 
 
+def annotate_truth_scenario(run: Path) -> None:
+    """Mark a completed private truth run before its atomic public copy."""
+    path = run / "orbit_view.json"
+    if path.is_symlink() or not path.is_file() or path.stat().st_size > 4 * 1024 * 1024:
+        raise ValueError("bounded regular synthetic truth view required")
+    document = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(document, dict) or document.get("source") != "TLE" or \
+            document.get("norad_id") != 99999:
+        raise ValueError("synthetic TLE truth view required")
+    document["simulation_scenario_id"] = SIMULATION_SCENARIO_ID
+    payload = (json.dumps(document, separators=(",", ":")) + "\n").encode("utf-8")
+    if len(payload) > 4 * 1024 * 1024:
+        raise ValueError("annotated synthetic truth view exceeds 4 MiB")
+    path.write_bytes(payload)
+
+
 def run_once(args: argparse.Namespace, *, now: datetime | None = None) -> tuple[Path, str]:
     if not args.orekit_data.is_dir():
         raise ValueError("--orekit-data must be an existing directory")
@@ -205,6 +223,7 @@ def run_once(args: argparse.Namespace, *, now: datetime | None = None) -> tuple[
                               args.orekit_data.resolve(), "--tle", tle.resolve(),
                               "--out", truth_run.resolve()]
     _java(args, "FdsMain", fds_args)
+    annotate_truth_scenario(truth_run)
     truth = publish_view(truth_run, args.truth_view_dir)
     # The emulator sees only the TLE-derived truth. GNSS-fed operator output
     # cannot feed itself through this path on later refreshes.

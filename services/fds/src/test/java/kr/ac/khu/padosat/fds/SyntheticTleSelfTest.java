@@ -11,6 +11,7 @@ import org.orekit.propagation.analytical.tle.TLE;
 import org.orekit.propagation.analytical.tle.TLEPropagator;
 import org.orekit.time.AbsoluteDate;
 import org.orekit.utils.Constants;
+import org.orekit.utils.IERSConventions;
 
 /** Checks the test-only orbit geometry, wire syntax and refresh continuity. */
 public final class SyntheticTleSelfTest {
@@ -32,14 +33,28 @@ public final class SyntheticTleSelfTest {
             check(Math.abs(reference.getMeanMotion() * 86_400.0 / (2 * Math.PI)
                     - 15.21936) < 0.01, "500 km mean motion");
             check(Math.abs(localTimeHours(reference.getRaan(),
-                    SyntheticTleMain.REFERENCE_EPOCH) - 6.0) < 0.001,
+                    SyntheticTleMain.REFERENCE_EPOCH) - 12.0) < 0.001,
                     "mean-solar LTAN at reference epoch");
             check(Math.abs(propagatedLocalTimeHours(reference,
-                    SyntheticTleMain.REFERENCE_EPOCH) - 6.0) < 0.1,
-                    "propagated ascending-node time near 06:00");
+                    SyntheticTleMain.REFERENCE_EPOCH) - 12.0) < 0.1,
+                    "propagated ascending-node time near 12:00");
             check(Math.abs(propagatedLocalTimeHours(reference,
-                    SyntheticTleMain.REFERENCE_EPOCH.plusSeconds(72L * 3600L)) - 6.0) < 0.1,
+                    SyntheticTleMain.REFERENCE_EPOCH.plusSeconds(72L * 3600L)) - 12.0) < 0.1,
                     "sun-synchronous local time over 72 hours");
+            // Independent check: find an actual south-to-north equator
+            // crossing and use UTC + Earth-fixed longitude / 15 deg. This
+            // does not reuse the generator's mean-Sun/RAAN helper.
+            double crossingLtan = crossingLocalTimeHours(reference,
+                    SyntheticTleMain.REFERENCE_EPOCH);
+            double thirdDayLtan = crossingLocalTimeHours(reference,
+                    SyntheticTleMain.REFERENCE_EPOCH.plusSeconds(72L * 3600L));
+            check(Math.abs(crossingLtan - 12.0) < 0.1,
+                    "actual ascending equator crossing near local noon");
+            check(Math.abs(thirdDayLtan - 12.0) < 0.1,
+                    "actual ascending crossing local time after 72 hours");
+            System.out.printf(java.util.Locale.ROOT,
+                    "Ascending crossing LTAN: %.6f h; after 72 h: %.6f h%n",
+                    crossingLtan, thirdDayLtan);
 
             Instant after15Minutes = SyntheticTleMain.REFERENCE_EPOCH.plusSeconds(900);
             Instant after30Minutes = after15Minutes.plusSeconds(900);
@@ -110,6 +125,38 @@ public final class SyntheticTleSelfTest {
         Vector3D angularMomentum = Vector3D.crossProduct(pv.getPosition(), pv.getVelocity());
         Vector3D ascendingNode = Vector3D.crossProduct(Vector3D.PLUS_K, angularMomentum);
         return localTimeHours(Math.atan2(ascendingNode.getY(), ascendingNode.getX()), epoch);
+    }
+
+    private static double crossingLocalTimeHours(TLE tle, Instant epoch) {
+        var propagator = TLEPropagator.selectExtrapolator(tle);
+        var itrf = FramesFactory.getITRF(IERSConventions.IERS_2010, true);
+        AbsoluteDate start = OrbitInput.date(epoch);
+        double before = 0.0;
+        double previousZ = propagator.getPVCoordinates(start, itrf).getPosition().getZ();
+        for (double after = 60.0; after <= 3.0 * 3600.0; after += 60.0) {
+            double nextZ = propagator.getPVCoordinates(start.shiftedBy(after), itrf)
+                    .getPosition().getZ();
+            if (previousZ <= 0.0 && nextZ > 0.0) {
+                double low = before, high = after;
+                while (high - low > 0.001) {
+                    double middle = (low + high) / 2.0;
+                    double z = propagator.getPVCoordinates(start.shiftedBy(middle), itrf)
+                            .getPosition().getZ();
+                    if (z > 0.0) high = middle;
+                    else low = middle;
+                }
+                double crossing = (low + high) / 2.0;
+                Vector3D position = propagator.getPVCoordinates(start.shiftedBy(crossing), itrf)
+                        .getPosition();
+                double utcHours = ((epoch.getEpochSecond() + crossing) % 86400.0) / 3600.0;
+                double longitudeHours = Math.atan2(position.getY(), position.getX())
+                        * 12.0 / Math.PI;
+                return (utcHours + longitudeHours + 24.0) % 24.0;
+            }
+            before = after;
+            previousZ = nextZ;
+        }
+        throw new AssertionError("ascending equator crossing not found");
     }
 
     private static void check(boolean condition, String message) {

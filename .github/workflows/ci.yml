@@ -207,7 +207,7 @@ jobs:
           sleep 7
           "${compose[@]}" exec -T sim-satellite python3 - <<'PY'
           import sqlite3
-          with sqlite3.connect('file:/state/test_tm_spool.sqlite3?mode=ro', uri=True) as db:
+          with sqlite3.connect('file:/state/test_tm_spool-ltan12-v1.sqlite3?mode=ro', uri=True) as db:
               queued = db.execute('SELECT COUNT(*) FROM tm_spool').fetchone()[0]
           assert queued >= 3, queued
           print('out-of-contact stored PDUs:', queued)
@@ -247,10 +247,10 @@ jobs:
           ready=false
           for attempt in {1..36}; do
             if "${compose[@]}" exec -T sim-ground python3 -c \
-              'import json; from pathlib import Path; p=json.loads(Path("/tm-preview/test_tm_snapshot.json").read_text()); assert p["non_operational"] is True and p["attitude"] is not None and len(list(Path("/n11-inbox").glob("*.manifest.json"))) >= 1' \
+              'import json; from pathlib import Path; p=json.loads(Path("/tm-preview/test_tm_snapshot.json").read_text()); assert p["non_operational"] is True and p["attitude"] is not None and len(list(Path("/n11-inbox/scenario-ltan12-v1").glob("*.manifest.json"))) >= 1' \
               >/dev/null 2>&1; then
               if "${compose[@]}" exec -T sim-satellite python3 -c \
-                'import sqlite3; db=sqlite3.connect("file:/state/test_tm_spool.sqlite3?mode=ro",uri=True); assert db.execute("SELECT COUNT(*) FROM tm_spool").fetchone()[0] <= 3' \
+                'import sqlite3; db=sqlite3.connect("file:/state/test_tm_spool-ltan12-v1.sqlite3?mode=ro",uri=True); assert db.execute("SELECT COUNT(*) FROM tm_spool").fetchone()[0] <= 3' \
                 >/dev/null 2>&1; then
                 ready=true
                 break
@@ -263,7 +263,7 @@ jobs:
           fi
           "${compose[@]}" exec -T sim-satellite python3 - <<'PY'
           import sqlite3
-          with sqlite3.connect('file:/state/test_tm_spool.sqlite3?mode=ro', uri=True) as db:
+          with sqlite3.connect('file:/state/test_tm_spool-ltan12-v1.sqlite3?mode=ro', uri=True) as db:
               queued = db.execute('SELECT COUNT(*) FROM tm_spool').fetchone()[0]
           assert queued <= 3, queued
           print('in-contact remaining PDUs:', queued)

@@ -84,7 +84,7 @@ VM 브라우저 접속으로 별도 확인한다.
 Windows에서 별도 SSH 포워딩 없이
 `http://192.168.45.128:8080/login`에 접속해 로그인한다. ROS는 `/ops`,
 MPS는 `/mps`, 가상 PADO-SAT 위치는 `/orbit`이다. 화면은 동일 출처의 인증된
-API를 호출한다. `fds-synthetic-demo`가 고도 약 500 km, LTAN 06시의 합성 SSO
+API를 호출한다. `fds-synthetic-demo`가 고도 약 500 km, LTAN 12시의 합성 SSO
 TLE를 사용해 15분마다 FDS를 계산하고 ORBIT 보기와 N13 PASS 일정을 공유
 Docker 볼륨에 게시한다. 실행 때마다 TLE epoch를 현재 UTC 약 2초 전으로 갱신하며 예측
 기간은 최대 72시간이다. 이는 실제 PADO-SAT 궤도나 운용 TLE가 아닌 화면·API
@@ -144,6 +144,14 @@ FDS는 GNSS가 계획 시각 기준 72시간 미만이면 이를 우선 사용�
 `sim-volume-init`는 첫 실행과 재시작 때 FDS·TM·위성 저장소 볼륨의 최상위 디렉터리를
 컨테이너 UID 10001에 맞춘다. 기존 FDS 실행 결과의 비공개 하위 디렉터리는
 변경하지 않는다.
+
+현재 궤도 시나리오는 `ltan12-v1`이다. LTAN 12시는 남쪽에서 북쪽으로 적도를
+지날 때의 지방 평균 태양시가 정오라는 뜻이다. FDS 실행 자료는
+`/app/out/scenario-ltan12-v1`, 시험 N11은 `/n11-inbox/scenario-ltan12-v1`,
+위성 저장 TM은 `/state/test_tm_spool-ltan12-v1.sqlite3`를 사용한다. 이전 06시
+시험 자료는 기존 경로에 보존되며 새 GNSS 예측에 섞이지 않는다. 위성은 새
+시나리오 표시가 있는 truth가 게시될 때까지 기다린다. 전환 직후에는 새 TLE로
+계산하고, 새 PASS에서 GNSS를 받으면 다시 GNSS 수치 전파로 전환한다.
 
 ### MPS → ROS → 가상 위성 TC 왕복 시험
 

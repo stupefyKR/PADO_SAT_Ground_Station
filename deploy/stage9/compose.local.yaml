@@ -178,7 +178,7 @@ services:
     build:
       context: ../..
       dockerfile: docker/stage9/SimTm.Dockerfile
-    command: ["python3", "-m", "services.sim_ground.receiver", "--test-only", "--bind", "0.0.0.0", "--port", "9200", "--snapshot", "/tm-preview/test_tm_snapshot.json", "--n11-inbox", "/n11-inbox", "--limits", "/app/services/sim_ground/test_limits.json", "--tc-socket", "/run/sim-tc/bridge.sock", "--contact-view", "/fds-view/orbit_view.json"]
+    command: ["python3", "-m", "services.sim_ground.receiver", "--test-only", "--bind", "0.0.0.0", "--port", "9200", "--snapshot", "/tm-preview/test_tm_snapshot.json", "--n11-inbox", "/n11-inbox/scenario-ltan12-v1", "--limits", "/app/services/sim_ground/test_limits.json", "--tc-socket", "/run/sim-tc/bridge.sock", "--contact-view", "/fds-view/orbit_view.json"]
     depends_on:
       sim-volume-init: {condition: service_completed_successfully}
     volumes:
@@ -196,7 +196,7 @@ services:
     build:
       context: ../..
       dockerfile: docker/stage9/SimTm.Dockerfile
-    command: ["python3", "-m", "services.sim_sat.emulator", "--test-only", "--orbit-view", "/fds-view/orbit_view.json", "--host", "sim-ground", "--port", "9200", "--interval-seconds", "5", "--seed", "1", "--spool", "/state/test_tm_spool.sqlite3"]
+    command: ["python3", "-m", "services.sim_sat.emulator", "--test-only", "--orbit-view", "/fds-view/orbit_view.json", "--host", "sim-ground", "--port", "9200", "--interval-seconds", "5", "--seed", "1", "--spool", "/state/test_tm_spool-ltan12-v1.sqlite3", "--scenario-id", "ltan12-v1"]
     depends_on:
       sim-ground: {condition: service_started}
       fds-synthetic-demo: {condition: service_started}

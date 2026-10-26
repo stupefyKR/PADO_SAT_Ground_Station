@@ -21,4 +21,4 @@ RUN git clone --depth 1 https://gitlab.orekit.org/orekit/orekit-data.git /opt/or
     && chown -R 10001:10001 /app /opt/orekit-data
 
 USER 10001:10001
-CMD ["python3", "tools/build_synthetic_demo.py", "--test-only", "--orekit-data", "/opt/orekit-data", "--mvn", "/usr/local/bin/mvn-offline", "--maven-repo", "/app/m2", "--n11-inbox", "/n11-inbox", "--watch", "--refresh-seconds", "900"]
+CMD ["python3", "tools/build_synthetic_demo.py", "--test-only", "--orekit-data", "/opt/orekit-data", "--mvn", "/usr/local/bin/mvn-offline", "--maven-repo", "/app/m2", "--output-root", "/app/out/scenario-ltan12-v1", "--n11-inbox", "/n11-inbox/scenario-ltan12-v1", "--watch", "--refresh-seconds", "900"]

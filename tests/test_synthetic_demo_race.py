@@ -1,5 +1,6 @@
 """Synthetic FDS must plan after a GNSS packet received during truth propagation."""
 
+import json
 import tempfile
 import unittest
 from datetime import datetime, timezone
@@ -44,8 +45,14 @@ class SyntheticGnssArrivalTests(unittest.TestCase):
                 output.mkdir()
                 (output / "run.properties").write_text(
                     "source=" + ("GNSS" if "--gnss" in command else "TLE") + "\n")
+                (output / "orbit_view.json").write_text(json.dumps({
+                    "source": "GNSS" if "--gnss" in command else "TLE",
+                    "norad_id": 99999}), encoding="utf-8")
 
             def fake_publish(run, destination):
+                if "truth" in run.name:
+                    truth = json.loads((run / "orbit_view.json").read_text())
+                    self.assertEqual(truth["simulation_scenario_id"], "ltan12-v1")
                 published.append(run.name)
                 return destination / "orbit_view.json"
 

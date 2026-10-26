@@ -15,6 +15,7 @@ import bisect
 import json
 import math
 import os
+import re
 import select
 import sqlite3
 import socket
@@ -67,6 +68,7 @@ class OrbitView:
     end_s: int
     samples: tuple[OrbitSample, ...]
     times_s: tuple[int, ...]
+    scenario_id: str | None = None
 
 
 @dataclass
@@ -110,6 +112,20 @@ def _number(value: object) -> bool:
     return type(value) in (int, float) and math.isfinite(value)
 
 
+def _valid_scenario_id(value: object) -> bool:
+    return isinstance(value, str) and re.fullmatch(r"[a-z][a-z0-9-]{0,63}", value) is not None
+
+
+def require_scenario(view: OrbitView, expected: str | None) -> None:
+    """A configured scenario must not consume a prior deployment's truth view."""
+    if expected is None:
+        return
+    if not _valid_scenario_id(expected):
+        raise ValueError("invalid simulation scenario ID")
+    if view.scenario_id != expected:
+        raise ValueError(f"simulation truth scenario mismatch; waiting for {expected}")
+
+
 def parse_orbit_view(raw: bytes) -> OrbitView:
     """Validate the published virtual TLE view before deriving fake GNSS TM."""
     if not isinstance(raw, bytes) or not 1 <= len(raw) <= MAX_VIEW_BYTES:
@@ -128,6 +144,9 @@ def parse_orbit_view(raw: bytes) -> OrbitView:
             not isinstance(document.get("samples"), list) or
             not 4 <= len(document["samples"]) <= MAX_SAMPLES):
         raise ValueError("only the virtual TEST_ONLY TLE view is accepted")
+    scenario = document.get("simulation_scenario_id")
+    if "simulation_scenario_id" in document and not _valid_scenario_id(scenario):
+        raise ValueError("invalid simulation truth scenario ID")
     # A TLE epoch normally has fractional seconds; FDS sample ticks do not.
     epoch = (_utc_datetime(document.get("input_epoch_utc")) - _EPOCH).total_seconds()
     start = _utc_s(document.get("start_utc"))
@@ -154,7 +173,7 @@ def parse_orbit_view(raw: bytes) -> OrbitView:
     if samples[0].utc_s != start or samples[-1].utc_s != end:
         raise ValueError("virtual view sample coverage is invalid")
     return OrbitView(VIRTUAL_NORAD_ID, epoch, start, end, tuple(samples),
-                     tuple(item.utc_s for item in samples))
+                     tuple(item.utc_s for item in samples), scenario)
 
 
 def load_orbit_view(path: Path) -> OrbitView:
@@ -535,9 +554,12 @@ def wait_and_answer_one_tc(connection: socket.socket, tm_sequence: int,
 
 def run_forever(orbit_view: Path, host: str, port: int, interval_s: int,
                 seed: int, spool_path: Path, *,
+                scenario_id: str | None = None,
                 clock: Callable[[], datetime] | None = None,
                 sleeper: Callable[[float], None] = time.sleep) -> None:
     """Generate TM every tick, store it, and drain it during virtual contact."""
+    if scenario_id is not None and not _valid_scenario_id(scenario_id):
+        raise ValueError("invalid simulation scenario ID")
     clock = clock or (lambda: datetime.now(timezone.utc))
     connection: socket.socket | None = None
     replay = TcReplayState()
@@ -549,6 +571,7 @@ def run_forever(orbit_view: Path, host: str, port: int, interval_s: int,
             tick_started = time.monotonic()
             try:
                 view = load_orbit_view(orbit_view)
+                require_scenario(view, scenario_id)
                 moment = clock()
                 if moment.tzinfo is None:
                     raise ValueError("simulator clock must be timezone aware")
@@ -633,13 +656,16 @@ def main() -> None:
     parser.add_argument("--interval-seconds", type=int, default=5)
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--spool", type=Path, required=True)
+    parser.add_argument("--scenario-id",
+                        help="wait for the matching synthetic truth scenario before producing TM")
     args = parser.parse_args()
     if not 1 <= args.port <= 65535 or not 5 <= args.interval_seconds <= 60 or \
-            not 0 <= args.seed <= 0xffffffff:
-        parser.error("port, 5..60 second cadence or u32 seed invalid")
+            not 0 <= args.seed <= 0xffffffff or \
+            (args.scenario_id is not None and not _valid_scenario_id(args.scenario_id)):
+        parser.error("port, 5..60 second cadence, u32 seed or scenario ID invalid")
     try:
         run_forever(args.orbit_view, args.host, args.port, args.interval_seconds,
-                    args.seed, args.spool)
+                    args.seed, args.spool, scenario_id=args.scenario_id)
     except KeyboardInterrupt:
         pass
 
