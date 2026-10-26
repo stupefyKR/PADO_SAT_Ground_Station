@@ -111,6 +111,39 @@ function mpsPassSamples(orbit, pass) {
     mpsPassPoint(rows, los)] };
 }
 
+function mpsGroundContext(orbit, pass) {
+  const periodMs = orbit.orbital_period_s * 1000;
+  if (!Number.isFinite(periodMs) || periodMs < 60_000 || periodMs > 86_400_000) {
+    throw new Error("FDS 궤도 주기를 확인할 수 없습니다.");
+  }
+  const requestedStart = pass.aos_utc_s * 1000 - 2 * periodMs;
+  const requestedEnd = pass.los_utc_s * 1000 + 2 * periodMs;
+  const start = Math.max(requestedStart, Date.parse(orbit.start_utc));
+  const end = Math.min(requestedEnd, Date.parse(orbit.end_utc));
+  const samples = orbit.samples;
+  return {
+    rows: [mpsPassPoint(samples, start),
+      ...samples.filter((row) => Date.parse(row[0]) > start && Date.parse(row[0]) < end),
+      mpsPassPoint(samples, end)],
+    requestedStart, requestedEnd,
+    clippedBefore: start > requestedStart,
+    clippedAfter: end < requestedEnd
+  };
+}
+
+function mpsTraceGround(context, rows, width, height) {
+  context.beginPath();
+  let previousX = null;
+  rows.forEach((row) => {
+    const x = (row[4] + 180) / 360 * width;
+    const y = (90 - row[5]) / 180 * height;
+    if (previousX === null || Math.abs(x - previousX) > width / 2) context.moveTo(x, y);
+    else context.lineTo(x, y);
+    previousX = x;
+  });
+  context.stroke();
+}
+
 function mpsObserve(row, station) {
   const rad = Math.PI / 180;
   const lat = station.latitude_deg * rad, lon = station.longitude_deg * rad;
@@ -140,12 +173,18 @@ function mpsDrawPass(pass) {
     note.textContent = "FDS 위치 산출물과 패스 일정을 기다리는 중입니다.";
     return;
   }
-  let geometry;
-  try { geometry = mpsPassSamples(mpsOrbitView, pass); }
+  let geometry, contextTrack;
+  try {
+    geometry = mpsPassSamples(mpsOrbitView, pass);
+    contextTrack = mpsGroundContext(mpsOrbitView, pass);
+  }
   catch (error) { state.textContent = "경로 확인 불가"; note.textContent = error.message; return; }
   const { station, rows } = geometry;
   state.textContent = `${pass.station_id === "yonsei" ? "연세대" : "항우연"} · ${pass.band} · FDS 확인`;
-  note.textContent = `AOS ${new Date(pass.aos_utc_s * 1000).toISOString()} · LOS ${new Date(pass.los_utc_s * 1000).toISOString()} · 시험용 근사 안테나 좌표`;
+  const clipped = contextTrack.clippedBefore || contextTrack.clippedAfter ?
+    ` · FDS 표본 범위로 ${contextTrack.clippedBefore && contextTrack.clippedAfter ? "양쪽" :
+      contextTrack.clippedBefore ? "이전" : "이후"} 궤도 일부만 표시` : "";
+  note.textContent = `AOS ${new Date(pass.aos_utc_s * 1000).toISOString()} · LOS ${new Date(pass.los_utc_s * 1000).toISOString()} · 이전·이후 각 2주기${clipped} · 시험용 근사 안테나 좌표`;
   const w = ground.width, h = ground.height;
   g.fillStyle = "#0b2331"; g.fillRect(0, 0, w, h);
   const image = document.getElementById("mps-earth-image");
@@ -159,20 +198,33 @@ function mpsDrawPass(pass) {
     const y = (90 - lat) / 180 * h;
     g.beginPath(); g.moveTo(0, y); g.lineTo(w, y); g.stroke();
   }
-  g.strokeStyle = "#ffde82"; g.lineWidth = 3;
-  let previous = null;
-  rows.forEach((row) => {
+  g.strokeStyle = "#e5f4fab3"; g.lineWidth = 1.5; g.setLineDash([5, 4]);
+  mpsTraceGround(g, contextTrack.rows, w, h);
+  g.setLineDash([]);
+  g.strokeStyle = "#ffde82"; g.lineWidth = 3.5;
+  mpsTraceGround(g, rows, w, h);
+  g.font = "bold 11px system-ui";
+  for (const [label, row] of [["AOS", rows[0]], ["LOS", rows[rows.length - 1]]]) {
     const x = (row[4] + 180) / 360 * w, y = (90 - row[5]) / 180 * h;
-    if (!previous || Math.abs(x - previous[0]) > w / 2) g.beginPath();
-    else g.lineTo(x, y);
-    if (!previous || Math.abs(x - previous[0]) > w / 2) g.moveTo(x, y);
-    else g.stroke();
-    previous = [x, y];
-  });
+    g.fillStyle = "#ffde82";
+    g.beginPath(); g.arc(x, y, 4, 0, Math.PI * 2); g.fill();
+    const tx = Math.max(5, Math.min(w - 31, x + 7));
+    const ty = Math.max(13, Math.min(h - 4, y - 7));
+    g.fillStyle = "#071522e6"; g.fillRect(tx - 2, ty - 11, 28, 14);
+    g.fillStyle = "#ffde82"; g.fillText(label, tx, ty);
+  }
   const sx = (station.longitude_deg + 180) / 360 * w;
   const sy = (90 - station.latitude_deg) / 180 * h;
   g.fillStyle = "#71ffcf"; g.beginPath(); g.arc(sx, sy, 6, 0, Math.PI * 2); g.fill();
   g.font = "bold 13px system-ui"; g.fillText(pass.station_id.toUpperCase(), sx + 9, sy - 8);
+  g.fillStyle = "#071522dc"; g.fillRect(8, 8, 175, 47);
+  g.font = "11px system-ui";
+  g.strokeStyle = "#e5f4fab3"; g.lineWidth = 1.5; g.setLineDash([5, 4]);
+  g.beginPath(); g.moveTo(18, 23); g.lineTo(49, 23); g.stroke(); g.setLineDash([]);
+  g.fillStyle = "#f4f8fa"; g.fillText("주변 궤도 (전·후 2주기)", 57, 27);
+  g.strokeStyle = "#ffde82"; g.lineWidth = 3;
+  g.beginPath(); g.moveTo(18, 43); g.lineTo(49, 43); g.stroke();
+  g.fillText("선택 PASS", 57, 47);
   const cx = polar.width / 2, cy = polar.height / 2, radius = Math.min(cx, cy) - 35;
   p.fillStyle = "#091b2a"; p.fillRect(0, 0, polar.width, polar.height);
   p.strokeStyle = "#45606c"; p.lineWidth = 1;

@@ -90,6 +90,9 @@ Docker 볼륨에 게시한다. 실행 때마다 TLE epoch를 현재 UTC 약 2초
 기간은 최대 72시간이다. 이는 실제 PADO-SAT 궤도나 운용 TLE가 아닌 화면·API
 연결 시험 자료다. MPS의 선택 PASS 지도·polar plot과 시험 시퀀스도 이 자료를
 사용한다. 초안 저장은 테스트 전용이다.
+MPS Ground view는 선택한 PASS 전후 각 두 궤도 주기의 FDS 지상궤적을 함께
+표시하고 교신 구간을 강조한다. FDS 표본 범위를 벗어나는 구간은 표시하지 않으며,
+Polar plot은 선택한 PASS만 보여준다.
 
 ORBIT의 위성 선택기는 가상 PADO-SAT, ISS 외삽 시험, 실제 운용 위성을 구분한다.
 ISS 화면은 사용자가 제공한 고정 TLE를 외삽해 현재 epoch에 재적합한 **가상 궤도**를
