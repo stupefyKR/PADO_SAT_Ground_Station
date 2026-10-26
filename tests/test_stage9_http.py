@@ -171,3 +171,30 @@ class LocalHttpWebTests(unittest.TestCase):
             self.portal.synthetic_orbit_view = None
             self.portal.iss_orbit_view = None
             self.portal.operational_orbit_view = None
+
+    def test_cad_mesh_asset_requires_login_and_is_bounded(self):
+        base = f"http://127.0.0.1:{self.portal.server_port}"
+        mesh_path = self.folder / "assets" / "pado-sat-deployed-mesh.json"
+        mesh_path.parent.mkdir()
+        mesh_path.write_text(json.dumps({"schema": "pado.cad-mesh.v1",
+                                         "vertices": [], "triangles": []}), encoding="utf-8")
+        self.portal.static_root = self.folder
+        try:
+            status, _, _ = self.request(base + "/assets/pado-sat-deployed-mesh.json")
+        except URLError as error:
+            if isinstance(error.reason, PermissionError):
+                self.skipTest("local sandbox denies loopback connections")
+            raise
+        self.assertEqual(status, 401)
+        status, headers, _ = self.request(base + "/api/login", data={
+            "username": "planner01", "password": "valid-password-123"})
+        self.assertEqual(status, 200)
+        cookie = {"Cookie": headers["Set-Cookie"].split(";", 1)[0]}
+        status, _, body = self.request(base + "/assets/pado-sat-deployed-mesh.json",
+                                       headers=cookie)
+        self.assertEqual(status, 200)
+        self.assertEqual(body["schema"], "pado.cad-mesh.v1")
+        mesh_path.write_bytes(b"x" * (4 * 1024 * 1024 + 1))
+        status, _, _ = self.request(base + "/assets/pado-sat-deployed-mesh.json",
+                                    headers=cookie)
+        self.assertEqual(status, 503)

@@ -42,6 +42,9 @@
   let lastPublishedRaw = "";
   let previewPending = false;
   let publishedReachable = false;
+  let attitudeViewer = null;
+  let attitudeOrbitView = null;
+  let attitudeOrbitPending = false;
 
   function activateTab(name, focus = false) {
     const tabs = [...document.querySelectorAll("[data-ros-target]")];
@@ -435,56 +438,46 @@
     }
   }
 
-  // Geometry provider boundary: a future vetted CAD mesh adapter can supply vertices/faces.
-  const boxModel = {
-    vertices: [[-0.75,-0.4,-1.05],[0.75,-0.4,-1.05],[0.75,0.4,-1.05],[-0.75,0.4,-1.05],
-      [-0.75,-0.4,1.05],[0.75,-0.4,1.05],[0.75,0.4,1.05],[-0.75,0.4,1.05]],
-    faces: [[0,1,2,3],[4,5,6,7],[0,1,5,4],[2,3,7,6],[1,2,6,5],[0,3,7,4]]
-  };
   function renderAttitude(attitude) {
-    const canvas = $("attitude-canvas");
-    const ctx = canvas.getContext("2d");
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = "#091824";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.strokeStyle = "#253f50";
-    for (let x = 20; x < 560; x += 36) {
-      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, 310); ctx.stroke();
-    }
-    if (!attitude) {
-      ctx.fillStyle = "#91a8b4"; ctx.font = "15px Malgun Gothic, sans-serif";
-      ctx.textAlign = "center"; ctx.fillText("자세 TM 표본 없음", 280, 160);
+    if (!attitudeViewer) {
+      $("attitude-direction-state").textContent = "3D 뷰어 사용 불가";
       return;
     }
-    const [w, qx, qy, qz] = attitude.quaternion_wxyz;
-    const rotate = ([x,y,z]) => [
-      (1-2*(qy*qy+qz*qz))*x + 2*(qx*qy-w*qz)*y + 2*(qx*qz+w*qy)*z,
-      2*(qx*qy+w*qz)*x + (1-2*(qx*qx+qz*qz))*y + 2*(qy*qz-w*qx)*z,
-      2*(qx*qz-w*qy)*x + 2*(qy*qz+w*qx)*y + (1-2*(qx*qx+qy*qy))*z
-    ];
-    const project = (v) => {
-      const [x,y,z] = rotate(v);
-      const cameraX = x*0.82 - y*0.57;
-      const cameraY = x*0.3 + y*0.44 - z*0.85;
-      const depth = x*0.48 + y*0.69 + z*0.48;
-      const scale = 100 / (1 + depth*0.09);
-      return {x: 280 + cameraX*scale, y: 155 + cameraY*scale, depth};
-    };
-    const vertices = boxModel.vertices.map(project);
-    const faces = boxModel.faces.map((indices, index) => ({
-      points: indices.map((vertex) => vertices[vertex]), index,
-      depth: indices.reduce((sum, vertex) => sum + vertices[vertex].depth, 0) / 4
-    })).sort((a,b) => b.depth-a.depth);
-    const colors = ["#257590","#2b9ba6","#164b64","#1d6378","#315e7e","#287b8d"];
-    for (const face of faces) {
-      ctx.beginPath();
-      ctx.moveTo(face.points[0].x, face.points[0].y);
-      face.points.slice(1).forEach((point) => ctx.lineTo(point.x, point.y));
-      ctx.closePath(); ctx.fillStyle = colors[face.index]; ctx.fill();
-      ctx.lineWidth = 2; ctx.strokeStyle = "#9bd3db"; ctx.stroke();
+    let directions = null;
+    let state = "자세 TM 표본 없음";
+    if (attitude && attitude.frame !== "SIM_BODY_TO_ITRF_NADIR") {
+      state = "방향 산출을 지원하지 않는 자세 좌표계";
+    } else if (attitude && tmSource === "published" && (!publishedReachable ||
+               Date.now() - Date.parse(attitude.utc) > 5 * 60 * 1000)) {
+      state = "시험 TM이 오래됐거나 새 입력이 없습니다";
+    } else if (attitude && !attitudeOrbitView) {
+      state = "FDS 위치·태양 자료 대기";
+    } else if (attitude) {
+      try {
+        directions = window.rosAttitudeMath?.compute({attitude, orbitView: attitudeOrbitView}) || null;
+      } catch (_) { directions = null; }
+      state = directions ?
+        `지구·태양 방향 · +Z-지구 ${
+          (Math.acos(Math.max(-1, Math.min(1, directions.earthAlignment))) * 180 / Math.PI).toFixed(1)}° · 시험` :
+        "TM·FDS 시각 또는 위성 식별자 불일치";
     }
-    ctx.fillStyle = "#e9f5f6"; ctx.font = "bold 14px Consolas, monospace";
-    ctx.textAlign = "center"; ctx.fillText("BOX MODEL · TEST TM", 280, 292);
+    attitudeViewer.setDirections(directions);
+    $("attitude-direction-state").textContent = state;
+  }
+
+  async function refreshAttitudeOrbit() {
+    if (attitudeOrbitPending) return;
+    attitudeOrbitPending = true;
+    try {
+      const orbit = await api("/api/fds/orbit?target=synthetic");
+      attitudeOrbitView = orbit?.schema === "fds.orbit-view.v1" &&
+        orbit.norad_id === 99999 ? orbit : null;
+    } catch (_) {
+      attitudeOrbitView = null;
+    } finally {
+      attitudeOrbitPending = false;
+      renderAttitude(selectedTm?.attitude);
+    }
   }
   function loadTm(data, sourceLabel = "수동 시험용 정규화 TM") {
     selectedTm = normalizedTm(data);
@@ -500,7 +493,7 @@
     $("ros-last-tm").textContent = selectedTm.received_utc;
     $("chart-source").textContent = `데이터 소스: ${sourceLabel} · 실제 위성 TM 아님`;
     $("demo-toggle").textContent = "합성 예시 보기";
-    $("attitude-source").textContent = selectedTm.attitude ? "시험 TM · BOX" : "데이터 없음";
+    $("attitude-source").textContent = selectedTm.attitude ? "시험 자세 TM 수신" : "데이터 없음";
     $("attitude-quaternion").textContent = selectedTm.attitude ?
       selectedTm.attitude.quaternion_wxyz.map((x) => x.toFixed(4)).join(", ") : "—";
     $("attitude-frame").textContent = selectedTm.attitude?.frame || "미정";
@@ -567,6 +560,7 @@
     if (old) $("chart-source").textContent =
       "데이터 소스: 게시된 시험 TM · 5분 이상 갱신 없음 · 실제 위성 TM 아님";
     renderCurrentAlerts();
+    if (old) renderAttitude(selectedTm.attitude);
   }
   async function refreshPublishedTm() {
     if (tmSource !== "published" || previewPending) return;
@@ -582,6 +576,7 @@
         lastPublishedRaw = raw;
       } else if (recovered) {
         renderTrend();
+        renderAttitude(selectedTm?.attitude);
       }
       markPublishedAge();
     } catch (_) {
@@ -592,6 +587,7 @@
           "데이터 소스: 이전 시험 TM · 새 입력 확인 불가" : "데이터 소스: 게시된 시험 TM 없음";
         $("selected-state").textContent = "현재 값 확인 불가";
         renderCurrentAlerts();
+        renderAttitude(selectedTm?.attitude);
       }
     } finally { previewPending = false; }
   }
@@ -614,6 +610,19 @@
   }
   async function init() {
     setupTabs();
+    if (window.rosAttitudeViewer) {
+      try {
+        attitudeViewer = window.rosAttitudeViewer.create($("attitude-canvas"),
+          (state) => { $("attitude-model-state").textContent = state; });
+        attitudeViewer.load("/assets/pado-sat-deployed-mesh.json");
+        $("attitude-reset-camera").addEventListener("click", () => attitudeViewer.reset());
+      } catch (_) {
+        attitudeViewer = null;
+        $("attitude-model-state").textContent = "이 브라우저에서 3D 표시를 시작하지 못했습니다";
+      }
+    } else {
+      $("attitude-model-state").textContent = "3D 표시 모듈 없음";
+    }
     renderAttitude(null);
     const publishedButton = document.createElement("button");
     publishedButton.type = "button";
@@ -666,7 +675,11 @@
         $("reservation-form").querySelector("button").disabled = true;
       }
     } catch (error) { message("sequence-message", `ROS 초안 저장소 연결 실패: ${error.message}`, true); }
+    refreshAttitudeOrbit();
     await refreshPublishedTm();
+    setInterval(() => {
+      if (document.visibilityState === "visible") refreshAttitudeOrbit();
+    }, 60000);
     setInterval(() => {
       if (document.visibilityState === "visible") refreshPublishedTm();
     }, 5000);

@@ -39,6 +39,7 @@ MAX_BODY = 4096
 MAX_DRAFT_BODY = 40000
 MAX_UPSTREAM = 65536
 MAX_ORBIT_VIEW = 4 * 1024 * 1024
+MAX_CAD_MESH = 4 * 1024 * 1024
 ORBIT_TARGETS = {"synthetic", "iss", "operational"}
 ASSETS = {
     "/login": ("login/index.html", "text/html; charset=utf-8"),
@@ -48,7 +49,10 @@ ASSETS = {
     "/assets/style.css": ("common/style.css", "text/css; charset=utf-8"),
     "/assets/app.js": ("common/app.js", "text/javascript; charset=utf-8"),
     "/assets/ros-workbench.js": ("ops/workbench.js", "text/javascript; charset=utf-8"),
+    "/assets/ros-attitude-math.js": ("ops/attitude_math.js", "text/javascript; charset=utf-8"),
+    "/assets/ros-attitude-viewer.js": ("ops/attitude_viewer.js", "text/javascript; charset=utf-8"),
     "/assets/ros-workbench.css": ("ops/workbench.css", "text/css; charset=utf-8"),
+    "/assets/pado-sat-deployed-mesh.json": ("assets/pado-sat-deployed-mesh.json", "application/json"),
     "/assets/mps-workflow.css": ("mps/workflow.css", "text/css; charset=utf-8"),
     "/assets/mps-live.js": ("mps/live.js", "text/javascript; charset=utf-8"),
     "/assets/orbit.js": ("orbit/orbit.js", "text/javascript; charset=utf-8"),
@@ -546,13 +550,21 @@ class Handler(BaseHTTPRequestHandler):
             self._proxy(PROXY_ROUTES[path], session.username, session.role)
             return
         if path in ASSETS:
-            if path in ("/ops", "/mps", "/orbit") and not self._session():
-                self._send(HTTPStatus.FOUND, extra={"Location": "/login"})
+            if path in ("/ops", "/mps", "/orbit", "/assets/pado-sat-deployed-mesh.json") and not self._session():
+                if path == "/assets/pado-sat-deployed-mesh.json":
+                    self._error(HTTPStatus.UNAUTHORIZED, "login_required")
+                else:
+                    self._send(HTTPStatus.FOUND, extra={"Location": "/login"})
                 return
             relative, content_type = ASSETS[path]
             source = self.server.static_root / relative
             try:
+                if path == "/assets/pado-sat-deployed-mesh.json" and (
+                        source.is_symlink() or source.stat().st_size > MAX_CAD_MESH):
+                    raise OSError("CAD mesh is absent or oversized")
                 data = source.read_bytes()
+                if path == "/assets/pado-sat-deployed-mesh.json" and len(data) > MAX_CAD_MESH:
+                    raise OSError("CAD mesh is oversized")
             except OSError:
                 self._error(HTTPStatus.SERVICE_UNAVAILABLE, "asset_unavailable")
                 return
