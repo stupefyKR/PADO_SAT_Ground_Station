@@ -97,7 +97,11 @@ class DgsBoundaryInvariantTests(unittest.TestCase):
                 "mps-core-read": {"network_mode": "none"},
                 "init-token": {"network_mode": "none"},
                 "fds-synthetic-demo": {"network_mode": "none"},
-                "sim-volume-init": {"network_mode": "none"},
+                "sim-volume-init": {
+                    "network_mode": "none", "user": "0:0", "read_only": True,
+                    "cap_add": ["CHOWN"],
+                    "command": check_compose_policy.SIM_VOLUME_INIT_COMMAND.copy(),
+                },
                 "sim-ground": {"networks": {"sim_tm": None}},
                 "sim-satellite": {"networks": {"sim_tm": None}},
             },
@@ -158,6 +162,18 @@ class DgsBoundaryInvariantTests(unittest.TestCase):
                 broken = copy.deepcopy(self.good)
                 corrupt(broken)
                 with self.assertRaisesRegex(ValueError, policy_message):
+                    check_compose_policy.check(broken, "192.168.45.128", 8080,
+                                               "br-pado-local")
+
+    def test_volume_init_cannot_traverse_private_run_data(self):
+        for change in (
+            lambda service: service["command"].insert(1, "-R"),
+            lambda service: service["command"].append("/unapproved"),
+        ):
+            with self.subTest(change=change):
+                broken = copy.deepcopy(self.good)
+                change(broken["services"]["sim-volume-init"])
+                with self.assertRaisesRegex(ValueError, "without recursion"):
                     check_compose_policy.check(broken, "192.168.45.128", 8080,
                                                "br-pado-local")
 

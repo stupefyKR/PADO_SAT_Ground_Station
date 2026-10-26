@@ -61,6 +61,10 @@ LOCAL_VOLUMES = {
                    ("sim_tc_socket", "/run/sim-tc", False)},
     "sim-satellite": {("fds_truth", "/fds-view", True)},
 }
+SIM_VOLUME_INIT_COMMAND = [
+    "chown", "10001:10001", "/tm-preview", "/n11-inbox", "/fds-runs",
+    "/fds-view", "/fds-truth", "/mps-schedules", "/sim-tc",
+]
 DEV_VOLUMES = {
     "dgs-ops-gateway": set(),
     "portal": {("portal_state", "/state", False)},
@@ -206,6 +210,12 @@ def check(document: dict, bind_ip: str, port: int, bridge: str,
                 f"{name}: named volume mount differs from approved source, target or mode")
         require(bind_targets == (set() if local else DEV_BIND_TARGETS.get(name, set())),
                 f"{name}: host bind targets differ from approved targets")
+        if local and name == "sim-volume-init":
+            require(service.get("command") == SIM_VOLUME_INIT_COMMAND,
+                    "sim-volume-init must chown only approved volume roots without recursion")
+            require(service.get("user") == "0:0" and added_caps == ["CHOWN"] and
+                    service.get("read_only") is True,
+                    "sim-volume-init must run read-only with only CHOWN capability")
         connected = set(service.get("networks") or ())
         if service.get("network_mode") == "none":
             require(not connected, f"{name}: network_mode none has networks")

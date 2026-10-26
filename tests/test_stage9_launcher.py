@@ -9,7 +9,7 @@ import sys
 import tempfile
 import unittest
 
-from deploy.stage9.check_compose_policy import LOCAL_VOLUMES
+from deploy.stage9.check_compose_policy import LOCAL_VOLUMES, SIM_VOLUME_INIT_COMMAND
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -210,7 +210,10 @@ class LauncherLifecycleTests(unittest.TestCase):
                 "mps-core-read": {"network_mode": "none"},
                 "init-token": {"network_mode": "none"},
                 "fds-synthetic-demo": {"network_mode": "none"},
-                "sim-volume-init": {"network_mode": "none"},
+                "sim-volume-init": {
+                    "network_mode": "none", "user": "0:0", "read_only": True,
+                    "cap_add": ["CHOWN"], "command": SIM_VOLUME_INIT_COMMAND.copy(),
+                },
                 "sim-ground": {"networks": {"sim_tm": None}},
                 "sim-satellite": {"networks": {"sim_tm": None}},
             },
