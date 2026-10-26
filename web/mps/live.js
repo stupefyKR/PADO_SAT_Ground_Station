@@ -217,14 +217,6 @@ function mpsDrawPass(pass) {
   const sy = (90 - station.latitude_deg) / 180 * h;
   g.fillStyle = "#71ffcf"; g.beginPath(); g.arc(sx, sy, 6, 0, Math.PI * 2); g.fill();
   g.font = "bold 13px system-ui"; g.fillText(pass.station_id.toUpperCase(), sx + 9, sy - 8);
-  g.fillStyle = "#071522dc"; g.fillRect(8, 8, 175, 47);
-  g.font = "11px system-ui";
-  g.strokeStyle = "#e5f4fab3"; g.lineWidth = 1.5; g.setLineDash([5, 4]);
-  g.beginPath(); g.moveTo(18, 23); g.lineTo(49, 23); g.stroke(); g.setLineDash([]);
-  g.fillStyle = "#f4f8fa"; g.fillText("주변 궤도 (전·후 2주기)", 57, 27);
-  g.strokeStyle = "#ffde82"; g.lineWidth = 3;
-  g.beginPath(); g.moveTo(18, 43); g.lineTo(49, 43); g.stroke();
-  g.fillText("선택 PASS", 57, 47);
   const cx = polar.width / 2, cy = polar.height / 2, radius = Math.min(cx, cy) - 35;
   p.fillStyle = "#091b2a"; p.fillRect(0, 0, polar.width, polar.height);
   p.strokeStyle = "#45606c"; p.lineWidth = 1;
