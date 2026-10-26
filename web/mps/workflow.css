@@ -6,6 +6,12 @@
 .mps-build-grid{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(290px,.75fr);gap:12px}
 .mps-build-grid .draft-meta{grid-template-columns:repeat(3,minmax(0,1fr))}
 .mps-workflow .passes-panel .timeline{max-height:330px;overflow:auto}
+.mps-workflow .pass-navigation{flex-wrap:wrap}
+.mps-workflow .pass-navigation #mps-pass-position{flex:1 1 220px;color:#d8ebee;font-family:Consolas,monospace}
+.mps-workflow .pass-navigation button:disabled{opacity:.45;cursor:not-allowed}
+.mps-workflow .passes-panel tbody tr{cursor:pointer}
+.mps-workflow .passes-panel tbody tr[aria-selected="true"]{background:#1e4858;outline:2px solid #6cb6c5;outline-offset:-2px}
+.mps-workflow .passes-panel tbody tr:focus-visible{outline:2px solid #a9e1e4;outline-offset:-2px}
 .mps-workflow .catalog-panel .table-scroll{max-height:390px}
 .mps-workflow .inspector-panel dl{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1px;background:#2a4656}
 .mps-workflow .inspector-panel dl>div{min-width:0;padding:12px 15px;background:#112636}

@@ -512,8 +512,16 @@ function renderMpsPasses(schedule, session, drafts) {
   const timeline = panel.querySelector(".timeline");
   const tag = panel.querySelector(".panel-head .tag");
   const toolbar = panel.querySelector(".toolbar");
+  const position = document.getElementById("mps-pass-position");
+  const previousButton = document.getElementById("mps-pass-previous");
+  const nextButton = document.getElementById("mps-pass-next");
   const foot = panel.querySelector(".panel-foot");
-  toolbar.hidden = true;
+  toolbar.hidden = false;
+  position.textContent = "선택 가능한 PASS 없음";
+  previousButton.disabled = true;
+  nextButton.disabled = true;
+  previousButton.onclick = null;
+  nextButton.onclick = null;
   timeline.replaceChildren();
   value("mps-passes", schedule.passes.length);
   if (schedule.schedule_state !== "validated") {
@@ -529,6 +537,9 @@ function renderMpsPasses(schedule, session, drafts) {
     timeline.textContent = "예측 구간에 지상국 패스가 없습니다.";
     return;
   }
+  const orderedPasses = [...schedule.passes].sort((left, right) =>
+    left.aos_utc_s - right.aos_utc_s || left.los_utc_s - right.los_utc_s ||
+    left.station_id.localeCompare(right.station_id));
   const table = document.createElement("table");
   const head = document.createElement("thead");
   const header = document.createElement("tr");
@@ -537,11 +548,17 @@ function renderMpsPasses(schedule, session, drafts) {
   });
   head.append(header);
   const body = document.createElement("tbody");
-  for (const pass of schedule.passes) {
+  const selections = [];
+  let selectedIndex = -1;
+  for (const [index, pass] of orderedPasses.entries()) {
     const row = document.createElement("tr");
     row.tabIndex = 0;
     const select = () => {
+      selectedIndex = index;
       panel.querySelectorAll("tbody tr").forEach((item) => item.setAttribute("aria-selected", String(item === row)));
+      position.textContent = `${index + 1} / ${orderedPasses.length} · ${pass.station_id === "yonsei" ? "연세대 UHF" : "항우연 S-band"} · AOS ${new Date(pass.aos_utc_s * 1000).toISOString().slice(0, 16).replace("T", " ")} UTC`;
+      previousButton.disabled = index === 0;
+      nextButton.disabled = index === orderedPasses.length - 1;
       const inspector = document.querySelector(".inspector-panel dl");
       const details = [
         ["패스", pass.pass_id], ["지상국", pass.station_id === "yonsei" ? "연세대 UHF" : "대전 항우연 S-band"],
@@ -573,14 +590,21 @@ function renderMpsPasses(schedule, session, drafts) {
     ];
     values.forEach((value) => { const cell = document.createElement("td"); cell.textContent = value; row.append(cell); });
     body.append(row);
+    selections.push({row, select});
   }
   table.append(head, body);
   timeline.append(table);
-  const selected = [...body.children].find((_, index) =>
-    mpsSamePhysicalPass(mpsSelectedPass, schedule.passes[index]));
-  const upcoming = [...body.children].find((_, index) =>
-    schedule.passes[index].los_utc_s > Date.now() / 1000);
-  (selected || upcoming || body.firstElementChild)?.click();
+  const move = (delta) => {
+    const target = selections[selectedIndex + delta];
+    if (!target) return;
+    target.select();
+    target.row.scrollIntoView?.({block: "nearest"});
+  };
+  previousButton.onclick = () => move(-1);
+  nextButton.onclick = () => move(1);
+  const retained = orderedPasses.findIndex((pass) => mpsSamePhysicalPass(mpsSelectedPass, pass));
+  const upcoming = orderedPasses.findIndex((pass) => pass.los_utc_s > Date.now() / 1000);
+  selections[retained >= 0 ? retained : upcoming >= 0 ? upcoming : selections.length - 1].select();
 }
 
 async function workspace(page) {
