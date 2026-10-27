@@ -26,7 +26,9 @@ MPS 계획 검토 하단에는 ROS의 검증된 가상 위성 ACK 최근 항목�
 
 ## 시험용 TC 왕복 상태
 
-`MPS 저장 시퀀스 → 포털 재검증 → ROS SIM ONLY 예약 → 비공개 Unix socket → sim-ground → Docker 내부 TCP 9200 → sim-satellite → COMMAND_RESULT TM → ROS 예약 상태` 순서다. `mm_get_mode`, `hk_get` 등 허용된 읽기 전용 초안 명령만 사용하며 호스트에 추가 포트를 열지 않는다. 예약이 30초 이상 늦거나 PASS가 종료되면 `MISSED`, 재시작 중 송신 결과가 불명확하면 `UNKNOWN`으로 남는다. `ACKED`·`REJECTED`·`TIMEOUT`·`SEND_FAILED`를 화면에서 구분하고 자동 재송신하지 않는다. 수동 파일 반입의 `DRAFT_ONLY` 예약에는 이 dispatcher가 접근하지 않는다. 자세한 실행 경계는 [로컬 스택 안내](../deploy/stage9/README.md)를 참조한다.
+`MPS 저장 시퀀스 → 포털 재검증 → ROS SIM ONLY 예약 → 비공개 Unix socket → sim-ground → Docker 내부 TCP 9200 → sim-satellite → COMMAND_RESULT TM → ROS 예약 상태` 순서다. `mm_get_mode`, `hk_get` 등 허용된 조회 초안 명령을 사용하며 호스트에 추가 포트를 열지 않는다. 예약이 30초 이상 늦거나 PASS가 종료되면 `MISSED`, 재시작 중 송신 결과가 불명확하면 `UNKNOWN`으로 남는다. `ACKED`·`REJECTED`·`TIMEOUT`·`SEND_FAILED`를 화면에서 구분하고 자동 재송신하지 않는다. 수동 파일 반입의 `DRAFT_ONLY` 예약에는 이 dispatcher가 접근하지 않는다. 자세한 실행 경계는 [로컬 스택 안내](../deploy/stage9/README.md)를 참조한다.
+
+TC 탭의 `가상 위성 저장 TM 수신`에서는 비콘의 수신 시각·순번·주기를 확인하고 `저장 TM 요청`을 즉시 보낼 수 있다. 이 요청은 MPS 일정 정보를 만들어내지 않고 별도 기록에 저장한다. `hk_dump`의 수락 ACK 뒤에 요청 시점의 저장 TM이 내려오며, 이후 새 표본은 다음 요청까지 저장된다. 비콘 수신만으로 계측 그래프를 갱신하지 않는다. ACK와 TM 수신 완료를 구별하며, 상세 계약은 [가상 위성 TC·TM 안내](SIM_TC_TM.md)를 참조한다.
 
 ## 후속 화면 검토 항목
 

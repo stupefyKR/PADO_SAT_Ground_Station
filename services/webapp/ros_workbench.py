@@ -25,6 +25,7 @@ SIM_HANDOFF_KEYS = {"schema", "source", "non_operational", "pass_id", "station_i
 SIM_READ_ONLY_COMMANDS = frozenset({"mm_get_mode", "hk_get", "eps_get_hk",
                                     "aocs_get_hk", "cs_get_hk", "siren_get_hk",
                                     "crest_get_hk"})
+SIM_ALLOWED_COMMANDS = SIM_READ_ONLY_COMMANDS | {"hk_dump"}
 SIM_FINAL_STATUSES = frozenset({"ACKED", "REJECTED", "TIMEOUT", "SEND_FAILED"})
 SIM_SEND_GRACE_S = 30
 
@@ -162,7 +163,7 @@ def normalize_sim_handoff(envelope: object) -> dict:
                 not _integer(step["offset_s"], 0,
                              envelope["los_utc_s"] - envelope["aos_utc_s"] - 1) or \
                 not isinstance(step["command_name"], str) or \
-                step["command_name"] not in SIM_READ_ONLY_COMMANDS or \
+                step["command_name"] not in SIM_ALLOWED_COMMANDS or \
                 not isinstance(step["parameters"], dict):
             raise DraftError("invalid_sim_step")
         # The packet codec is the shared draft catalog's field/range authority.
@@ -220,9 +221,16 @@ class RosDraftStore:
                         "ON sim_reservations(sha256,step_id) WHERE status!='CANCELLED'")
         self.db.execute("CREATE INDEX IF NOT EXISTS sim_reservations_due "
                         "ON sim_reservations(status,target_utc_s)")
+        self.db.execute("CREATE TABLE IF NOT EXISTS sim_tm_requests ("
+                        "id INTEGER PRIMARY KEY, created_by TEXT NOT NULL, "
+                        "created_at INTEGER NOT NULL, status TEXT NOT NULL CHECK(status IN "
+                        "('QUEUED','SENDING','ACKED','REJECTED','TIMEOUT','SEND_FAILED',"
+                        "'MISSED','UNKNOWN')), ack TEXT, finished_at INTEGER)")
         # An interrupted send may have reached the satellite. Never retry it
         # automatically, because an ACK could have been lost on restart.
         self.db.execute("UPDATE sim_reservations SET status='UNKNOWN',finished_at=? "
+                        "WHERE status='SENDING'", (int(time.time()),))
+        self.db.execute("UPDATE sim_tm_requests SET status='UNKNOWN',finished_at=? "
                         "WHERE status='SENDING'", (int(time.time()),))
         self.db.commit()
         self.lock = threading.Lock()
@@ -230,6 +238,77 @@ class RosDraftStore:
     def close(self) -> None:
         with self.lock:
             self.db.close()
+
+    def request_sim_tm(self, actor: str) -> dict:
+        """Queue a single immediate simulator dump without inventing an MPS pass."""
+        if not isinstance(actor, str) or not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", actor):
+            raise DraftError("invalid_actor")
+        now_s = int(time.time())
+        with self.lock, self.db:
+            pending = self.db.execute("SELECT 1 FROM sim_tm_requests "
+                                      "WHERE status IN ('QUEUED','SENDING') LIMIT 1").fetchone()
+            recent = self.db.execute("SELECT MAX(created_at) FROM sim_tm_requests").fetchone()[0]
+            if pending or (recent is not None and now_s - recent < 5):
+                raise DraftError("sim_request_pending_or_too_recent")
+            cursor = self.db.execute("INSERT INTO sim_tm_requests "
+                                     "(created_by,created_at,status) VALUES (?,?,'QUEUED')",
+                                     (actor, now_s))
+            return {"id": cursor.lastrowid, "created_by": actor, "created_at": now_s,
+                    "status": "QUEUED", "command_name": "hk_dump", "ack": None}
+
+    def list_sim_tm_requests(self) -> list[dict]:
+        with self.lock:
+            rows = self.db.execute("SELECT id,created_by,created_at,status,ack,finished_at "
+                                   "FROM sim_tm_requests ORDER BY id DESC LIMIT 32").fetchall()
+        return [{"id": ident, "created_by": actor, "created_at": created,
+                 "status": status, "ack": json.loads(ack) if ack else None,
+                 "finished_at": finished, "command_name": "hk_dump"}
+                for ident, actor, created, status, ack, finished in rows]
+
+    def claim_sim_tm_request(self, now_s: int) -> dict | None:
+        """An immediate request expires after 30 seconds; it cannot wait for a later pass."""
+        if not _integer(now_s, 1, 9007199254740991):
+            raise DraftError("invalid_sim_clock")
+        with self.lock, self.db:
+            self.db.execute("UPDATE sim_tm_requests SET status='MISSED',finished_at=? "
+                            "WHERE status='QUEUED' AND created_at<?",
+                            (now_s, now_s - SIM_SEND_GRACE_S))
+            row = self.db.execute("SELECT id,created_at FROM sim_tm_requests "
+                                  "WHERE status='QUEUED' ORDER BY id LIMIT 1").fetchone()
+            if row is None:
+                return None
+            ident, created = row
+            self.db.execute("UPDATE sim_tm_requests SET status='SENDING' WHERE id=?", (ident,))
+            return {"id": ident, "request_kind": "TM_DUMP", "created_at": created,
+                    "command_name": "hk_dump", "parameters": {"start_utc_ms": 0,
+                    "end_utc_ms": 0}, "command_sequence": (ident + 32767) % 65535 + 1}
+
+    def finish_sim_tm_request(self, request_id: int, status: str,
+                              ack: dict | None = None) -> None:
+        if not _integer(request_id, 1, 0x7fffffffffffffff) or status not in SIM_FINAL_STATUSES:
+            raise DraftError("invalid_sim_result")
+        if status in ("ACKED", "REJECTED"):
+            if (not isinstance(ack, dict) or set(ack) != {"command_id", "command_sequence",
+                    "result", "reason", "executed_at_utc_ms"} or
+                    not _integer(ack["command_id"], 4116, 4116) or
+                    not _integer(ack["command_sequence"], (request_id + 32767) % 65535 + 1,
+                                 (request_id + 32767) % 65535 + 1) or
+                    not _integer(ack["result"], 0, 1) or
+                    not _integer(ack["reason"], 0, 6) or
+                    not _integer(ack["executed_at_utc_ms"], 0, 0xffffffffffffffff) or
+                    (status == "ACKED") != (ack["result"] == 0) or
+                    (status == "ACKED" and (ack["reason"] != 0 or ack["executed_at_utc_ms"] == 0)) or
+                    (status == "REJECTED" and (ack["reason"] == 0 or ack["executed_at_utc_ms"] != 0))):
+                raise DraftError("invalid_sim_ack")
+        elif ack is not None:
+            raise DraftError("invalid_sim_ack")
+        with self.lock, self.db:
+            result = self.db.execute("UPDATE sim_tm_requests SET status=?,ack=?,finished_at=? "
+                                     "WHERE id=? AND status='SENDING'",
+                                     (status, json.dumps(ack, separators=(",", ":")) if ack else None,
+                                      int(time.time()), request_id))
+            if result.rowcount != 1:
+                raise DraftError("sim_not_sending")
 
     def import_pair(self, sequence_text: str, manifest_text: str, actor: str) -> dict:
         payload = parse_test_pair(sequence_text, manifest_text)
@@ -397,7 +476,9 @@ class RosDraftStore:
                         not _integer(ack["command_sequence"], 1, 65535) or
                         not _integer(ack["result"], 0, 255) or
                         not _integer(ack["reason"], 0, 65535) or
-                        not _integer(ack["executed_at_utc_ms"], 1, 0xffffffffffffffff) or
+                        not _integer(ack["executed_at_utc_ms"], 0, 0xffffffffffffffff) or
+                        (status == "ACKED" and (ack["reason"] != 0 or ack["executed_at_utc_ms"] == 0)) or
+                        (status == "REJECTED" and (ack["reason"] == 0 or ack["executed_at_utc_ms"] != 0)) or
                         (status == "ACKED") != (ack["result"] == 0)):
                     raise DraftError("invalid_test_ack")
                 step = next(item for item in sequence["steps"]
@@ -411,7 +492,7 @@ class RosDraftStore:
                         not re.fullmatch(r"[0-9a-f]{64}",
                                          sequence["schedule_sha256"]) or
                         not _integer(sequence.get("revision"), 1, 0xffffffff) or
-                        step["command_name"] not in SIM_READ_ONLY_COMMANDS or
+                        step["command_name"] not in SIM_ALLOWED_COMMANDS or
                         ack["command_id"] != command_ids.get(step["command_name"]) or
                         not _integer(ack["command_sequence"],
                                      (reservation_id - 1) % 65535 + 1,
@@ -508,7 +589,9 @@ class RosDraftStore:
                                      (reservation_id - 1) % 65535 + 1) or \
                         not _integer(ack["result"], 0, 255) or \
                         not _integer(ack["reason"], 0, 65535) or \
-                        not _integer(ack["executed_at_utc_ms"], 1, 0xffffffffffffffff) or \
+                        not _integer(ack["executed_at_utc_ms"], 0, 0xffffffffffffffff) or \
+                        (status == "ACKED" and (ack["reason"] != 0 or ack["executed_at_utc_ms"] == 0)) or \
+                        (status == "REJECTED" and (ack["reason"] == 0 or ack["executed_at_utc_ms"] != 0)) or \
                         (status == "ACKED") != (ack["result"] == 0):
                     raise DraftError("invalid_sim_ack")
             elif ack is not None:

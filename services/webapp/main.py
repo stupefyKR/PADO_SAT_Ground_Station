@@ -29,7 +29,7 @@ from .core import CoreUnavailable, mps_catalog, mps_passes, ros_summary
 from .mps_workbench import CandidateError, MpsCandidateStore, draft_commands
 from .ros_workbench import DraftError, RosDraftStore, normalize_sim_handoff
 from .sim_tc_dispatch import SimTcDispatcher
-from .tm_preview import MAX_SNAPSHOT_BYTES, PreviewError, load_snapshot
+from .tm_preview import MAX_SNAPSHOT_BYTES, PreviewError, load_beacon, load_snapshot
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -81,10 +81,12 @@ ASSETS = {
 PROXY_ROUTES = {
     "/api/ros/overview": ("ros", "/overview"),
     "/api/ros/test-tm-snapshot": ("ros", "/test-tm-snapshot"),
+    "/api/ros/test-beacon": ("ros", "/test-beacon"),
     "/api/ros/test-sequences": ("ros", "/test-sequences"),
     "/api/ros/test-reservations": ("ros", "/test-reservations"),
     "/api/ros/test-sim-sequences": ("ros", "/test-sim-sequences"),
     "/api/ros/test-sim-reservations": ("ros", "/test-sim-reservations"),
+    "/api/ros/test-sim-tm-requests": ("ros", "/test-sim-tm-requests"),
     "/api/mps/catalog": ("mps", "/catalog"),
     "/api/mps/passes": ("mps", "/passes"),
     "/api/mps/test-candidates": ("mps", "/test-candidates"),
@@ -335,7 +337,8 @@ class Handler(BaseHTTPRequestHandler):
             elif path in ("/api/ros/test-sequences", "/api/ros/test-reservations",
                           "/api/ros/test-reservations/cancel", "/api/mps/test-candidates",
                           "/api/mps/test-sequences",
-                          "/api/ros/test-sim-reservations/cancel"):
+                          "/api/ros/test-sim-reservations/cancel",
+                          "/api/ros/test-sim-tm-requests"):
                 self._portal_draft_post(path)
             else:
                 self._error(HTTPStatus.NOT_FOUND, "not_found")
@@ -636,7 +639,7 @@ class Handler(BaseHTTPRequestHandler):
             if len(data) > maximum or (method == "GET" and path not in
                                             ("/test-sequences", "/test-reservations",
                                              "/test-candidates",
-                                             "/test-tm-snapshot") and
+                                             "/test-tm-snapshot", "/test-beacon") and
                                             response.status != HTTPStatus.OK):
                 self._error(HTTPStatus.BAD_GATEWAY, "backend_failure")
             elif deliver:
@@ -681,17 +684,28 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._json(HTTPStatus.OK, snapshot)
             return
+        if self.server.mode == "ros" and path == "/test-beacon":
+            try:
+                beacon = load_beacon(self.server.tm_preview)
+            except PreviewError:
+                self._error(HTTPStatus.SERVICE_UNAVAILABLE, "test_beacon_unavailable")
+                return
+            self._json(HTTPStatus.OK, beacon)
+            return
         if self.server.mode == "ros" and path in ("/test-sequences", "/test-reservations",
                                                    "/test-sim-sequences",
-                                                   "/test-sim-reservations"):
+                                                   "/test-sim-reservations",
+                                                   "/test-sim-tm-requests"):
             if self.server.drafts is None:
                 self._error(HTTPStatus.SERVICE_UNAVAILABLE, "draft_store_unavailable")
                 return
             items = ({"/test-sequences": self.server.drafts.list_sequences,
                       "/test-reservations": self.server.drafts.reservations,
                       "/test-sim-sequences": self.server.drafts.list_sim_sequences,
-                      "/test-sim-reservations": self.server.drafts.list_sim_reservations}[path]())
-            self._json(HTTPStatus.OK, {"items": items, "operational": False})
+                      "/test-sim-reservations": self.server.drafts.list_sim_reservations,
+                      "/test-sim-tm-requests": self.server.drafts.list_sim_tm_requests}[path]())
+            self._json(HTTPStatus.OK, {"items": items, "operational": False,
+                       "sim_tc_available": self.server.sim_tc_socket is not None})
             return
         if self.server.mode == "ros" and path == "/overview":
             try:
@@ -816,6 +830,11 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/test-sim-reservations/cancel" and set(body) == {"id"}:
                 self.server.drafts.cancel_sim(body["id"], actor)
                 result = {"status": "CANCELLED"}
+            elif path == "/test-sim-tm-requests" and not body:
+                if self.server.sim_tc_socket is None:
+                    self._error(HTTPStatus.SERVICE_UNAVAILABLE, "sim_tc_unavailable")
+                    return
+                result = self.server.drafts.request_sim_tm(actor)
             else:
                 raise DraftError("invalid_request")
         except DraftError as exc:

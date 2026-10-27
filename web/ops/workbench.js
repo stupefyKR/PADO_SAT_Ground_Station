@@ -35,6 +35,9 @@
   let reservations = [];
   let simSequences = [];
   let simReservations = [];
+  let simTmRequests = [];
+  let simTmAvailable = false;
+  let simRequestPending = false;
   let selectedTm = null;
   let selectedSensor = null;
   let minutes = 30;
@@ -312,6 +315,58 @@
         control.append(button);
       }
       row.append(control); rows.append(row);
+    }
+  }
+  function showSimTmRequests() {
+    const rows = $("sim-tm-request-rows");
+    rows.replaceChildren();
+    if (!simTmRequests.length) empty(rows, 4, "저장 TM 요청이 없습니다.");
+    const states = {QUEUED: "전송 대기", SENDING: "명령 전송 중", ACKED: "요청 수락 · ACK 수신",
+      REJECTED: "거절", TIMEOUT: "ACK 시간 초과", SEND_FAILED: "전송 실패 · 교신 상태 확인",
+      MISSED: "요청 시각 경과", UNKNOWN: "결과 불명 · 자동 재전송 안 함"};
+    const reasons = {1: "지원하지 않는 명령", 2: "예약 TC 미지원", 3: "중복 명령",
+      4: "오래된 명령", 5: "명령 인자 오류", 6: "처리기 오류"};
+    for (const item of simTmRequests) {
+      const row = document.createElement("tr");
+      cell(row, utc(item.created_at)); cell(row, item.created_by);
+      cell(row, states[item.status] || item.status);
+      cell(row, item.ack ? (item.ack.result === 0 ? "hk_dump 수락 · 자료 내려받기 시작" :
+        reasons[item.ack.reason] || `거절 사유 ${item.ack.reason}`) : "—");
+      rows.append(row);
+    }
+    $("sim-tm-request").disabled = !session || session.role === "auditor" || !simTmAvailable ||
+      simRequestPending || simTmRequests.some((item) => ["QUEUED", "SENDING"].includes(item.status));
+  }
+  async function refreshSimTmRequests() {
+    const data = await api("/api/ros/test-sim-tm-requests");
+    simTmRequests = data.items; simTmAvailable = data.sim_tc_available === true;
+    showSimTmRequests();
+  }
+  async function requestSimTm() {
+    if (!session || simRequestPending) return;
+    simRequestPending = true; showSimTmRequests();
+    try {
+      await api("/api/ros/test-sim-tm-requests", {method: "POST",
+        headers: {"Content-Type": "application/json", "X-CSRF-Token": session.csrf},
+        body: "{}"});
+      message("sim-tm-request-message", "저장 TM 요청을 등록했습니다. 교신 중인 가상 위성의 ACK를 기다립니다.");
+      await refreshSimTmRequests();
+    } catch (error) {
+      message("sim-tm-request-message", `저장 TM 요청 실패: ${error.message}`, true);
+    } finally { simRequestPending = false; showSimTmRequests(); }
+  }
+  async function refreshBeacon() {
+    try {
+      const beacon = await api("/api/ros/test-beacon");
+      const age = Date.now() - Date.parse(beacon.received_utc);
+      const fresh = age >= 0 && age <= Math.max(15, 3 * beacon.fields.beacon_period_s) * 1000;
+      $("sim-beacon-state").textContent = fresh ? "비콘 수신 중" : "최근 비콘 오래됨";
+      $("sim-beacon-summary").textContent = `비콘 #${beacon.fields.beacon_counter} · 주기 ${beacon.fields.beacon_period_s}초 · 모드 ${beacon.fields.mode}`;
+      $("sim-beacon-time").textContent = `측정 UTC ${beacon.sampled_utc} · 수신 UTC ${beacon.received_utc}`;
+    } catch (_) {
+      $("sim-beacon-state").textContent = "비콘 대기";
+      $("sim-beacon-summary").textContent = "최근 비콘을 확인할 수 없습니다";
+      $("sim-beacon-time").textContent = "교신 구간과 비콘 수신 상태를 확인하세요.";
     }
   }
   async function refreshSimDrafts(selectDigest = "") {
@@ -738,6 +793,7 @@
     }));
     $("sequence-select").addEventListener("change", showSequence);
     $("sim-sequence-select").addEventListener("change", showSimSequence);
+    $("sim-tm-request").addEventListener("click", requestSimTm);
     $("reservation-step").addEventListener("change", setReservationDefault);
     $("sequence-import").addEventListener("click", importSequence);
     $("reservation-form").addEventListener("submit", reserve);
@@ -747,6 +803,8 @@
       catch (error) { message("sequence-message", `ROS 초안 저장소 연결 실패: ${error.message}`, true); }
       try { await refreshSimDrafts(); }
       catch (error) { message("sim-sequence-message", `가상 위성 시험 저장소 연결 실패: ${error.message}`, true); }
+      try { await refreshSimTmRequests(); }
+      catch (error) { message("sim-tm-request-message", `저장 TM 요청 연결 실패: ${error.message}`, true); }
       if (session.role === "auditor") {
         $("sequence-import").disabled = true;
         $("reservation-form").querySelector("button").disabled = true;
@@ -754,6 +812,7 @@
     } catch (error) { message("sequence-message", `ROS 초안 저장소 연결 실패: ${error.message}`, true); }
     refreshAttitudeOrbit();
     await refreshPublishedTm();
+    refreshBeacon();
     setInterval(() => {
       if (document.visibilityState === "visible") refreshAttitudeOrbit();
     }, 60000);
@@ -762,6 +821,9 @@
     }, 5000);
     setInterval(() => {
       if (document.visibilityState === "visible" && session) {
+        refreshBeacon();
+        refreshSimTmRequests().catch((error) =>
+          message("sim-tm-request-message", `요청 상태 갱신 실패: ${error.message}`, true));
         refreshSimDrafts().catch((error) =>
           message("sim-reservation-message", `시험 상태 갱신 실패: ${error.message}`, true));
       }

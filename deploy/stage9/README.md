@@ -109,7 +109,7 @@ fds-synthetic-demo ── TLE 기반 truth 궤도 ──→ sim-satellite
          │                                  │ 5초마다 -X Nadir 자세와 EPS/AOCS/GNSS TM 생성
          │                                  ▼
          │                            24시간 TM 저장소
-         │                                  │ 연세대 UHF PASS에서 생성 시각 순서로 전송
+         │                                  │ 연세대 UHF PASS + hk_dump TC 수신 후 전송
          │                                  ▼
          │                        sim-ground (내부 TCP 9200)
          │                         ├─ 검증·파싱 → ROS 최근 1시간 시험 TM 스냅샷
@@ -121,10 +121,18 @@ fds-synthetic-demo ── TLE 기반 truth 궤도 ──→ sim-satellite
 다시 계산한 운영자 화면 파일을 위성 위치의 원천으로 되먹이지 않는다.
 위성 기체 -X는 지구 중심, +Z는 궤도 진행 방향을 향한다. `sim-satellite`는
 PASS 밖에서도 5초마다 EPS·AOCS·GNSS의 원본 시각이 담긴 시험 PDU를 생성해
-자체 SQLite 볼륨에 보관한다. 연세대 UHF PASS(AOS 이상, LOS 미만)가 열리면
-가장 오래된 PDU부터 연속 전송한다. 전송이 끊기거나 LOS에 도달하면 미전송분을
-다음 PASS까지 남긴다. 저장 한도는 24시간이며, 한도를 넘기면 가장 오래된
+자체 SQLite 볼륨에 보관한다. 연세대 UHF PASS(AOS 이상, LOS 미만)에서는
+5초 주기의 `BEACON_CORE`를 수신하며, PASS가 열리는 것만으로 저장 TM을
+자동 전송하지 않는다. ROS에서 `저장 TM 요청`을 보내면 `hk_dump` TC에 응답한
+뒤 요청 시점에 저장돼 있던 PDU를 가장 오래된 측정 시각부터 연속 전송한다.
+요청 뒤 새로 만든 TM은 다음 요청까지 저장한다. 전송이 끊기거나 LOS에 도달하면
+미전송분을 남기며, 다시 연결돼도 새 TC를 받기 전에는 전송하지 않는다.
+저장 한도는 24시간이며, 한도를 넘기면 가장 오래된
 완전한 표본 묶음을 버리고 컨테이너 로그에 건수를 기록한다.
+
+비콘 수신 상태는 계측 이력과 별도의 작은 `test_beacon.json`에 게시한다.
+비콘·TC 응답의 현재 시각과 과거 저장 TM의 측정 시각을 분리하므로, 현재 비콘을
+받은 뒤 과거 TM을 내려받아도 센서 이력이 역순 입력으로 거부되지 않는다.
 
 `sim-ground`도 같은 truth PASS를 독립적으로 검사해 PASS 밖의 TM과 TC를
 차단한다. truth 파일이 없거나 잘못됐거나 오래됐을 때도 수신을 닫는다.
@@ -180,8 +188,8 @@ MPS 저장 시퀀스 → 포털에서 재검증 → ROS SIM ONLY 예약
 자동 재시도하지 않으며 재시작 중 전송 상태였다면 `UNKNOWN`으로 남는다.
 기존 파일 쌍 가져오기 및 `DRAFT_ONLY` 예약은 별도 검토 경로이며 자동 실행되지
 않는다. 이 시험은 실제 위성의 인증·승인·명령 충돌 검사·RF 송출 기능이 아니다.
-가상 위성은 저장된 TM을 모두 내린 뒤 시험 TC를 처리한다. 큰 이력이 남아
-있다면 TC 응답이 지연될 수 있다. 성공 ACK는 응용 패킷 왕복의 증거다.
+가상 위성은 비콘 대기 중에도 TC를 처리한다. `hk_dump`의 성공 ACK는 요청을
+수락했다는 뜻이며, 저장 TM 전체 수신 완료를 뜻하지 않는다. 성공 ACK는 응용 패킷 왕복의 증거다.
 실제 안테나 가시성이나 무선 링크 성공을 증명하지는 않는다.
 
 가상 TM 저장소는 TCP `sendall`이 성공하면 해당 PDU를 지운다. 별도의
@@ -202,7 +210,10 @@ docker compose -p pado-stage9-local -f deploy/stage9/compose.local.yaml \
   logs --tail=100 fds-synthetic-demo sim-satellite sim-ground ros-api mps-api
 ```
 
-처음에는 TLE 결과가 게시되고 가상 TM 수신과 GNSS 파일 생성이 뒤따른다.
+처음에는 TLE 결과가 게시되고, 연세대 UHF PASS에서 비콘 수신을 시작한다.
+ROS의 `03 TC 준비 · 예약`에서 `저장 TM 요청`을 누르면 ACK 상태를 확인할 수 있다.
+PASS 밖에서는 요청이 실패하며 자동 재전송하지 않는다. 다음 PASS에서 다시 요청한다.
+요청 수락 후 저장 TM 수신과 신선한 GNSS의 N11 파일 생성이 뒤따른다.
 Windows 브라우저에서 `/orbit`의 데이터 출처가 `TLE`에서 `GNSS`로 바뀌는지,
 `/ops`의 `02 TM · 자세`에서 계측·자세가 갱신되는지, `/mps`에서 PASS와
 ground view·polar plot이 표시되는지 확인한다. 실제 VM의 Docker 볼륨·권한·

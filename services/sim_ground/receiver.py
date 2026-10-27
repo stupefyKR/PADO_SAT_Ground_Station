@@ -20,6 +20,7 @@ import socket
 import stat
 import struct
 import sys
+import tempfile
 import time
 from collections import OrderedDict, deque
 from datetime import datetime, timezone
@@ -50,6 +51,8 @@ MAX_N11_PAIRS = 288  # 24 hours at the five-minute bridge cadence.
 SATELLITE_NORAD_ID = 99999
 ALLOWED_TELEMETRY = frozenset({"EPS_PDU1", "AOCS_STATE", "GNSS_PVT"})
 RESULT_TELEMETRY = "COMMAND_RESULT"
+BEACON_TELEMETRY = "BEACON_CORE"
+MAX_LIVE_ACKS = 128
 TC_RESPONSE_TIMEOUT_S = 15.0
 ATTITUDE_FRAME = "SIM_BODY_TO_ITRF_NADIR"
 _DRAFT_GNSS_MANIFEST = re.compile(
@@ -188,12 +191,57 @@ class TmReceiver:
         self.last_stamp_ms: int | None = None
         self.last_stamp_by_name: dict[str, int] = {}
         self.last_ack_stamp_ms: int | None = None
+        self._ack_seen: OrderedDict[tuple[int, int, int], None] = OrderedDict()
+        self.latest_beacon: dict[str, Any] | None = None
         self.last_gnss_bridge_ms: int | None = None
-        self._backlog_seen: OrderedDict[tuple[str, int, int], bytes] = OrderedDict()
+        self._backlog_seen: OrderedDict[tuple[str, int], bytes] = OrderedDict()
         self._burst_unpublished = 0
         self._tc_lock = Lock()
         self._tc_pending: _PendingTc | None = None
         self._satellite_connected = False
+
+    def _ingest_beacon(self, decoded: dict[str, Any], *, received_ms: int) -> None:
+        """Publish live beacon health without advancing stored-TM history.
+
+        A current beacon and command ACK intentionally precede the historical
+        dump. They have their own clocks and sequence domains, so accepting a
+        beacon must never make older, requested sensor samples look stale.
+        """
+        stamp = decoded["utc_ms"]
+        fields = decoded["fields"]
+        if (decoded["kind"] != "TM" or decoded["name"] != BEACON_TELEMETRY or
+                decoded["operational"] is not False or stamp % 1000 or
+                not 0 <= received_ms // 1000 * 1000 - stamp <= MAX_AGE_MS or
+                not 1 <= fields["beacon_period_s"] <= 3600):
+            raise ReceiverError("invalid live simulated beacon")
+        previous = self.latest_beacon
+        if previous is not None and (
+                stamp <= previous["utc_ms"] or
+                not 1 <= (decoded["sequence"] - previous["sequence"]) & 0xffff <= 32767):
+            raise ReceiverError("duplicate or backwards simulated beacon")
+        utc = lambda value: datetime.fromtimestamp(value / 1000, timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%SZ")
+        document = {"type": "TEST_ONLY_BEACON", "non_operational": True,
+                    "sampled_utc": utc(stamp), "received_utc": utc(received_ms),
+                    "sequence": decoded["sequence"], "fields": fields}
+        body = (json.dumps(document, separators=(",", ":")) + "\n").encode("utf-8")
+        target = self.snapshot.with_name("test_beacon.json")
+        if target.is_symlink() or (target.exists() and not target.is_file()) or len(body) > 4096:
+            raise ReceiverError("regular bounded simulated beacon target required")
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(prefix=".test_beacon_", suffix=".partial",
+                                             dir=target.parent, delete=False) as output:
+                temporary = Path(output.name)
+                os.chmod(temporary, 0o600)
+                output.write(body)
+                output.flush()
+                os.fsync(output.fileno())
+            os.replace(temporary, target)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+        self.latest_beacon = decoded
 
     def submit_tc(self, packet: bytes, *, timeout_s: float = TC_RESPONSE_TIMEOUT_S,
                   now_ms: int | None = None) -> bytes:
@@ -247,23 +295,30 @@ class TmReceiver:
         if decoded["kind"] != "TM" or decoded["name"] != RESULT_TELEMETRY or \
                 decoded["operational"] is not False or stamp % 1000 or \
                 not 0 <= now_ms // 1000 * 1000 - stamp <= MAX_AGE_MS or \
-                (self.last_ack_stamp_ms is not None and stamp <= self.last_ack_stamp_ms):
+                (self.last_ack_stamp_ms is not None and stamp < self.last_ack_stamp_ms):
             raise ReceiverError("invalid simulated COMMAND_RESULT TM timestamp")
         with self._tc_lock:
             request = self._tc_pending
             fields = decoded["fields"]
+            ack_identity = (stamp, fields["command_id"], fields["command_sequence"])
             if request is None or not request.sent or \
                     fields["command_id"] != request.command_id or \
-                    fields["command_sequence"] != request.sequence:
+                    fields["command_sequence"] != request.sequence or \
+                    ack_identity in self._ack_seen:
                 raise ReceiverError("unmatched simulated COMMAND_RESULT TM")
+            issue_ms = decode(request.packet, catalog=self.packet_catalog)["utc_ms"]
             if not ((fields["result"] == 0 and fields["reason"] == 0 and
-                     fields["executed_at_utc_ms"] >= stamp) or
-                    (fields["result"] == 1 and fields["reason"] in (1, 2, 3, 4) and
+                     max(stamp, issue_ms) <= fields["executed_at_utc_ms"] <= now_ms and
+                     fields["executed_at_utc_ms"] < stamp + 1000) or
+                    (fields["result"] == 1 and fields["reason"] in (1, 2, 3, 4, 5, 6) and
                      fields["executed_at_utc_ms"] == 0)):
                 raise ReceiverError("invalid simulated COMMAND_RESULT status")
             # Live ACKs may interleave with stored, older TM during a PASS.
             # Their clock and sequence cannot advance the historical TM cursor.
             self.last_ack_stamp_ms = stamp
+            self._ack_seen[ack_identity] = None
+            if len(self._ack_seen) > MAX_LIVE_ACKS:
+                self._ack_seen.popitem(last=False)
             self._tc_pending = None
             request.response = packet
             request.done.set()
@@ -291,17 +346,17 @@ class TmReceiver:
                 MAX_BACKLOG_AGE_MS if historical else MAX_AGE_MS):
             raise ReceiverError("TM timestamp is not a fresh whole UTC second")
         if historical:
-            replay_key = (decoded["name"], stamp, decoded["sequence"])
+            replay_key = (decoded["name"], stamp)
             previous = self._backlog_seen.get(replay_key)
             if previous is not None:
                 if previous == packet:
                     return None
                 raise ReceiverError("conflicting simulated TM replay")
-        if self.last_stamp_ms is not None and stamp < self.last_stamp_ms:
+        if not historical and self.last_stamp_ms is not None and stamp < self.last_stamp_ms:
             raise ReceiverError("TM timestamp moved backwards")
-        if self.last_stamp_by_name.get(decoded["name"], -1) >= stamp:
+        if not historical and self.last_stamp_by_name.get(decoded["name"], -1) >= stamp:
             raise ReceiverError("duplicate or out-of-order TM sample")
-        if self.last_sequence is not None:
+        if not historical and self.last_sequence is not None:
             step = (decoded["sequence"] - self.last_sequence) & 0xffff
             if not 1 <= step <= 32767:
                 raise ReceiverError("duplicate or backwards TM sequence")
@@ -314,14 +369,25 @@ class TmReceiver:
             if abs(math.hypot(*q) - 1.0) > 0.02:
                 raise ReceiverError("non-unit synthetic attitude quaternion")
 
-        if historical and not publish:
-            cutoff = stamp - HISTORY_WINDOW_MS
+        if historical:
+            # A time-range dump may arrive after a newer range. u16 sequence
+            # distance is ambiguous across long gaps; validated sample identity
+            # supplies replay protection while the graph keeps a sorted window.
+            latest = max(stamp, self.last_stamp_ms or stamp)
+            cutoff = latest - HISTORY_WINDOW_MS
             for rows in self.sensor_history.values():
                 while rows and rows[0][0] < cutoff:
                     rows.popleft()
-            if decoded["name"] in self.sensor_sources:
-                self.sensor_history[decoded["name"]].append((stamp, packet))
-            if decoded["name"] == "AOCS_STATE":
+            if decoded["name"] in self.sensor_sources and stamp >= cutoff:
+                rows = self.sensor_history[decoded["name"]]
+                if not rows or rows[-1][0] < stamp:
+                    rows.append((stamp, packet))
+                else:
+                    ordered = sorted((*rows, (stamp, packet)), key=lambda row: row[0])
+                    self.sensor_history[decoded["name"]] = deque(
+                        ordered[-MAX_HISTORY_PER_SOURCE:], maxlen=MAX_HISTORY_PER_SOURCE)
+            if decoded["name"] == "AOCS_STATE" and (
+                    self.latest_attitude is None or self.latest_attitude[0] < stamp):
                 self.latest_attitude = (stamp, packet)
             elif self.latest_attitude is not None and self.latest_attitude[0] < cutoff:
                 self.latest_attitude = None
@@ -356,14 +422,16 @@ class TmReceiver:
                 attitude[0] >= cutoff else None
 
         self.last_sequence = decoded["sequence"]
-        self.last_stamp_ms = stamp
-        self.last_stamp_by_name[decoded["name"]] = stamp
+        self.last_stamp_ms = max(stamp, self.last_stamp_ms or stamp)
+        self.last_stamp_by_name[decoded["name"]] = max(
+            stamp, self.last_stamp_by_name.get(decoded["name"], stamp))
         if historical:
             self._backlog_seen[replay_key] = packet
             if len(self._backlog_seen) > MAX_BACKLOG_REPLAY_PDUS:
                 self._backlog_seen.popitem(last=False)
-            if not publish:
-                self._burst_unpublished += 1
+            self._burst_unpublished += 1
+            if publish:
+                self._publish_burst_preview(now_ms)
 
         if decoded["name"] == "GNSS_PVT" and (
                 age_ms <= MAX_AGE_MS and
@@ -423,7 +491,8 @@ class TmReceiver:
                         request.done.set()
                     elif request is not None and not request.sent and \
                             (not real_socket or not data_ready):
-                        # Finish a stored downlink before issuing a live TC.
+                        # Periodic beacons leave an idle slot for the initial
+                        # dump request; finish an ongoing burst before another TC.
                         # A request that times out while still queued can be
                         # removed without a late, unmatched ACK on this stream.
                         request.sent = True
@@ -448,6 +517,8 @@ class TmReceiver:
                 if decoded["name"] == RESULT_TELEMETRY:
                     self._ingest_command_result(packet, decoded,
                                                 received_ms=received_ms)
+                elif decoded["name"] == BEACON_TELEMETRY:
+                    self._ingest_beacon(decoded, received_ms=received_ms)
                 else:
                     ingested = self.ingest(packet, received_ms=received_ms,
                                            historical=self.contact_gate is not None,

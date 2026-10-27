@@ -17,7 +17,7 @@ from pathlib import Path
 
 from tools.pado_packet_codec import PacketError, decode, encode_tc
 
-from .ros_workbench import SIM_READ_ONLY_COMMANDS
+from .ros_workbench import SIM_ALLOWED_COMMANDS
 
 
 _LENGTH = struct.Struct(">I")
@@ -47,8 +47,8 @@ def send_sim_tc(socket_path: Path, reservation: dict, *, now_ms: int | None = No
     issued_ms = int(time.time() * 1000) if now_ms is None else now_ms
     if type(issued_ms) is not int or issued_ms <= 0:
         raise SimDispatchError("invalid simulation issue time")
-    if reservation.get("command_name") not in SIM_READ_ONLY_COMMANDS:
-        raise SimDispatchError("only simulator read-only commands can be sent")
+    if reservation.get("command_name") not in SIM_ALLOWED_COMMANDS:
+        raise SimDispatchError("only enabled simulator commands can be sent")
     sequence = reservation["command_sequence"]
     packet = encode_tc(reservation["command_name"], sequence, issued_ms,
                        reservation["parameters"])
@@ -74,7 +74,7 @@ def send_sim_tc(socket_path: Path, reservation: dict, *, now_ms: int | None = No
          (fields["reason"] != 0 or
           not issued_ms - 120_000 <= fields["executed_at_utc_ms"] <= issued_ms + 120_000)) or
             (fields["result"] == 1 and
-             (fields["reason"] not in (1, 2, 3, 4) or
+             (fields["reason"] not in (1, 2, 3, 4, 5, 6) or
               fields["executed_at_utc_ms"] != 0)) or
             fields["result"] not in (0, 1)):
         raise SimDispatchError("simulation ACK has inconsistent time or result")
@@ -83,7 +83,7 @@ def send_sim_tc(socket_path: Path, reservation: dict, *, now_ms: int | None = No
 
 
 class SimTcDispatcher(threading.Thread):
-    """Poll only the SIM_ONLY reservation table; never touch legacy drafts."""
+    """Claim SIM_ONLY reservations and immediate dump requests once."""
 
     def __init__(self, store, socket_path: Path) -> None:
         super().__init__(name="sim-tc-dispatch", daemon=True)
@@ -98,18 +98,22 @@ class SimTcDispatcher(threading.Thread):
     def run(self) -> None:
         while not self.stop_event.is_set():
             try:
-                reservation = self.store.claim_due(int(time.time()))
+                now_s = int(time.time())
+                reservation = self.store.claim_due(now_s) or self.store.claim_sim_tm_request(now_s)
                 if reservation is None:
                     self.stop_event.wait(0.5)
                     continue
+                finish = (self.store.finish_sim_tm_request
+                          if reservation.get("request_kind") == "TM_DUMP"
+                          else self.store.finish_sim)
                 try:
                     ack = send_sim_tc(self.socket_path, reservation)
                     status = "ACKED" if ack["result"] == 0 else "REJECTED"
-                    self.store.finish_sim(reservation["id"], status, ack)
+                    finish(reservation["id"], status, ack)
                 except (socket.timeout, TimeoutError):
-                    self.store.finish_sim(reservation["id"], "TIMEOUT")
+                    finish(reservation["id"], "TIMEOUT")
                 except (OSError, PacketError, ValueError, KeyError, TypeError):
-                    self.store.finish_sim(reservation["id"], "SEND_FAILED")
+                    finish(reservation["id"], "SEND_FAILED")
             except (OSError, ValueError):
                 # A broken draft store must not become an automatic retry loop.
                 self.stop_event.wait(1.0)

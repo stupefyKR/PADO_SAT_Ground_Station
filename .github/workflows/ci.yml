@@ -154,7 +154,7 @@ jobs:
         env:
           PADO_LOCAL_BIND_IP: 127.0.0.1
         run: docker compose -f deploy/stage9/compose.local.yaml build fds-synthetic-demo sim-ground sim-satellite ros-api
-      - name: Verify contact-gated simulator TM, private TC bridge, and ROS ACK
+      - name: Verify beacon, commanded TM dump, private TC bridge, and ROS ACK
         env:
           PADO_LOCAL_BIND_IP: 127.0.0.1
         run: |
@@ -244,29 +244,54 @@ jobs:
           temporary.chmod(0o644)
           temporary.replace(path)
           PY
+          # AOS alone must deliver only BEACON_CORE, never the stored TM.
+          beacon_ready=false
+          for attempt in {1..18}; do
+            if "${compose[@]}" exec -T sim-ground python3 -c \
+              'from pathlib import Path; assert Path("/tm-preview/test_beacon.json").is_file(); assert not Path("/tm-preview/test_tm_snapshot.json").exists()' \
+              >/dev/null 2>&1; then
+              beacon_ready=true
+              break
+            fi
+            sleep 2
+          done
+          if [[ "$beacon_ready" != true ]]; then
+            exit 1
+          fi
+          "${compose[@]}" exec -T ros-api python3 - <<'PY'
+          from pathlib import Path
+          from services.webapp.sim_tc_dispatch import send_sim_tc
+
+          ack = send_sim_tc(Path('/run/sim-tc/bridge.sock'), {
+              'command_name': 'hk_dump', 'command_sequence': 6,
+              'parameters': {'start_utc_ms': 0, 'end_utc_ms': 0},
+          })
+          assert ack['command_id'] == 4116, ack
+          assert ack['result'] == 0 and ack['reason'] == 0, ack
+          print('stored TM request accepted:', ack)
+          PY
           ready=false
           for attempt in {1..36}; do
             if "${compose[@]}" exec -T sim-ground python3 -c \
               'import json; from pathlib import Path; p=json.loads(Path("/tm-preview/test_tm_snapshot.json").read_text()); assert p["non_operational"] is True and p["attitude"] is not None and len(list(Path("/n11-inbox/scenario-ltan12-v1").glob("*.manifest.json"))) >= 1' \
               >/dev/null 2>&1; then
-              if "${compose[@]}" exec -T sim-satellite python3 -c \
-                'import sqlite3; db=sqlite3.connect("file:/state/test_tm_spool-ltan12-v1.sqlite3?mode=ro",uri=True); assert db.execute("SELECT COUNT(*) FROM tm_spool").fetchone()[0] <= 3' \
-                >/dev/null 2>&1; then
-                ready=true
-                break
-              fi
+              ready=true
+              break
             fi
             sleep 5
           done
           if [[ "$ready" != true ]]; then
             exit 1
           fi
+          # New samples after the command snapshot stay on board. No automatic
+          # tail streaming is allowed even while the PASS remains open.
+          sleep 7
           "${compose[@]}" exec -T sim-satellite python3 - <<'PY'
           import sqlite3
           with sqlite3.connect('file:/state/test_tm_spool-ltan12-v1.sqlite3?mode=ro', uri=True) as db:
               queued = db.execute('SELECT COUNT(*) FROM tm_spool').fetchone()[0]
-          assert queued <= 3, queued
-          print('in-contact remaining PDUs:', queued)
+          assert queued >= 3, queued
+          print('new samples retained pending another TC:', queued)
           PY
           "${compose[@]}" exec -T ros-api python3 - <<'PY'
           import time

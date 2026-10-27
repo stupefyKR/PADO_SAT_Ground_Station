@@ -97,7 +97,7 @@ class SimTcDispatchTests(unittest.TestCase):
                     "command_name": "hk_get", "command_sequence": 7,
                     "parameters": {},
                 }, now_ms=1_800_000_000_000)
-        with self.assertRaisesRegex(SimDispatchError, "read-only"):
+        with self.assertRaisesRegex(SimDispatchError, "enabled simulator"):
             send_sim_tc(FakeSocketPath(), {
                 "command_name": "mm_set_mode", "command_sequence": 8,
                 "parameters": {"mode": 1},
@@ -111,6 +111,17 @@ class SimTcDispatchTests(unittest.TestCase):
                     "command_name": "mm_get_mode", "command_sequence": 2,
                     "parameters": {},
                 }, now_ms=1_800_000_000_000)
+
+    def test_dump_command_uses_existing_packet_fields_and_accepts_handler_rejection(self):
+        bridge = FakeBridge(result=1, reason=5)
+        with patch("services.webapp.sim_tc_dispatch.socket.socket", return_value=bridge):
+            ack = send_sim_tc(FakeSocketPath(), {
+                "command_name": "hk_dump", "command_sequence": 7,
+                "parameters": {"start_utc_ms": 0, "end_utc_ms": 0},
+            }, now_ms=1_800_000_000_000)
+        self.assertEqual(bridge.sent["name"], "hk_dump")
+        self.assertEqual(bridge.sent["fields"], {"start_utc_ms": 0, "end_utc_ms": 0})
+        self.assertEqual(ack["reason"], 5)
 
     def test_rejected_ack_is_recordable(self):
         with patch("services.webapp.sim_tc_dispatch.socket.socket",
@@ -145,6 +156,32 @@ class SimTcDispatchTests(unittest.TestCase):
                             break
                         time.sleep(0.02)
                     self.assertEqual(current["status"], "SEND_FAILED")
+                finally:
+                    dispatcher.stop()
+                    store.close()
+
+    def test_immediate_dump_request_is_claimed_once_and_recorded(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            store = RosDraftStore(root / "ros.db")
+            item = store.request_sim_tm("operator01")
+            dispatcher = SimTcDispatcher(store, root / "unused.sock")
+            def acknowledge(_path, request):
+                self.assertEqual(request["command_name"], "hk_dump")
+                return {"command_id": 4116, "command_sequence": request["command_sequence"],
+                        "result": 0, "reason": 0, "executed_at_utc_ms": int(time.time() * 1000)}
+            with patch("services.webapp.sim_tc_dispatch.send_sim_tc", side_effect=acknowledge) as send:
+                dispatcher.start()
+                try:
+                    deadline = time.monotonic() + 2
+                    while time.monotonic() < deadline:
+                        current = store.list_sim_tm_requests()[0]
+                        if current["status"] == "ACKED":
+                            break
+                        time.sleep(0.02)
+                    self.assertEqual(current["id"], item["id"])
+                    self.assertEqual(current["status"], "ACKED")
+                    self.assertEqual(send.call_count, 1)
                 finally:
                     dispatcher.stop()
                     store.close()

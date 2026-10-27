@@ -66,8 +66,50 @@ assert.match(document.getElementById('ros-current-count').textContent, /1개 초
 assert.match(document.getElementById('ros-alarm-state').textContent, /초과 1개/);
 """
 
+BEACON_TEST = r"""
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const nodes = new Map();
+function element() { return {textContent:'', disabled:false, children:[],
+  replaceChildren(...items) { this.children = items; },
+  append(...items) { this.children.push(...items); },
+  classList: {toggle(){}}}; }
+const document = {getElementById(id) { if (!nodes.has(id)) nodes.set(id, element()); return nodes.get(id); },
+  createElement: element};
+let beacon = {received_utc: new Date().toISOString(), sampled_utc:'2026-10-27T01:00:00Z',
+  fields:{beacon_counter:10, beacon_period_s:5, mode:1}};
+const scope = {document, window:{}, api: async() => beacon};
+vm.createContext(scope);
+const source = fs.readFileSync(process.argv[1], 'utf8');
+vm.runInContext(source.replace(/\s+init\(\);\s*\}\)\(\);\s*$/,
+  '\nwindow.test = {refreshBeacon, showSimTmRequests, setup(role, rows) {session={role}; simTmAvailable=true; simTmRequests=rows;}};\n})();'), scope);
+(async () => {
+  const ui = scope.window.test;
+  await ui.refreshBeacon();
+  assert.equal(document.getElementById('sim-beacon-state').textContent, '비콘 수신 중');
+  beacon.received_utc = new Date(Date.now()-60000).toISOString();
+  await ui.refreshBeacon();
+  assert.equal(document.getElementById('sim-beacon-state').textContent, '최근 비콘 오래됨');
+  ui.setup('auditor', []); ui.showSimTmRequests();
+  assert.equal(document.getElementById('sim-tm-request').disabled, true);
+  ui.setup('operator', [{created_at:1800000000, created_by:'operator', status:'SENDING'}]);
+  ui.showSimTmRequests(); assert.equal(document.getElementById('sim-tm-request').disabled, true);
+  ui.setup('operator', [{created_at:1800000000, created_by:'operator', status:'ACKED', ack:{result:0}}]);
+  ui.showSimTmRequests(); assert.equal(document.getElementById('sim-tm-request').disabled, false);
+  const status = document.getElementById('sim-tm-request-rows').children[0].children[2].textContent;
+  assert.match(status, /요청 수락/); assert.doesNotMatch(status, /완료/);
+})().catch((err) => { console.error(err); process.exitCode=1; });
+"""
+
 
 class RosTmUiTest(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("node"), "Node.js unavailable")
+    def test_beacon_freshness_and_dump_acceptance_are_visible(self):
+        result = subprocess.run(["node", "-e", BEACON_TEST, str(SOURCE)],
+                                capture_output=True, text=True, timeout=10, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     @unittest.skipUnless(shutil.which("node"), "Node.js unavailable")
     def test_delayed_tm_is_historical_not_live_alarm(self):
         self.assertIn('id="ros-tm-timing"', PAGE.read_text(encoding="utf-8"))

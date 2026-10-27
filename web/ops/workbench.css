@@ -15,6 +15,10 @@
 .ros-view[hidden]{display:none}.ros-status-grid{grid-template-columns:minmax(320px,.9fr) minmax(400px,1.3fr)}
 .ros-tc-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
 .sim-tc-grid{margin-bottom:14px}
+.sim-downlink-panel{margin-bottom:14px}.sim-downlink-panel .table-scroll{max-height:220px}
+.sim-downlink-controls{display:flex;justify-content:space-between;align-items:center;gap:14px;padding:14px 16px}
+.sim-downlink-controls strong{color:#e3eff2;font-size:.78rem}.sim-downlink-controls p{margin:6px 0 0;color:#8faeb9;font:.7rem Consolas,monospace}
+@media(max-width:650px){.sim-downlink-controls{align-items:flex-start;flex-direction:column}}
 .sim-sequence-panel .table-scroll,.sim-reservation-panel .table-scroll{max-height:350px}
 .sim-sequence-panel td,.sim-reservation-panel td{overflow-wrap:anywhere}
 .current-alerts{min-height:175px;padding:18px 16px;color:#a9c2cc;font-size:.78rem;line-height:1.6}

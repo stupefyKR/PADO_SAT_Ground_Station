@@ -114,3 +114,40 @@ def load_snapshot(path: Path | None) -> dict:
     except OSError as error:
         raise PreviewError("snapshot_unavailable") from error
     return validate_snapshot(raw)
+
+
+def load_beacon(snapshot_path: Path | None) -> dict:
+    """Read the separate bounded beacon status; never treat an old file as link health."""
+    if snapshot_path is None or snapshot_path.name != "test_tm_snapshot.json":
+        raise PreviewError("beacon_not_configured")
+    path = snapshot_path.with_name("test_beacon.json")
+    if path.is_symlink():
+        raise PreviewError("beacon_file_invalid")
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        with os.fdopen(os.open(path, flags), "rb") as source:
+            info = os.fstat(source.fileno())
+            if not stat.S_ISREG(info.st_mode) or not 1 <= info.st_size <= 4096:
+                raise PreviewError("beacon_file_invalid")
+            raw = source.read(4097)
+        if len(raw) > 4096:
+            raise PreviewError("beacon_file_invalid")
+        value = json.loads(raw.decode("utf-8"), object_pairs_hook=_pairs,
+                           parse_constant=_reject_constant)
+    except (OSError, UnicodeError, ValueError) as error:
+        raise PreviewError("beacon_unavailable") from error
+    bounds = {"mode": 255, "beacon_counter": 0xffffffff, "beacon_period_s": 65535,
+              "boot_count": 65535, "reset_cause": 255, "fsw_image": 255,
+              "crash_count": 65535, "watchdog_state": 255, "nor_usage_pct": 100,
+              "fdir_level": 255, "fault_bitmap": 0xffffffff}
+    if (not isinstance(value, dict) or set(value) != {"type", "non_operational",
+            "sampled_utc", "received_utc", "sequence", "fields"} or
+            value["type"] != "TEST_ONLY_BEACON" or value["non_operational"] is not True or
+            type(value["sequence"]) is not int or not 0 <= value["sequence"] <= 65535 or
+            not isinstance(value["fields"], dict) or set(value["fields"]) != set(bounds) or
+            any(type(value["fields"][key]) is not int or
+                not 0 <= value["fields"][key] <= limit for key, limit in bounds.items()) or
+            value["fields"]["beacon_period_s"] == 0 or
+            _utc(value["sampled_utc"]) > _utc(value["received_utc"])):
+        raise PreviewError("beacon_contract_invalid")
+    return value

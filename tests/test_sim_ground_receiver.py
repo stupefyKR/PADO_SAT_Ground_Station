@@ -41,6 +41,10 @@ AOCS = {"adcs_state": 1, "control_mode": 1, "boot_index": 1,
 GNSS = {"norad_id": 99999, "solution_status": 1, "receiver_age_ms": 0,
         "x_m": 6_878_000.0, "y_m": 0.0, "z_m": 0.0,
         "vx_mps": 0.0, "vy_mps": 7_600.0, "vz_mps": 0.0}
+BEACON = {"mode": 1, "beacon_counter": 1, "beacon_period_s": 5,
+          "boot_count": 1, "reset_cause": 0, "fsw_image": 1,
+          "crash_count": 0, "watchdog_state": 1, "nor_usage_pct": 0,
+          "fdir_level": 0, "fault_bitmap": 0}
 
 
 class _SocketBytes:
@@ -78,6 +82,92 @@ class SyntheticTmReceiverTests(unittest.TestCase):
 
     def _gnss(self, seq=2, stamp=STAMP, **fields):
         return encode_tm("GNSS_PVT", seq, stamp, {**GNSS, **fields})
+
+    def _beacon(self, seq=100, stamp=STAMP, **fields):
+        return encode_tm("BEACON_CORE", seq, stamp, {**BEACON, **fields})
+
+    def test_beacon_tc_ack_then_history_keeps_independent_clocks(self):
+        receiver = self._contact_receiver()
+        instant = STAMP + 150_000
+        tc = encode_tc("hk_dump", 43, instant,
+                       {"start_utc_ms": 0, "end_utc_ms": 0})
+        decoded = decode(tc)
+        request = _PendingTc(tc, decoded["id"], decoded["sequence"])
+        first = self._beacon(20000, instant - 5000)
+        # Use the successful result emitted by the hk_dump dispatcher.
+        ack = encode_tm("COMMAND_RESULT", 500, instant, {
+            "command_id": decoded["id"], "command_sequence": 43,
+            "result": 0, "reason": 0, "executed_at_utc_ms": instant})
+        rest = (ack, self._eps(), self._aocs(), self._gnss(),
+                self._beacon(20001, instant, beacon_counter=2))
+        frame = lambda packets: b"".join(struct.pack(">I", len(pdu)) + pdu for pdu in packets)
+
+        class DuplexBeaconStream(_SocketBytes):
+            def __init__(stream):
+                super().__init__(frame((first,)), chunk=11)
+                stream.injected = False
+                stream.sent = []
+
+            def recv(stream, size):
+                data = super().recv(size)
+                if not stream.raw and not stream.injected:
+                    # A ROS request arrives after the first beacon was read.
+                    receiver._tc_pending = request
+                    stream.injected = True
+                return data
+
+            def sendall(stream, framed):
+                stream.sent.append(framed)
+                stream.raw += frame(rest)
+
+        stream = DuplexBeaconStream()
+        with patch("services.sim_ground.receiver.time.time", return_value=instant / 1000):
+            self.assertEqual(receiver.process_connection(stream), 6)
+        self.assertEqual(stream.sent, [frame((tc,))])
+        self.assertEqual(request.response, ack)
+        self.assertTrue(request.done.is_set())
+        self.assertEqual(receiver.last_stamp_ms, STAMP)
+        self.assertEqual(receiver.last_sequence, 2)
+        self.assertEqual(load_snapshot(self.snapshot)["attitude"]["utc"],
+                         datetime.fromtimestamp(STAMP / 1000, timezone.utc).strftime(
+                             "%Y-%m-%dT%H:%M:%SZ"))
+        beacon = json.loads(self.snapshot.with_name("test_beacon.json").read_text())
+        self.assertEqual(beacon["type"], "TEST_ONLY_BEACON")
+        self.assertEqual(beacon["fields"]["beacon_counter"], 2)
+        self.assertEqual(beacon["sequence"], 20001)
+        self.assertEqual(list(self.inbox.glob("*.manifest.json")), [])
+
+    def test_beacon_replay_stale_and_invalid_period_rejected_without_sensor_snapshot(self):
+        packet = self._beacon()
+        self.receiver._ingest_beacon(decode(packet), received_ms=STAMP)
+        self.assertFalse(self.snapshot.exists())
+        self.assertIsNone(self.receiver.last_stamp_ms)
+        with self.assertRaisesRegex(ReceiverError, "backwards"):
+            self.receiver._ingest_beacon(decode(packet), received_ms=STAMP)
+        for invalid, received in ((self._beacon(101, STAMP + 5000), STAMP + 126_000),
+                                  (self._beacon(101, STAMP + 5000,
+                                                beacon_period_s=0), STAMP + 5000)):
+            with self.assertRaisesRegex(ReceiverError, "invalid live"):
+                self.receiver._ingest_beacon(decode(invalid), received_ms=received)
+
+    def test_requested_historical_ranges_can_arrive_out_of_order_or_after_long_gap(self):
+        receiver = self._contact_receiver()
+        received_ms = STAMP + 150_000
+        first = self._eps(0, STAMP - 43_200_000)
+        latest = self._eps(60000, STAMP)
+        older = self._eps(40000, STAMP - 5000)
+        for packet in (first, latest, older):
+            receiver.ingest(packet, received_ms=received_ms,
+                            historical=True, publish=False)
+        receiver._publish_burst_preview(received_ms)
+        self.assertEqual(receiver.last_stamp_ms, STAMP)
+        samples = load_snapshot(self.snapshot)["sensors"][0]["samples"]
+        self.assertEqual(len(samples), 2)
+        self.assertLess(samples[0]["utc"], samples[1]["utc"])
+        self.assertIsNone(receiver.ingest(older, received_ms=received_ms, historical=True))
+        conflicting = self._eps(40001, STAMP - 5000)
+        with self.assertRaisesRegex(ReceiverError, "conflicting"):
+            receiver.ingest(conflicting, received_ms=received_ms, historical=True)
 
     def _contact_receiver(self) -> TmReceiver:
         utc = lambda milliseconds: datetime.fromtimestamp(
@@ -432,6 +522,32 @@ class SyntheticTmReceiverTests(unittest.TestCase):
                                              received_ms=stamp)
         self.assertEqual(request.response, good_ack)
         self.assertTrue(request.done.is_set())
+
+    def test_separate_acks_with_same_second_are_correlated_and_replay_rejected(self):
+        stamp = STAMP
+        for sequence in (33, 34):
+            tc = encode_tc("hk_get", sequence, stamp, {})
+            request = _PendingTc(tc, decode(tc)["id"], sequence)
+            request.sent = True
+            self.receiver._tc_pending = request
+            ack = build_command_result(tc, sequence, TcReplayState(), received_ms=stamp)
+            self.receiver._ingest_command_result(ack, decode(ack), received_ms=stamp)
+            self.assertEqual(request.response, ack)
+        self.receiver._tc_pending = request
+        with self.assertRaisesRegex(ReceiverError, "unmatched"):
+            self.receiver._ingest_command_result(ack, decode(ack), received_ms=stamp)
+
+    def test_ack_future_execution_time_cannot_complete_request(self):
+        tc = encode_tc("hk_get", 33, STAMP, {})
+        request = _PendingTc(tc, decode(tc)["id"], 33)
+        request.sent = True
+        self.receiver._tc_pending = request
+        ack = encode_tm("COMMAND_RESULT", 50, STAMP, {
+            "command_id": decode(tc)["id"], "command_sequence": 33,
+            "result": 0, "reason": 0, "executed_at_utc_ms": STAMP + 1000})
+        with self.assertRaisesRegex(ReceiverError, "status"):
+            self.receiver._ingest_command_result(ack, decode(ack), received_ms=STAMP)
+        self.assertFalse(request.done.is_set())
 
     @unittest.skipIf(os.name == "nt", "Unix bridge exercised by Linux CI")
     def test_private_unix_tc_bridge_roundtrip(self):

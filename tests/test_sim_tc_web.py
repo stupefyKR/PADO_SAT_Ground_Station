@@ -86,6 +86,71 @@ class SimTcHttpTests(unittest.TestCase):
         with response:
             return response.status, dict(response.headers), json.loads(response.read())
 
+    def test_immediate_dump_request_requires_session_csrf_role_and_no_command_override(self):
+        try:
+            status, _, _ = self.request("/api/ros/test-sim-tm-requests")
+        except URLError as exc:
+            if isinstance(exc.reason, PermissionError):
+                self.skipTest("local sandbox denies loopback connections")
+            raise
+        self.assertEqual(status, 401)
+        status, headers, login = self.request("/api/login", body={
+            "username": "planner01", "password": "valid-password-123"})
+        self.assertEqual(status, 200)
+        cookie = {"Cookie": headers["Set-Cookie"].split(";", 1)[0]}
+        authorized = {**cookie, "X-CSRF-Token": login["csrf"]}
+        status, _, _ = self.request("/api/ros/test-sim-tm-requests", body={}, headers=cookie)
+        self.assertEqual(status, 403)
+        status, _, body = self.request("/api/ros/test-sim-tm-requests", body={}, headers=authorized)
+        self.assertEqual(status, 503)
+        self.assertEqual(body["error"], "sim_tc_unavailable")
+        self.ros.sim_tc_socket = self.folder / "sim.sock"
+        status, _, _ = self.request("/api/ros/test-sim-tm-requests",
+                                    body={"command_name": "mm_set_mode"}, headers=authorized)
+        self.assertEqual(status, 400)
+        status, _, created = self.request("/api/ros/test-sim-tm-requests", body={}, headers=authorized)
+        self.assertEqual(status, 200)
+        self.assertEqual(created["command_name"], "hk_dump")
+        self.assertEqual(created["status"], "QUEUED")
+        self.assertFalse(created["operational"])
+        status, _, listed = self.request("/api/ros/test-sim-tm-requests", headers=cookie)
+        self.assertEqual(status, 200)
+        self.assertEqual(listed["items"][0]["id"], created["id"])
+        self.assertTrue(listed["sim_tc_available"])
+        self.auth.create_user("auditor01", "auditor", "valid-password-123")
+        status, headers, login = self.request("/api/login", body={
+            "username": "auditor01", "password": "valid-password-123"})
+        self.assertEqual(status, 200)
+        status, _, _ = self.request("/api/ros/test-sim-tm-requests", body={}, headers={
+            "Cookie": headers["Set-Cookie"].split(";", 1)[0], "X-CSRF-Token": login["csrf"]})
+        self.assertEqual(status, 403)
+
+    def test_beacon_route_is_authenticated_and_has_separate_snapshot(self):
+        try:
+            status, _, _ = self.request("/api/ros/test-beacon")
+        except URLError as exc:
+            if isinstance(exc.reason, PermissionError):
+                self.skipTest("local sandbox denies loopback connections")
+            raise
+        self.assertEqual(status, 401)
+        status, headers, _ = self.request("/api/login", body={
+            "username": "planner01", "password": "valid-password-123"})
+        self.assertEqual(status, 200)
+        cookie = {"Cookie": headers["Set-Cookie"].split(";", 1)[0]}
+        self.ros.tm_preview = self.folder / "test_tm_snapshot.json"
+        status, _, _ = self.request("/api/ros/test-beacon", headers=cookie)
+        self.assertEqual(status, 503)
+        beacon = {"type": "TEST_ONLY_BEACON", "non_operational": True,
+                  "sampled_utc": "2026-10-27T01:00:00Z", "received_utc": "2026-10-27T01:00:01Z",
+                  "sequence": 2, "fields": {"mode": 1, "beacon_counter": 2,
+                      "beacon_period_s": 5, "boot_count": 1, "reset_cause": 0,
+                      "fsw_image": 0, "crash_count": 0, "watchdog_state": 1,
+                      "nor_usage_pct": 0, "fdir_level": 0, "fault_bitmap": 0}}
+        self.folder.joinpath("test_beacon.json").write_text(json.dumps(beacon), encoding="utf-8")
+        status, _, received = self.request("/api/ros/test-beacon", headers=cookie)
+        self.assertEqual(status, 200)
+        self.assertEqual(received, beacon)
+
     def test_authenticated_server_side_handoff_and_reservation_lifecycle(self):
         reference = {"pass_id": "yonsei-001", "schedule_sha256": "a" * 64,
                      "expected_revision": 1}

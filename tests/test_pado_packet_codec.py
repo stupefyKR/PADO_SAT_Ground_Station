@@ -70,6 +70,18 @@ class PacketCodecTests(unittest.TestCase):
         with self.assertRaises(PacketError):
             encode_tc("hk_get", 1, STAMP, {}, execute_at_utc_ms=STAMP)
 
+    def test_hk_dump_whole_buffer_sentinel_and_explicit_interval(self):
+        for start, end in ((0, 0), (STAMP - 5000, STAMP)):
+            fields = {"start_utc_ms": start, "end_utc_ms": end}
+            packet = encode_tc("hk_dump", 8, STAMP, fields)
+            self.assertEqual(decode(packet)["fields"], fields)
+            self.assertFalse(decode(packet)["operational"])
+        for start, end in ((STAMP, STAMP), (STAMP, 0), (STAMP, STAMP - 1),
+                           (False, 0), ("0", 0)):
+            with self.assertRaises(PacketError):
+                encode_tc("hk_dump", 8, STAMP,
+                          {"start_utc_ms": start, "end_utc_ms": end})
+
     def test_frozen_cross_implementation_vector(self):
         self.assertEqual(
             encode_tc("hk_get", 7, STAMP, {}).hex(),

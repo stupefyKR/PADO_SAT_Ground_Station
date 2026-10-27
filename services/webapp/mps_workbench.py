@@ -339,8 +339,8 @@ class MpsCandidateStore:
                 raise CandidateError("sequence_needs_review") from exc
         if not steps:
             raise CandidateError("empty_sequence")
-        from .ros_workbench import SIM_READ_ONLY_COMMANDS
-        if any(step["command_name"] not in SIM_READ_ONLY_COMMANDS for step in steps):
+        from .ros_workbench import SIM_ALLOWED_COMMANDS
+        if any(step["command_name"] not in SIM_ALLOWED_COMMANDS for step in steps):
             raise CandidateError("sim_read_only_commands_required")
         return {
             "schema": "pado.sim-sequence.v1", "non_operational": True,

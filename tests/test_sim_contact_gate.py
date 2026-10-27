@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 from services.sim_ground.receiver import ContactGate, TmReceiver, ReceiverError, load_limits
 from tools.pado_packet_codec import encode_tc, encode_tm
+from tests.test_sim_ground_receiver import BEACON
 
 
 START = datetime(2027, 1, 15, 8, 0, tzinfo=timezone.utc)
@@ -105,6 +106,11 @@ class SimContactGateTests(unittest.TestCase):
                    return_value=(START_MS + 30_000) / 1000):
             self.assertEqual(receiver.process_connection(_SocketBytes(packet)), 0)
         self.assertFalse(receiver.snapshot.exists())
+        beacon = encode_tm("BEACON_CORE", 0, START_MS + 30_000, BEACON)
+        with patch("services.sim_ground.receiver.time.time",
+                   return_value=(START_MS + 30_000) / 1000):
+            self.assertEqual(receiver.process_connection(_SocketBytes(beacon)), 0)
+        self.assertFalse(receiver.snapshot.with_name("test_beacon.json").exists())
         tc = encode_tc("hk_get", 1, START_MS + 30_000, {})
         with self.assertRaisesRegex(ReceiverError, "outside Yonsei UHF contact"):
             receiver.submit_tc(tc, now_ms=START_MS + 30_000)

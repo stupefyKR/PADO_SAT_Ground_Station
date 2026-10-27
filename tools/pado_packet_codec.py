@@ -182,9 +182,14 @@ def encode_tc(name: str, sequence: int, issued_at_utc_ms: int,
                             for char in line[:68]) % 10 == int(line[-1])
                         for line in (line1, line2)):
             raise PacketError("TLE lines, satellite IDs or checksums invalid")
-    if name == "hk_dump" and fields.get("start_utc_ms", 0) >= fields.get("end_utc_ms", 0):
-        raise PacketError("HK dump end time must follow start time")
-    payload = struct.pack(">Q", execute_at_utc_ms) + _pack_fields(entry["fields"], fields)
+    encoded_fields = _pack_fields(entry["fields"], fields)
+    if name == "hk_dump":
+        start, end = fields["start_utc_ms"], fields["end_utc_ms"]
+        # Draft simulator convention: zero/zero requests the current buffer.
+        # An explicit interval retains its existing strictly ordered contract.
+        if (start, end) != (0, 0) and start >= end:
+            raise PacketError("HK dump end time must follow start time")
+    payload = struct.pack(">Q", execute_at_utc_ms) + encoded_fields
     return _encode(1, entry, sequence, issued_at_utc_ms, payload,
                    SCHEDULED_FLAG if execute_at_utc_ms else 0, catalog)
 
