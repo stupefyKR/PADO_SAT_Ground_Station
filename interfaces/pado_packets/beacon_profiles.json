@@ -1,0 +1,34 @@
+{
+  "schema": "pado.sim-beacon-profiles.v1",
+  "operational": false,
+  "default_profile": "normal_hk",
+  "normal_hk": {
+    "implemented": true,
+    "period_seconds": 10,
+    "period_source": "configurable simulation setting; flight HK cadence is not fixed here",
+    "default_mode": "Communication",
+    "packets": ["BEACON_CORE", "BEACON_INFO", "MODE_BEACON"]
+  },
+  "leop_identification": {
+    "implemented": false,
+    "purpose": "Reference timing from the supplied LEOP slide, not an RF waveform generator",
+    "start_condition": "antenna deployment confirmed after RF emission inhibit",
+    "cycle_seconds": 10,
+    "segments": [
+      {"name": "P1", "seconds": 1.1},
+      {"name": "gap", "seconds": 0.3},
+      {"name": "P2", "seconds": 1.1},
+      {"name": "rf_off", "seconds": 7.5}
+    ],
+    "normal_hk_transition_condition": null
+  },
+  "pdr_reference_payload_bytes": {
+    "Initial": 186,
+    "Standby": 178,
+    "Communication": 188,
+    "Mission(CREST)": 186,
+    "Mission(SIREN)": 186,
+    "Safehold": 192
+  },
+  "reference_budget_note": "PDR table values are source references, not the byte size of the simulator application-PDU bundle"
+}

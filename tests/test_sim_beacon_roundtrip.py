@@ -107,6 +107,11 @@ class BeaconDumpRoundtripTests(unittest.TestCase):
                     spool.queue_tick(view, START + timedelta(seconds=185))
                     self.assertEqual(session.flush_requested(
                         satellite, gate, clock_ms=lambda: now_ms), 9)
+                    self.assertEqual(spool.pending_count(), 12)
+                    for _ in range(9):
+                        receipt = read_test_tc(satellite)
+                        self.assertTrue(receipt.startswith(b"PSR1"))
+                        session.handle_uplink(receipt, satellite, gate, now_ms=now_ms)
                     wait_for(lambda: receiver.snapshot.exists())
                     snapshot = load_snapshot(receiver.snapshot)
                     self.assertEqual(len(snapshot["sensors"][0]["samples"]), 3)

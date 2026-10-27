@@ -118,12 +118,15 @@ class SyntheticTmReceiverTests(unittest.TestCase):
 
             def sendall(stream, framed):
                 stream.sent.append(framed)
-                stream.raw += frame(rest)
+                if not framed[4:].startswith(b"PSR1"):
+                    stream.raw += frame(rest)
 
         stream = DuplexBeaconStream()
         with patch("services.sim_ground.receiver.time.time", return_value=instant / 1000):
             self.assertEqual(receiver.process_connection(stream), 6)
-        self.assertEqual(stream.sent, [frame((tc,))])
+        self.assertEqual(stream.sent[0], frame((tc,)))
+        self.assertEqual(len(stream.sent), 4)
+        self.assertTrue(all(item[4:8] == b"PSR1" for item in stream.sent[1:]))
         self.assertEqual(request.response, ack)
         self.assertTrue(request.done.is_set())
         self.assertEqual(receiver.last_stamp_ms, STAMP)

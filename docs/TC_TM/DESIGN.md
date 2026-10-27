@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | 범위 | UHF TC/TM 응용 PDU | S-band payload 수신·과학 데이터 해독은 제외 |
 | TC | 후보 58종, 고정 인자가 정의된 36종만 초안 인코딩 | 명령 기능은 PDR, ID·인자 표현은 지상국 제안 |
-| TM | 후보 16종: GNSS, 자세, 노드 HK, 이벤트, 명령 결과 등 | 필드·단위·센서 한계 승인 전 |
+| TM | 18종: GNSS, 자세, 노드 HK, 이벤트, 명령 결과, 시험 모드 비콘·식별 정보 | 필드·단위·센서 한계 승인 전 |
 | 최대 크기 | 200 B: 헤더 20 + payload 최대 176 + CRC32 4 | CSP/AX100 헤더 포함 여부와 RF 비콘 예산 확인 필요 |
 | 예약 명령 | TC payload 맨 앞 `execute_at_utc_ms` 8 B | OBC 큐·취소·만료·중복 규칙 미정 |
 | 보호 | CRC32는 오류 검출 | 인증·재생 공격 방지는 미정, 운용 송신 금지 |
@@ -76,6 +76,7 @@ PDR 별첨 47쪽의 OEM719A `BESTPOS`·`BESTVEL`·`BESTXYZ`·`TIME`은 장비 �
 | ID | 이름 | 핵심 내용·사용처 |
 | --- | --- | --- |
 | `0x2000` | `BEACON_CORE` | 모드·부팅·FDIR 요약. **RF 모드 비콘 완성본 아님** |
+| `0x2001–0x2002` | `MODE_BEACON`, `BEACON_INFO` | 시뮬레이션용 장비 현재 상태·식별 문자열 |
 | `0x2010–0x2014` | `EPS_P60`, `EPS_PDU1`, `EPS_PDU2`, `EPS_ACU`, `EPS_BPX` | 전압·전류·온도·채널·latchup 부분 HK |
 | `0x2020` | `AOCS_STATE` | ADCS 상태, quaternion `q_w/x/y/z`, 3축 각속도; ROS 자세 화면 후보 |
 | `0x2021` | `GNSS_PVT` | 수신 상태·나이·ECEF 위치/속도; 유효성 확인 뒤 FDS N11 후보 |
@@ -89,6 +90,11 @@ PDR 별첨 47쪽의 OEM719A `BESTPOS`·`BESTVEL`·`BESTXYZ`·`TIME`은 장비 �
 `GNSS_PVT` 위치·속도는 3축 직교 벡터이고 자세 quaternion과 별개다. 현재 변환기는 `solution_status=1`, `receiver_age_ms≤1000`, 궤도 범위 및 초 단위 시각을 요구한다. 이 수치는 **임시 지상국 판정**이며 OEM719A 로그에서 OBC까지의 실제 매핑은 확인되지 않았다. 전체 HK 2,034 B 레코드는 160 B 조각 13개로 나누고 레코드 CRC와 조각 메타데이터로 재조립한다. 레코드 내부 필드 해석은 미정이다.
 
 PDR의 `sp_burn`은 CDHS 명령 후보 목록에만 남아 있고 인자가 미정이라 코덱과 MPS 후보 저장에서 거부한다. FDS는 이 명령을 읽거나 기동 궤적을 계산하지 않는다.
+
+현재 시뮬레이터는 별도의 버전이 있는 전체 HK JSON을 `FULL_HK_CHUNK`에 담아
+장비별 시험 파라미터를 제공한다. 이 자료는 위의 실제 2,034 B 레코드 바이트
+구조와 구분한다. 추가된 비콘 묶음·원문 아카이브·ROS 화면은
+[시뮬레이션 TM 안내](../SIM_TELEMETRY_PROFILE.md)에 기록했다.
 
 ## 코드·운용 상태
 

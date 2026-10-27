@@ -48,6 +48,8 @@
   let attitudeViewer = null;
   let attitudeOrbitView = null;
   let attitudeOrbitPending = false;
+  let packetBrowser = null;
+  let spacecraftEventsPending = false;
   const CURRENT_SAMPLE_AGE_MS = 120_000;
 
   function freshSample(sample, now = Date.now()) {
@@ -82,6 +84,7 @@
       $("ros-view-" + tab.dataset.rosTarget).hidden = !active;
       if (active && focus) tab.focus();
     }
+    if (name === "telemetry") packetBrowser?.refresh();
   }
 
   function setupTabs() {
@@ -368,6 +371,33 @@
       $("sim-beacon-summary").textContent = "최근 비콘을 확인할 수 없습니다";
       $("sim-beacon-time").textContent = "교신 구간과 비콘 수신 상태를 확인하세요.";
     }
+    $("overview-beacon-state").textContent = $("sim-beacon-state").textContent;
+    $("overview-beacon-summary").textContent = $("sim-beacon-summary").textContent;
+    $("overview-beacon-time").textContent = $("sim-beacon-time").textContent;
+  }
+
+  async function refreshSpacecraftEvents() {
+    if (spacecraftEventsPending) return;
+    spacecraftEventsPending = true;
+    try {
+      const result = await api("/api/ros/tm-events?limit=30");
+      if (!Array.isArray(result.items) || result.items.length > 30) throw Error("invalid events");
+      const rows = $("spacecraft-event-rows");
+      rows.replaceChildren();
+      const events = result.items.filter((event) => event.fields?.level > 0 || event.fields?.fault_code > 0);
+      $("spacecraft-event-count").textContent = `최근 ${events.length}건`;
+      if (!events.length) empty(rows, 5, "수신한 FDIR 이벤트가 없습니다.");
+      for (const event of events) {
+        const row = document.createElement("tr");
+        cell(row, event.sampled_utc); cell(row, `${event.label} · ${event.name}`);
+        cell(row, event.fields?.level ?? "—");
+        cell(row, event.fields?.source_node ?? "—");
+        cell(row, `${event.fields?.fault_code ?? "—"} / ${event.fields?.action_code ?? "—"}`);
+        rows.append(row);
+      }
+    } catch (_) {
+      $("spacecraft-event-count").textContent = "조회 대기";
+    } finally { spacecraftEventsPending = false; }
   }
   async function refreshSimDrafts(selectDigest = "") {
     const [sequenceData, reservationData] = await Promise.all([
@@ -452,7 +482,12 @@
         span.textContent = text;
         button.append(span);
       }
-      button.addEventListener("click", () => { selectedSensor = sensor; renderSensors(); });
+      button.append(sensorSparkline(sensor));
+      button.addEventListener("click", () => {
+        selectedSensor = sensor;
+        $("trend-details").open = true;
+        renderSensors();
+      });
       const row = document.createElement("li");
       row.append(button);
       list.append(row);
@@ -464,6 +499,42 @@
       list.append(row);
     }
     renderTrend();
+  }
+  function sensorSparkline(sensor) {
+    const latest = sensor.samples.at(-1);
+    const end = Date.parse(latest.utc);
+    const samples = sensor.samples.filter((sample) => Date.parse(sample.utc) >= end - minutes * 60000);
+    // Preserve bucket extrema so narrow limit excursions remain visible while
+    // bounding the SVG work for an entire equipment dashboard.
+    let plotted = samples;
+    if (samples.length > 120) {
+      const stride = Math.ceil(samples.length / 50);
+      const selected = new Set([0, samples.length - 1]);
+      for (let first = 0; first < samples.length; first += stride) {
+        let low = first, high = first;
+        for (let index = first + 1; index < Math.min(samples.length, first + stride); index++) {
+          if (samples[index].value < samples[low].value) low = index;
+          if (samples[index].value > samples[high].value) high = index;
+        }
+        selected.add(low); selected.add(high);
+      }
+      plotted = [...selected].sort((a, b) => a - b).map((index) => samples[index]);
+    }
+    const chart = svg("svg", {viewBox: "0 0 300 86", class: "sensor-sparkline",
+      role: "img", "aria-label": `${sensor.name} 최근 ${minutes}분 추세`, preserveAspectRatio: "none"});
+    const margin = Math.max((sensor.upper - sensor.lower) * 0.15, 0.1);
+    const bottom = Math.min(sensor.lower - margin, ...samples.map((item) => item.value));
+    const top = Math.max(sensor.upper + margin, ...samples.map((item) => item.value));
+    const x = (sample) => 5 + (Date.parse(sample.utc) - end + minutes * 60000) / (minutes * 60000) * 290;
+    const y = (value) => 79 - (value - bottom) / (top - bottom) * 72;
+    chart.append(svg("rect", {class: "sparkline-limit", x: 5, y: y(sensor.upper),
+      width: 290, height: y(sensor.lower) - y(sensor.upper)}));
+    chart.append(svg("path", {class: "sparkline-grid", d: "M5 43H295"}));
+    chart.append(svg("path", {class: "sparkline-value", d: plotted.map((sample, index) =>
+      `${index ? "L" : "M"}${x(sample).toFixed(1)} ${y(sample.value).toFixed(1)}`).join(" ")}));
+    for (const sample of plotted) if (sample.value < sensor.lower || sample.value > sensor.upper)
+      chart.append(svg("circle", {class: "chart-breach", cx: x(sample), cy: y(sample.value), r: 2.5}));
+    return chart;
   }
   function renderTrend() {
     const sensor = selectedSensor;
@@ -671,7 +742,8 @@
         $("sensor-filter").value = "";
         selectedSensor = sensor;
         renderSensors();
-        activateTab("telemetry");
+        $("trend-details").open = true;
+        activateTab("status");
       });
       list.append(row);
     }
@@ -789,7 +861,7 @@
       minutes = Number(button.dataset.range);
       document.querySelectorAll("[data-range]").forEach((item) =>
         item.setAttribute("aria-pressed", String(item === button)));
-      renderTrend();
+      renderSensors();
     }));
     $("sequence-select").addEventListener("change", showSequence);
     $("sim-sequence-select").addEventListener("change", showSimSequence);
@@ -799,6 +871,7 @@
     $("reservation-form").addEventListener("submit", reserve);
     try {
       session = await api("/api/session");
+      if (window.rosPacketBrowser) packetBrowser = window.rosPacketBrowser.create({api});
       try { await refreshDrafts(); }
       catch (error) { message("sequence-message", `ROS 초안 저장소 연결 실패: ${error.message}`, true); }
       try { await refreshSimDrafts(); }
@@ -813,6 +886,7 @@
     refreshAttitudeOrbit();
     await refreshPublishedTm();
     refreshBeacon();
+    refreshSpacecraftEvents();
     setInterval(() => {
       if (document.visibilityState === "visible") refreshAttitudeOrbit();
     }, 60000);
@@ -822,6 +896,8 @@
     setInterval(() => {
       if (document.visibilityState === "visible" && session) {
         refreshBeacon();
+        refreshSpacecraftEvents();
+        if (!$("ros-view-telemetry").hidden) packetBrowser?.refresh();
         refreshSimTmRequests().catch((error) =>
           message("sim-tm-request-message", `요청 상태 갱신 실패: ${error.message}`, true));
         refreshSimDrafts().catch((error) =>

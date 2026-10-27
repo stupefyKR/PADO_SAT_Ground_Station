@@ -1,6 +1,7 @@
 """Build standalone, non-operational ROS/MPS layout previews for local review."""
 
 from pathlib import Path
+import re
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -40,25 +41,47 @@ def build() -> list[Path]:
             html = html.replace('id="ros-mode">확인 중', 'id="ros-mode">SIM_ONLY')
             html = html.replace('id="ros-tm">확인 중', 'id="ros-tm">시험 규격')
             html = html.replace('id="ros-tc">차단', 'id="ros-tc">차단')
-            startup = r'''
-setupUtcClock();
-setupRosExample();
-document.getElementById("demo-toggle").click();
-document.getElementById("ros-current-count").textContent = "합성 예시";
-document.getElementById("ros-current-alerts").textContent =
-  "시험용 합성 그래프입니다. TM·자세 탭에서 센서 추세를 확인하세요.";
-document.querySelectorAll("[data-ros-target]").forEach((tab) => {
-  tab.addEventListener("click", () => {
-    document.querySelectorAll("[data-ros-target]").forEach((item) => {
-      const active = item === tab;
-      item.setAttribute("aria-selected", String(active));
-      item.tabIndex = active ? 0 : -1;
-      document.getElementById("ros-view-" + item.dataset.rosTarget).hidden = !active;
-    });
-  });
-});
+            packet_browser = (ROOT / "web/ops/packet_browser.js").read_text(encoding="utf-8")
+            workbench = (ROOT / "web/ops/workbench.js").read_text(encoding="utf-8")
+            offline_startup = r'''
+  setupTabs();
+  tmSource = "example";
+  loadTm(syntheticTm(), "오프라인 합성 예시");
+  packetBrowser = window.rosPacketBrowser.create({api});
+  $("trend-details").open = true;
+  $("sensor-filter").addEventListener("input", renderSensors);
+  document.querySelectorAll("[data-range]").forEach((button) => button.addEventListener("click", () => {
+    minutes = Number(button.dataset.range);
+    document.querySelectorAll("[data-range]").forEach((item) =>
+      item.setAttribute("aria-pressed", String(item === button)));
+    renderSensors();
+  }));
+  document.querySelectorAll("#ros-view-tc button, #ros-view-tc input, #ros-view-tc select, #demo-toggle, #tm-file")
+    .forEach((node) => { node.disabled = true; });
+  $("overview-beacon-state").textContent = "서버 연결 없음";
+  $("overview-beacon-summary").textContent = "비콘·TC·수신 원문은 VM 서버에서 확인합니다.";
+  $("packet-browser-state").textContent = "서버/API 연결 없음 · 수신 원문 조회는 VM 서버에서 가능합니다.";
+  $("spacecraft-event-count").textContent = "서버 연결 없음";
+  $("attitude-model-state").textContent = "3D CAD는 서버 화면에서 확인";
+  const canvas = $("attitude-canvas");
+  const context = canvas.getContext("2d");
+  if (context) {
+    context.fillStyle = "#091824"; context.fillRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = "#9dbdc9"; context.font = "18px sans-serif"; context.textAlign = "center";
+    context.fillText("3D CAD · VM 서버 연결 후 표시", canvas.width / 2, canvas.height / 2);
+  }
 '''
+            workbench, count = re.subn(r"\s+init\(\);\s*\}\)\(\);\s*$",
+                                       offline_startup + "\n})();", workbench)
+            if count != 1:
+                raise ValueError("ROS preview could not replace the API startup")
+            startup = ('setupUtcClock();\n'
+                       'api = async () => { throw new Error("서버/API 연결 없음"); };\n' +
+                       packet_browser + "\n" + workbench)
             html = html.replace('<script src="/assets/ros-workbench.js" defer></script>', '')
+            for script in ("ros-packet-browser.js", "ros-attitude-math.js",
+                           "ros-attitude-gl.js", "ros-attitude-viewer.js"):
+                html = html.replace(f'<script src="/assets/{script}" defer></script>', '')
         else:
             html = html.replace('<script src="/assets/mps-live.js" defer></script>', '')
             html = html.replace('id="mps-version">확인 중', 'id="mps-version">시험 초안')

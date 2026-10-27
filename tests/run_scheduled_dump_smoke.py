@@ -86,7 +86,7 @@ def run_smoke(base: Path) -> dict:
     bridge_temp = tempfile.TemporaryDirectory(prefix="pado-scheduled-")
     bridge_path = Path(bridge_temp.name) / "bridge.sock"
     now_s = int(time.time())
-    aos_s, target_s, los_s = now_s + 8, now_s + 18, now_s + 26
+    aos_s, target_s, los_s = now_s + 8, now_s + 18, now_s + 34
     start_s = (now_s - 60) // 5 * 5
     truth_path = base / "orbit_view.json"
     truth_path.write_text(json.dumps(_truth(start_s, aos_s, los_s)), encoding="utf-8")
@@ -98,14 +98,15 @@ def run_smoke(base: Path) -> dict:
                     "max_elevation_deg": 42, "clipped_start": False, "clipped_end": False}]}
     snapshot_path = base / "test_tm_snapshot.json"
     receiver = TmReceiver(snapshot_path, base / "n11-inbox",
-                          load_limits(ROOT / "services/sim_ground/test_limits.json"), truth_path)
+                          load_limits(ROOT / "services/sim_ground/full_test_limits.json"), truth_path)
     gate = ContactGate(truth_path)
     stop = threading.Event()
     bridge_ready = threading.Event()
     satellite_ready = threading.Event()
     errors = []
     commands = []
-    stats = {"queued": 0, "sent_pdus": 0, "pending": 0}
+    stats = {"queued": 0, "sent_pdus": 0, "pending": 0, "sample_ticks": 0,
+             "transfer_active": False}
     satellite, ground = socket.socketpair()
     satellite.settimeout(3)
     ground.settimeout(3)
@@ -130,9 +131,10 @@ def run_smoke(base: Path) -> dict:
         spool = None
         try:
             view = load_orbit_view(truth_path)
-            spool = TmSpool(base / "tm_spool.sqlite3")
+            spool = TmSpool(base / "tm_spool.sqlite3", full_housekeeping=True)
             for sample_s in range(start_s + 5, now_s // 5 * 5 + 1, 5):
                 spool.queue_tick(view, datetime.fromtimestamp(sample_s, timezone.utc))
+                stats["sample_ticks"] += 1
             stats["queued"] = spool.pending_count()
             session = SatelliteSession(spool)
             satellite_ready.set()
@@ -143,19 +145,21 @@ def run_smoke(base: Path) -> dict:
                 sample_s = current_s // 5 * 5
                 spool.queue_tick(view, datetime.fromtimestamp(sample_s, timezone.utc))
                 if gate.active(current_ms) and current_s >= next_beacon_s:
-                    session.send_beacon(satellite, gate, now_ms=current_ms)
-                    next_beacon_s = current_s + 5
+                    session.send_beacon(satellite, gate, now_ms=current_ms, view=view)
+                    next_beacon_s = current_s + 10
                 if select.select([satellite], [], [], 0.025)[0]:
                     packet = read_test_tc(satellite)
                     if packet is None:
                         break
-                    decoded = decode(packet)
-                    commands.append({"name": decoded["name"], "utc_ms": decoded["utc_ms"],
-                                     "received_ms": int(time.time() * 1000)})
-                    session.handle_tc(packet, satellite, gate, now_ms=int(time.time() * 1000))
+                    if not packet.startswith(b"PSR1"):
+                        decoded = decode(packet)
+                        commands.append({"name": decoded["name"], "utc_ms": decoded["utc_ms"],
+                                         "received_ms": int(time.time() * 1000)})
+                    session.handle_uplink(packet, satellite, gate, now_ms=int(time.time() * 1000))
                 stats["sent_pdus"] += session.flush_requested(
                     satellite, gate, clock_ms=lambda: int(time.time() * 1000))
                 stats["pending"] = spool.pending_count()
+                stats["transfer_active"] = session.dump_window is not None
         except Exception as error:
             if not stop.is_set():
                 errors.append(repr(error))
@@ -257,7 +261,10 @@ def run_smoke(base: Path) -> dict:
                 return item if item["status"] == "ACKED" else None
 
             completed = _wait(acked, 6, "scheduled dump did not ACK")
-            _wait(lambda: snapshot_path.exists(), 3, "TM snapshot not published")
+            def snapshot_ready():
+                assert not errors, errors
+                return snapshot_path.exists()
+            _wait(snapshot_ready, 10, "TM snapshot not published")
             _, snapshot = request("/api/ros/test-tm-snapshot", headers=cookie)
             assert len(commands) == 1 and commands[0]["name"] == "hk_dump", commands
             assert target_s * 1000 <= commands[0]["received_ms"] < los_s * 1000
@@ -265,14 +272,30 @@ def run_smoke(base: Path) -> dict:
             assert completed["ack"]["result"] == 0
             assert snapshot["attitude"]["frame"] == "SIM_BODY_TO_ITRF_NADIR"
             sample_counts = {row["id"]: len(row["samples"]) for row in snapshot["sensors"]}
-            assert min(sample_counts.values()) >= stats["queued"] // 3, sample_counts
+            assert min(sample_counts.values()) >= stats["sample_ticks"], sample_counts
             n11_pairs = len(list((base / "n11-inbox").glob("*.manifest.json")))
             assert n11_pairs >= 1
+            _wait(lambda: stats["sent_pdus"] > 0 and not stats["transfer_active"],
+                  10, "ground durable receipts did not complete the stored dump")
+            _, archived = request("/api/ros/received-tm?limit=100", headers=cookie)
+            assert archived["total"] >= stats["sent_pdus"] + 1
+            _, eps_rows = request("/api/ros/received-tm?limit=1&name=EPS_PDU1", headers=cookie)
+            _, raw_detail = request("/api/ros/received-tm/" + str(eps_rows["items"][0]["id"]),
+                                    headers=cookie)
+            restored = decode(bytes.fromhex(raw_detail["raw_hex"]))
+            assert restored["fields"] == raw_detail["fields"]
+            _, chunks = request("/api/ros/received-tm?limit=1&name=FULL_HK_CHUNK", headers=cookie)
+            assert chunks["items"], "full equipment housekeeping record was not transmitted"
+            _, full_hk = request("/api/ros/received-tm/" + str(chunks["items"][0]["id"]),
+                                headers=cookie)
+            assert full_hk["full_hk"]["state"] == "complete"
+            assert full_hk["full_hk"]["parameters"]
             _, feedback = request("/api/mps/test-ros-feedback", headers=cookie)
             assert feedback["bus_soh_state"] == "CURRENT", feedback
             assert feedback["ack_items"][0]["ack"]["command_id"] == 4116, feedback
 
-            _wait(lambda: time.time() >= los_s + 0.05, 12, "LOS did not arrive")
+            _wait(lambda: time.time() >= los_s + 0.05,
+                  max(1, los_s - time.time() + 1), "LOS did not arrive")
             tc = encode_tc("hk_dump", 501, int(time.time() * 1000),
                            {"start_utc_ms": 0, "end_utc_ms": 0})
             try:
@@ -292,6 +315,8 @@ def run_smoke(base: Path) -> dict:
                       "pre_aos_blocked": True, "no_tm_before_tc": True,
                       "post_los_blocked": True, "sensor_sample_counts": sample_counts,
                       "n11_pairs": n11_pairs, "sent_pdus": stats["sent_pdus"],
+                      "archived_pdus": archived["total"], "raw_and_parsed_verified": True,
+                      "full_hk_record_complete": True, "durable_receipts_completed": True,
                       "new_pdus_waiting": stats["pending"], "mps_bus_soh": feedback["bus_soh_state"],
                       "limits": ["No browser, Docker, actual RF, or FDS geometric PASS validation",
                                  "Separate unit tests cover production password hashing"]}

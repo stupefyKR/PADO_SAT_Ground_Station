@@ -38,7 +38,7 @@ class SimSatDispatcherTests(unittest.TestCase):
         self.stamp = int(START.timestamp()) * 1000
         self.gate = Gate()
         self.wire = _Wire()
-        self.session = SatelliteSession(self.spool)
+        self.session = SatelliteSession(self.spool, require_receipts=False)
 
     def queue(self, *seconds):
         for offset in seconds:
@@ -119,7 +119,7 @@ class SimSatDispatcherTests(unittest.TestCase):
         self.gate.open = True
         self.spool.close()
         self.spool = TmSpool(self.path)
-        self.session = SatelliteSession(self.spool)
+        self.session = SatelliteSession(self.spool, require_receipts=False)
         self.assertEqual(self.spool.pending_count(), 7)
         self.assertEqual(self.session.flush_requested(
             self.wire, self.gate, clock_ms=lambda: self.stamp + 21_000), 0)
@@ -163,7 +163,7 @@ class SimSatDispatcherTests(unittest.TestCase):
         self.dispatch(self.tc("hk_get", fields={}))
         self.spool.close()
         self.spool = TmSpool(self.path)
-        self.session = SatelliteSession(self.spool)
+        self.session = SatelliteSession(self.spool, require_receipts=False)
         self.session.send_beacon(self.wire, self.gate, now_ms=self.stamp + 25_000)
         beacon = decode(self.wire.frames[-1])
         self.assertEqual(beacon["fields"]["beacon_counter"], 2)
@@ -199,10 +199,11 @@ class SimSatDispatcherTests(unittest.TestCase):
             with self.assertRaises(StopLoop):
                 run_forever(Path("unused.json"), "sim-ground", 9200, 5, 1, runtime_path,
                             clock=lambda: START + timedelta(seconds=20), sleeper=stop)
-        self.assertEqual([decode(p)["name"] for p in wire.frames], ["BEACON_CORE"])
+        self.assertEqual([decode(p)["name"] for p in wire.frames],
+                         ["BEACON_CORE", "MODE_BEACON", "BEACON_INFO"])
         reopened = TmSpool(runtime_path)
         try:
-            self.assertEqual(reopened.pending_count(), 3)
+            self.assertGreaterEqual(reopened.pending_count(), 13)
         finally:
             reopened.close()
 

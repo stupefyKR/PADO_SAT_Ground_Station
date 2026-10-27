@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import bisect
+import hashlib
 import json
 import math
 import os
@@ -27,8 +28,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Sequence
 
-from tools.pado_packet_codec import PacketError, encode_tm
+from tools.pado_packet_codec import PacketError, decode, encode_tm
 from .contact import ContactGate
+from .housekeeping import (FULL_HK_PERIOD_S, MAX_GENERATED_PDUS, SCALAR_FAMILIES,
+                           additional_packets, mode_beacon_packets)
 from .dispatcher import (CommandContext, TcDispatcher, TcReplayState,
                          MAX_TC_AGE_MS, MAX_TC_REPLAY_ENTRIES,
                          SIM_READ_ONLY_COMMANDS, RESULT_OK, RESULT_REJECTED,
@@ -42,6 +45,9 @@ VIRTUAL_NORAD_ID = 99999
 DEFAULT_RECEIVER_PORT = 9200
 MAX_SPOOL_SECONDS = 24 * 60 * 60
 FLUSH_CHUNK_PDUS = 512
+RECEIPT_MAGIC = b"PSR1"
+MAX_INFLIGHT_PDUS = 128
+DEFAULT_BEACON_PERIOD_S = 10
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 _SIMULATED_BOOT_S = int((datetime(2026, 10, 23, tzinfo=timezone.utc) - _EPOCH).total_seconds())
 
@@ -314,16 +320,28 @@ def generate_packet_batch(view: OrbitView, now: datetime, seq: int, *,
     return (eps, attitude, gnss), (seq + 3) & 0xffff
 
 
+def generate_housekeeping_batch(view: OrbitView, now: datetime, seq: int, *,
+                                seed: int = 1, include_full: bool = False,
+                                mode: int = 3) -> tuple[tuple[bytes, ...], int]:
+    """All defined equipment TM; full named JSON is explicitly test-only."""
+    core, next_seq = generate_packet_batch(view, now, seq, seed=seed)
+    packets = core + additional_packets(core, next_seq, seed=seed,
+                                        include_full=include_full, mode=mode)
+    if len(packets) > MAX_GENERATED_PDUS:
+        raise ValueError("generated housekeeping tick exceeds PDU bound")
+    return packets, (seq + len(packets)) & 0xffff
+
+
 class TmSpool:
     """Durable, bounded spacecraft TM awaiting a dump TC in a UHF PASS.
 
     One row holds one unchanged draft PDU. The generation cursor is committed
-    atomically with all three PDUs, so a normal container restart neither loses
+    atomically with a complete sample group, so a normal container restart neither loses
     queued samples nor regenerates an already transmitted sample.
     """
 
     def __init__(self, path: Path, *, interval_s: int = 5,
-                 max_ticks: int | None = None):
+                 max_ticks: int | None = None, full_housekeeping: bool = False):
         if type(interval_s) is not int or not 5 <= interval_s <= 60:
             raise ValueError("5..60 second simulator sample cadence required")
         if max_ticks is None:
@@ -331,12 +349,13 @@ class TmSpool:
         if (not isinstance(path, Path) or path.is_symlink() or
                 not path.parent.is_dir() or path.parent.is_symlink() or
                 (path.exists() and not path.is_file()) or
-                type(max_ticks) is not int or
+                type(full_housekeeping) is not bool or type(max_ticks) is not int or
                 not 1 <= max_ticks <= MAX_SPOOL_SECONDS // interval_s):
             raise ValueError("regular bounded simulator spool path required")
         self.path = path
         self.interval_s = interval_s
         self.max_ticks = max_ticks
+        self.full_housekeeping = full_housekeeping
         self.connection = sqlite3.connect(path, timeout=5)
         try:
             os.chmod(path, 0o600)
@@ -360,9 +379,20 @@ class TmSpool:
                                             ("interval_s", interval_s))
                 elif recorded_interval[0] != interval_s:
                     raise ValueError("simulator spool cadence changed across restart")
+                profile = self.connection.execute(
+                    "SELECT value FROM spool_meta WHERE key='housekeeping_profile'").fetchone()
+                # Upgrade in place, preserving every old PDU. A later reader
+                # cannot silently downgrade an already upgraded volume.
+                self.full_housekeeping = full_housekeeping or bool(profile and profile[0] == 2)
+                if self.full_housekeeping:
+                    self.connection.execute("INSERT INTO spool_meta(key,value) VALUES (?,?) "
+                        "ON CONFLICT(key) DO UPDATE SET value=excluded.value", ("housekeeping_profile",2))
             result = self.connection.execute("SELECT value FROM spool_meta WHERE key = ?",
                                              ("last_generated_s",)).fetchone()
             self.last_generated_s: int | None = result[0] if result is not None else None
+            full_result = self.connection.execute(
+                "SELECT value FROM spool_meta WHERE key='last_full_hk_s'").fetchone()
+            self.last_full_hk_s: int | None = full_result[0] if full_result else None
         except BaseException:
             self.connection.close()
             raise
@@ -372,6 +402,21 @@ class TmSpool:
 
     def pending_count(self) -> int:
         return self.connection.execute("SELECT COUNT(*) FROM tm_spool").fetchone()[0]
+
+    @property
+    def max_pdus(self) -> int:
+        if not self.full_housekeeping:
+            return 3 * self.max_ticks
+        return (len(SCALAR_FAMILIES) * self.max_ticks + MAX_GENERATED_PDUS *
+                (math.ceil(self.max_ticks*self.interval_s/FULL_HK_PERIOD_S)+1))
+
+    def latest_core(self) -> tuple[bytes, bytes, bytes] | None:
+        if self.last_generated_s is None:
+            return None
+        rows = list(self.connection.execute(
+            "SELECT pdu FROM tm_spool WHERE sampled_s=? AND packet_index<3 ORDER BY packet_index",
+            (self.last_generated_s,)))
+        return tuple(bytes(row[0]) for row in rows) if len(rows) == 3 else None
 
     def pending_window(self) -> tuple[int | None, int | None]:
         return self.connection.execute(
@@ -449,8 +494,15 @@ class TmSpool:
             raise ValueError("simulator sample must align to cadence")
         if self.last_generated_s is not None and stamp <= self.last_generated_s:
             return False
-        sequence = (4 * (stamp // self.interval_s)) & 0xffff
-        packets, _ = generate_packet_batch(view, now, sequence, seed=seed)
+        sequence = ((MAX_GENERATED_PDUS if self.full_housekeeping else 4) *
+                    (stamp // self.interval_s)) & 0xffff
+        include_full = self.full_housekeeping and (self.last_full_hk_s is None or
+                                                   stamp-self.last_full_hk_s >= FULL_HK_PERIOD_S)
+        if self.full_housekeeping:
+            packets, _ = generate_housekeeping_batch(view, now, sequence, seed=seed,
+                                                     include_full=include_full)
+        else:
+            packets, _ = generate_packet_batch(view, now, sequence, seed=seed)
         dropped = 0
         with self.connection:
             self.connection.executemany(
@@ -459,18 +511,23 @@ class TmSpool:
             self.connection.execute("INSERT INTO spool_meta(key,value) VALUES (?,?) "
                                     "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                                     ("last_generated_s", stamp))
+            if include_full:
+                self.connection.execute("INSERT INTO spool_meta(key,value) VALUES (?,?) "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value", ("last_full_hk_s",stamp))
             cutoff = stamp - self.interval_s * self.max_ticks
             cursor = self.connection.execute("DELETE FROM tm_spool WHERE sampled_s <= ?",
                                              (cutoff,))
             dropped += cursor.rowcount
             while self.connection.execute("SELECT COUNT(*) FROM tm_spool").fetchone()[0] > \
-                    3 * self.max_ticks:
+                    self.max_pdus:
                 oldest = self.connection.execute(
                     "SELECT sampled_s FROM tm_spool ORDER BY id LIMIT 1").fetchone()[0]
                 cursor = self.connection.execute(
                     "DELETE FROM tm_spool WHERE sampled_s = ?", (oldest,))
                 dropped += cursor.rowcount
         self.last_generated_s = stamp
+        if include_full:
+            self.last_full_hk_s = stamp
         if dropped:
             print(f"TEST_ONLY TM spool overflow: dropped {dropped} oldest PDUs",
                   file=sys.stderr, flush=True)
@@ -569,30 +626,79 @@ class SatelliteSession:
     restarting keeps the durable TM but requires a new command to resume.
     """
 
-    def __init__(self, spool: TmSpool):
+    def __init__(self, spool: TmSpool, *, require_receipts: bool = True,
+                 beacon_period_s: int | None = None):
+        if type(require_receipts) is not bool:
+            raise ValueError("explicit receipt policy required")
         self.spool = spool
+        self.require_receipts = require_receipts
+        self.beacon_period_s = (DEFAULT_BEACON_PERIOD_S if spool.full_housekeeping else spool.interval_s
+                                ) if beacon_period_s is None else beacon_period_s
+        if type(self.beacon_period_s) is not int or not 1 <= self.beacon_period_s <= 3600:
+            raise ValueError("bounded beacon period required")
         self.dispatcher = TcDispatcher(spool.load_replay())
         self.dump_window: tuple[int, int] | None = None
+        self.inflight: dict[bytes, int] = {}
+        self.latest_core_packets: tuple[bytes, ...] | None = None
 
     def disconnect(self) -> None:
         self.dump_window = None
+        self.inflight.clear()
 
     def send_beacon(self, connection: socket.socket, gate: ContactGate,
-                    *, now_ms: int) -> bool:
+                    *, now_ms: int, view: OrbitView | None = None,
+                    seed: int = 1) -> bool:
         if not gate.active(now_ms):
             self.disconnect()
             return False
         counter = self.spool.next_beacon_counter()
         sequence = self.spool.next_control_sequence() & 0xffff
-        usage = min(100, self.spool.pending_count() * 100 // (3 * self.spool.max_ticks))
+        usage = min(100, self.spool.pending_count() * 100 // self.spool.max_pdus)
+        if self.spool.full_housekeeping:
+            if view is not None:
+                self.latest_core_packets = generate_packet_batch(
+                    view, _EPOCH+timedelta(seconds=now_ms//1000), 0, seed=seed)[0]
+            else:
+                self.latest_core_packets = self.spool.latest_core() or self.latest_core_packets
+        voltage_alarm = (self.latest_core_packets is not None and
+                         decode(self.latest_core_packets[0])["fields"]["bus_voltage_v"] > 5.5)
         beacon = encode_tm("BEACON_CORE", sequence, now_ms // 1000 * 1000,
-                           {"mode": 1, "beacon_counter": counter,
-                            "beacon_period_s": self.spool.interval_s, "boot_count": 1,
+                           {"mode": 3, "beacon_counter": counter,
+                            "beacon_period_s": self.beacon_period_s, "boot_count": 1,
                             "reset_cause": 0, "fsw_image": 1, "crash_count": 0,
                             "watchdog_state": 1, "nor_usage_pct": usage,
-                            "fdir_level": 0, "fault_bitmap": 0})
+                            "fdir_level": int(voltage_alarm), "fault_bitmap": int(voltage_alarm)})
         send_packet_batch(connection, (beacon,))
+        if self.spool.full_housekeeping:
+            if self.latest_core_packets is not None:
+                next_sequence = self.spool.next_control_sequence() & 0xffff
+                extra = mode_beacon_packets(self.latest_core_packets, next_sequence, seed=seed)
+                self.spool.next_control_sequence()  # Reserve both status packet sequences.
+                send_packet_batch(connection, extra)
         return True
+
+    def handle_uplink(self, packet: bytes, connection: socket.socket,
+                      gate: ContactGate, *, now_ms: int) -> bool:
+        """Private stream control: durable receipt or a real draft TC PDU."""
+        if packet.startswith(RECEIPT_MAGIC):
+            if len(packet) != 36:
+                raise ValueError("invalid stored TM receipt")
+            if not gate.active(now_ms):
+                self.disconnect()
+                return False
+            row_id = self.inflight.pop(packet[4:], None)
+            if row_id is not None:
+                self.spool.mark_sent([row_id])
+                self._finish_if_drained()
+            return True
+        return self.handle_tc(packet, connection, gate, now_ms=now_ms)
+
+    def _finish_if_drained(self) -> None:
+        if self.dump_window is not None and not self.spool.iter_pending(1, window=self.dump_window):
+            self.dump_window = None
+            self.inflight.clear()
+            print(f"TEST_ONLY stored TM request completed: "
+                  f"remaining={self.spool.pending_count()} PDUs", flush=True)
 
     def handle_tc(self, packet: bytes, connection: socket.socket,
                   gate: ContactGate, *, now_ms: int) -> bool:
@@ -610,6 +716,7 @@ class SatelliteSession:
         if result.action is not None and result.action.dump_requested:
             # A second valid dump replaces the remaining selection explicitly.
             self.dump_window = result.action.dump_window
+            self.inflight.clear()
             print(f"TEST_ONLY stored TM request accepted: "
                   f"window={self.dump_window} queued={self.spool.pending_count()} PDUs",
                   flush=True)
@@ -623,29 +730,49 @@ class SatelliteSession:
             return 0
         if self.dump_window is None:
             return 0
-        sent = flush_pending(self.spool, connection, gate, clock_ms=clock_ms,
-                             max_pdus=max_pdus, window=self.dump_window)
-        if not self.spool.iter_pending(1, window=self.dump_window):
-            self.dump_window = None
-            print(f"TEST_ONLY stored TM request completed: "
-                  f"remaining={self.spool.pending_count()} PDUs", flush=True)
+        if type(max_pdus) is not int or not 1 <= max_pdus <= FLUSH_CHUNK_PDUS:
+            raise ValueError("bounded requested TM flush size required")
+        if self.require_receipts:
+            sent = 0
+            for row_id, packet in self.spool.iter_pending(
+                    min(FLUSH_CHUNK_PDUS,max_pdus+len(self.inflight)), window=self.dump_window):
+                digest = hashlib.sha256(packet).digest()
+                if digest in self.inflight:
+                    continue
+                if len(self.inflight) >= MAX_INFLIGHT_PDUS or not gate.active(clock_ms()):
+                    break
+                send_packet_batch(connection, (packet,))
+                self.inflight[digest] = row_id
+                sent += 1
+                if sent >= max_pdus:
+                    break
+        else:
+            # Compatibility helper for isolated old unit fixtures. Runtime
+            # always enables durable receipts before deleting on-board TM.
+            sent = flush_pending(self.spool, connection, gate, clock_ms=clock_ms,
+                                 max_pdus=max_pdus, window=self.dump_window)
+        self._finish_if_drained()
         return sent
 
 
 def run_forever(orbit_view: Path, host: str, port: int, interval_s: int,
                 seed: int, spool_path: Path, *,
                 scenario_id: str | None = None,
+                beacon_period_s: int = DEFAULT_BEACON_PERIOD_S,
                 clock: Callable[[], datetime] | None = None,
                 sleeper: Callable[[float], None] = time.sleep) -> None:
     """Store every TM tick; beacon in contact, dump only when commanded."""
     if scenario_id is not None and not _valid_scenario_id(scenario_id):
         raise ValueError("invalid simulation scenario ID")
+    if type(beacon_period_s) is not int or not 1 <= beacon_period_s <= 3600:
+        raise ValueError("bounded beacon period required")
     clock = clock or (lambda: datetime.now(timezone.utc))
     connection: socket.socket | None = None
     gate = ContactGate(orbit_view)
-    spool = TmSpool(spool_path, interval_s=interval_s)
-    session = SatelliteSession(spool)
+    spool = TmSpool(spool_path, interval_s=interval_s, full_housekeeping=True)
+    session = SatelliteSession(spool, beacon_period_s=beacon_period_s)
     previous_contact: bool | None = None
+    last_beacon_ms: int | None = None
     try:
         while True:
             tick_started = time.monotonic()
@@ -684,25 +811,28 @@ def run_forever(orbit_view: Path, host: str, port: int, interval_s: int,
                     if connection is not None:
                         connection.close()
                         connection = None
+                    last_beacon_ms = None
                 else:
                     if connection is None:
                         connection = socket.create_connection((host, port), timeout=3)
                         connection.settimeout(3)
-                    session.send_beacon(connection, gate, now_ms=now_ms)
+                    if last_beacon_ms is None or now_ms-last_beacon_ms >= beacon_period_s*1000:
+                        session.send_beacon(connection, gate, now_ms=now_ms, view=view, seed=seed)
+                        last_beacon_ms = now_ms
                     # Poll TC independently of backlog size. ACK first, then
                     # move bounded chunks of the command-time snapshot. Fresh
                     # generation continues next tick and is not silently added.
                     sent_this_tick = 0
                     while (time.monotonic() - tick_started < interval_s - 0.2 and
                            gate.active(int(clock().timestamp() * 1000))):
-                        wait_s = 0.0 if session.dump_window is not None else min(
+                        wait_s = 0.01 if session.dump_window is not None else min(
                             0.25, max(0.0, interval_s - 0.2 -
                                       (time.monotonic() - tick_started)))
                         if select.select([connection], [], [], wait_s)[0]:
                             packet = read_test_tc(connection)
                             if packet is None:
                                 raise OSError("simulated ground TCP peer closed")
-                            session.handle_tc(packet, connection, gate,
+                            session.handle_uplink(packet, connection, gate,
                                               now_ms=int(clock().timestamp() * 1000))
                         sent_this_tick += session.flush_requested(
                             connection, gate, clock_ms=lambda: int(clock().timestamp() * 1000),
@@ -715,6 +845,7 @@ def run_forever(orbit_view: Path, host: str, port: int, interval_s: int,
                 if connection is not None:
                     connection.close()
                     connection = None
+                last_beacon_ms = None
                 print(f"TEST_ONLY simulated TM waiting: {error}", file=sys.stderr, flush=True)
             sleeper(max(0.0, interval_s - (time.monotonic() - tick_started)))
     finally:
@@ -730,6 +861,7 @@ def main() -> None:
     parser.add_argument("--host", required=True)
     parser.add_argument("--port", type=int, default=DEFAULT_RECEIVER_PORT)
     parser.add_argument("--interval-seconds", type=int, default=5)
+    parser.add_argument("--beacon-period-seconds", type=int, default=DEFAULT_BEACON_PERIOD_S)
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--spool", type=Path, required=True)
     parser.add_argument("--scenario-id",
@@ -737,11 +869,13 @@ def main() -> None:
     args = parser.parse_args()
     if not 1 <= args.port <= 65535 or not 5 <= args.interval_seconds <= 60 or \
             not 0 <= args.seed <= 0xffffffff or \
+            not 1 <= args.beacon_period_seconds <= 3600 or \
             (args.scenario_id is not None and not _valid_scenario_id(args.scenario_id)):
         parser.error("port, 5..60 second cadence, u32 seed or scenario ID invalid")
     try:
         run_forever(args.orbit_view, args.host, args.port, args.interval_seconds,
-                    args.seed, args.spool, scenario_id=args.scenario_id)
+                    args.seed, args.spool, scenario_id=args.scenario_id,
+                    beacon_period_s=args.beacon_period_seconds)
     except KeyboardInterrupt:
         pass
 

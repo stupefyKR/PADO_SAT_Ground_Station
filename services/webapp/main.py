@@ -22,7 +22,7 @@ from http import HTTPStatus
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit
 
 from .auth import AuthError, AuthStore, ROLES
 from .core import CoreUnavailable, mps_catalog, mps_passes, ros_summary
@@ -30,6 +30,7 @@ from .mps_workbench import CandidateError, MpsCandidateStore, draft_commands
 from .ros_workbench import DraftError, RosDraftStore, normalize_sim_handoff
 from .sim_tc_dispatch import SimTcDispatcher
 from .tm_preview import MAX_SNAPSHOT_BYTES, PreviewError, load_beacon, load_snapshot
+from services.sim_ground.archive import ArchiveError, list_events, list_packets, packet_detail
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -40,6 +41,7 @@ MAX_DRAFT_BODY = 40000
 MAX_UPSTREAM = 65536
 MAX_ORBIT_VIEW = 4 * 1024 * 1024
 MAX_CAD_MESH = 4 * 1024 * 1024
+MAX_TM_ARCHIVE_RESPONSE = 256 * 1024
 ORBIT_TARGETS = {"synthetic", "iss", "operational"}
 BRAND_ASSET = "/assets/pado-sat-badge-ec9020cb.png"
 # These spacecraft geometry/appearance files share the authenticated CAD
@@ -62,6 +64,7 @@ ASSETS = {
     BRAND_ASSET: ("assets/pado-sat-badge-ec9020cb.png", "image/png"),
     "/assets/app.js": ("common/app.js", "text/javascript; charset=utf-8"),
     "/assets/ros-workbench.js": ("ops/workbench.js", "text/javascript; charset=utf-8"),
+    "/assets/ros-packet-browser.js": ("ops/packet_browser.js", "text/javascript; charset=utf-8"),
     "/assets/ros-attitude-math.js": ("ops/attitude_math.js", "text/javascript; charset=utf-8"),
     "/assets/ros-attitude-gl.js": ("ops/attitude_gl.js", "text/javascript; charset=utf-8"),
     "/assets/ros-attitude-viewer.js": ("ops/attitude_viewer.js", "text/javascript; charset=utf-8"),
@@ -93,6 +96,45 @@ PROXY_ROUTES = {
     "/api/mps/test-sequences": ("mps", "/test-sequences"),
     "/api/mps/test-ros-feedback": ("ros", "/test-n10-feedback"),
 }
+
+
+def archive_query(query: str, *, events: bool = False) -> dict:
+    """Strict small query contract, shared by the portal and ROS boundary."""
+    if not query:
+        return {}
+    if len(query) > 512:
+        raise ValueError("invalid_query")
+    pairs = parse_qsl(query, keep_blank_values=True, strict_parsing=True,
+                      max_num_fields=3)
+    values = dict(pairs)
+    allowed = {"limit"} if events else {"limit", "before_id", "name"}
+    if len(values) != len(pairs) or not set(values) <= allowed:
+        raise ValueError("invalid_query")
+    result = {}
+    for key in ("limit", "before_id"):
+        if key in values:
+            value = values[key]
+            maximum = 100 if key == "limit" else 0x7fffffffffffffff
+            if not re.fullmatch(r"[1-9][0-9]{0,18}", value) or not 1 <= int(value) <= maximum:
+                raise ValueError("invalid_query")
+            result[key] = int(value)
+    if "name" in values:
+        if not re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", values["name"]):
+            raise ValueError("invalid_query")
+        result["name"] = values["name"]
+    return result
+
+
+def archive_route(path: str, *, portal: bool = False) -> str | None:
+    prefix = "/api/ros" if portal else ""
+    if path == prefix + "/received-tm":
+        return "packets"
+    if path == prefix + "/tm-events":
+        return "events"
+    match = re.fullmatch(re.escape(prefix) + r"/received-tm/([1-9][0-9]{0,18})", path)
+    if match and int(match[1]) <= 0x7fffffffffffffff:
+        return "detail"
+    return None
 
 
 def test_n10_feedback(drafts: RosDraftStore, tm_preview: Path | None,
@@ -282,10 +324,18 @@ class Handler(BaseHTTPRequestHandler):
             parsed = urlsplit(self.path)
         except ValueError:
             return ""
-        if parsed.fragment or not parsed.path.startswith("/") or (
-                parsed.query and not (parsed.path == "/api/fds/orbit" and
-                                      parsed.query in {f"target={target}" for target in ORBIT_TARGETS})):
+        if parsed.fragment or not parsed.path.startswith("/"):
             return ""
+        if parsed.query:
+            kind = archive_route(parsed.path, portal=self.server.mode == "portal")
+            if kind in ("packets", "events"):
+                try:
+                    archive_query(parsed.query, events=kind == "events")
+                except ValueError:
+                    return ""
+            elif not (parsed.path == "/api/fds/orbit" and
+                      parsed.query in {f"target={target}" for target in ORBIT_TARGETS}):
+                return ""
         return parsed.path
 
     def _cookie_token(self) -> str:
@@ -565,6 +615,18 @@ class Handler(BaseHTTPRequestHandler):
             except (OSError, ValueError, TypeError):
                 self._error(HTTPStatus.SERVICE_UNAVAILABLE, "fds_orbit_unavailable")
             return
+        if archive_route(path, portal=True):
+            session = self._session()
+            if not session:
+                self._error(HTTPStatus.UNAUTHORIZED, "login_required")
+                return
+            kind = archive_route(path, portal=True)
+            query = archive_query(urlsplit(self.path).query, events=kind == "events")
+            backend_path = path.removeprefix("/api/ros")
+            if query:
+                backend_path += "?" + urlencode(query)
+            self._proxy(("ros", backend_path), session.username, session.role)
+            return
         if path in PROXY_ROUTES:
             session = self._session()
             if not session:
@@ -630,13 +692,15 @@ class Handler(BaseHTTPRequestHandler):
                 payload = json.dumps(body, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
             connection.request(method, path, body=payload, headers=headers)
             response = connection.getresponse()
-            maximum = (MAX_SNAPSHOT_BYTES if path == "/test-tm-snapshot" else
+            base_path = urlsplit(path).path
+            maximum = (MAX_TM_ARCHIVE_RESPONSE if archive_route(base_path) else
+                       MAX_SNAPSHOT_BYTES if path == "/test-tm-snapshot" else
                        2 * 1024 * 1024 if path == "/test-sim-sequences" else
                        1024 * 1024 if path == "/test-sequences" and service == "mps"
                        else MAX_UPSTREAM)
             data = response.read(maximum + 1)
             captured = None
-            if len(data) > maximum or (method == "GET" and path not in
+            if len(data) > maximum or (method == "GET" and not archive_route(base_path) and path not in
                                             ("/test-sequences", "/test-reservations",
                                              "/test-candidates",
                                              "/test-tm-snapshot", "/test-beacon") and
@@ -659,6 +723,31 @@ class Handler(BaseHTTPRequestHandler):
         role = self.headers.get("X-Pado-Role", "")
         if role not in ROLES or len(actor) > 64 or not actor:
             self._error(HTTPStatus.FORBIDDEN, "portal_identity")
+            return
+        kind = archive_route(path) if self.server.mode == "ros" else None
+        if kind:
+            try:
+                if self.server.tm_preview is None:
+                    raise ArchiveError("archive_unavailable")
+                archive = self.server.tm_preview.with_name("received_tm.sqlite3")
+                query = archive_query(urlsplit(self.path).query, events=kind == "events")
+                if kind == "packets":
+                    payload = list_packets(archive, **query)
+                elif kind == "detail":
+                    payload = packet_detail(archive, int(path.rsplit("/", 1)[1]))
+                else:
+                    payload = list_events(archive, limit=query.get("limit", 30))
+                if len(json.dumps(payload, ensure_ascii=False).encode("utf-8")) > MAX_TM_ARCHIVE_RESPONSE:
+                    raise ArchiveError("archive_invalid")
+            except (ArchiveError, ValueError) as error:
+                code = str(error)
+                status = (HTTPStatus.NOT_FOUND if code == "packet_not_found" else
+                          HTTPStatus.BAD_REQUEST if code == "invalid_query" else
+                          HTTPStatus.SERVICE_UNAVAILABLE)
+                self._error(status, code if code in {"packet_not_found", "invalid_query"} else
+                            "tm_archive_unavailable")
+                return
+            self._json(HTTPStatus.OK, payload)
             return
         if self.server.mode == "ros" and path == "/test-n10-feedback":
             if self.server.drafts is None:

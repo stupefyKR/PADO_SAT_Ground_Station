@@ -53,3 +53,41 @@
 @media(max-width:850px){.file-pair,.reservation-form{grid-template-columns:1fr}.file-pair button,.reservation-form button{justify-self:start}}
 @media(max-width:1100px){.ros-status-grid,.ros-tc-grid{grid-template-columns:1fr}}
 @media(max-width:650px){.workbench-tabs{flex-direction:column}.workbench-tabs button{min-height:38px}.current-alert-row{grid-template-columns:1fr}}
+
+/* One overview keeps attitude, sensor trends and events in the same workspace. */
+.overview-link-strip{display:flex;align-items:center;gap:22px;flex-wrap:wrap;margin-bottom:12px;padding:11px 15px;border:1px solid #294555;background:#102330;color:#a8c2cc;font-size:.72rem}
+.overview-link-strip>div{display:flex;align-items:center;gap:12px}.overview-link-strip strong{color:#d6f0e8}.overview-link-strip time{margin-left:auto;font-family:Consolas,monospace;color:#93b1be}
+.ros-overview-main{display:grid;grid-template-columns:minmax(330px,.95fr) minmax(420px,1.35fr);gap:14px;align-items:start}
+.ros-overview-main .attitude-stage{min-height:260px;padding:8px}.ros-overview-main .attitude-stage canvas{max-width:760px}
+.ros-overview-main .attitude-meta{font-size:.67rem;gap:7px 10px;padding:12px 14px;grid-template-columns:.9fr 1.4fr}
+.ros-overview-main .attitude-panel>.panel-foot{font-size:.66rem;padding:11px 14px;line-height:1.55}
+.ros-overview-telemetry{min-width:0}.ros-overview-telemetry .sensor-empty{min-height:280px}
+.sensor-list.sensor-matrix{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1px;margin:0;padding:1px;max-height:670px;overflow:auto;background:#294555;list-style:none}
+.sensor-list.sensor-matrix[hidden]{display:none}.sensor-matrix li{min-width:0;background:#0f2331}
+.sensor-matrix button{display:grid;width:100%;grid-template-columns:1fr auto;gap:4px 8px;padding:10px 12px;border:0;border-left:3px solid transparent;background:transparent;text-align:left;cursor:pointer;color:#a7c2ce}
+.sensor-matrix button:hover{background:#173240}.sensor-matrix button[aria-current="true"]{background:#193a47;border-left-color:#81c7ce}
+.sensor-matrix .sensor-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#e2eef2;font-size:.71rem}
+.sensor-matrix .sensor-value{font:700 .73rem Consolas,monospace;color:#c9e9eb}.sensor-matrix .sensor-group,.sensor-matrix .sensor-state{font-size:.62rem}
+.sensor-matrix .sensor-state{text-align:right}.sensor-matrix .sensor-state.alert{color:#f2ba8c}
+.sensor-sparkline{grid-column:1/-1;width:100%;height:76px;margin-top:3px;overflow:visible}
+.sparkline-limit{fill:#22473e;opacity:.5}.sparkline-value{fill:none;stroke:#7bd0db;stroke-width:1.5;vector-effect:non-scaling-stroke}.sparkline-grid{fill:none;stroke:#244250;stroke-width:1;stroke-dasharray:3 4}
+.sensor-chart-hint{grid-column:1/-1;color:#6e9bab;font-size:.63rem;padding-top:7px}.sensor-no-match{grid-column:1/-1;padding:20px}
+.selected-trend{margin-top:12px;border:1px solid #294555;background:#102330}.selected-trend>summary{padding:12px 15px;cursor:pointer;color:#b8d3dd;font-size:.73rem}.selected-trend>.panel{border:0}
+.ros-overview-bottom{grid-template-columns:minmax(250px,.75fr) minmax(420px,1.5fr);gap:14px;margin-top:14px}
+.ros-overview-bottom .current-alerts{min-height:90px;max-height:210px;overflow:auto;padding:12px 14px}.ros-overview-bottom .alarm-panel .table-scroll{max-height:240px}
+.spacecraft-events-panel{margin-top:14px}.spacecraft-events-panel .table-scroll{max-height:220px}
+.packet-browser-tools{display:flex;align-items:end;gap:10px;flex-wrap:wrap;padding:14px 16px;background:#102330;border-bottom:1px solid #294555}
+.packet-browser-tools label{display:grid;gap:6px;color:#9fb6c1;font-size:.71rem}.packet-browser-tools input{min-width:130px;max-width:235px;background:#091b28;border:1px solid #3a5667;color:#dfedf0;padding:8px;font-size:.73rem}
+.packet-browser-grid{display:grid;grid-template-columns:minmax(400px,1.05fr) minmax(400px,1.2fr);gap:0;border-top:1px solid #294555}
+.packet-record-list{max-height:850px;overflow:auto;border-right:1px solid #294555}.packet-record-list th{position:sticky;top:0;z-index:1;background:#183242}
+.packet-record-list td{font-size:.68rem;white-space:nowrap}.packet-selected{background:#1b3b47}.packet-select{border:0;padding:5px 0;background:none;color:#9fe2e9;text-decoration:underline;cursor:pointer;font:700 .73rem Consolas,monospace}
+.packet-select:focus-visible{outline:2px solid #9fe2e9;outline-offset:3px}.packet-inspector{min-width:0;padding:0 16px 16px;background:#0e202d;max-height:850px;overflow:auto}
+.packet-detail-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px 0}.packet-detail-head h3{margin:0;color:#d9edf2;font:700 .84rem Consolas,"Malgun Gothic",sans-serif}.packet-detail-head span{font-size:.65rem;color:#8eaebb}
+.packet-detail-meta{display:grid;grid-template-columns:82px 1fr;gap:7px 12px;margin:0 0 14px;font-size:.69rem}.packet-detail-meta dt{color:#88a8b6}.packet-detail-meta dd{margin:0;font-family:Consolas,monospace;overflow-wrap:anywhere;color:#d3e6ec}
+.packet-inspector-tabs{display:flex;border-bottom:1px solid #385366;margin-bottom:12px}.packet-inspector-tabs button{flex:1;padding:10px;border:0;border-bottom:2px solid transparent;background:#132d3c;color:#8fafbd;cursor:pointer;font-size:.73rem}.packet-inspector-tabs button[aria-selected="true"]{color:#d7f4f6;border-bottom-color:#78c6cd;background:#1c3b4a}
+.packet-inspector h4{font-size:.71rem;color:#abc8d3;margin:17px 0 8px}.packet-field-table{width:100%;table-layout:fixed}.packet-field-table td:first-child{width:43%;color:#9fc1d0}.packet-field-table td{font:400 .69rem Consolas,"Malgun Gothic",sans-serif;overflow-wrap:anywhere;white-space:pre-wrap}
+.packet-raw-hex,#packet-full-hk-json{margin:0;background:#081823;border:1px solid #284454;padding:14px;color:#c1e2eb;font:400 .73rem/1.7 Consolas,monospace;overflow:auto;white-space:pre}
+#packet-full-hk-detail{margin-top:14px}#packet-full-hk-detail summary{color:#aacdd8;font-size:.71rem;padding:10px 0;cursor:pointer}
+@media(min-width:1700px){.sensor-list.sensor-matrix{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:1200px){.ros-overview-main{grid-template-columns:1fr}.ros-overview-main .attitude-stage canvas{max-width:730px}.ros-overview-main .attitude-stage{min-height:280px}.packet-browser-grid{grid-template-columns:1fr}.packet-record-list{max-height:380px;border-right:0;border-bottom:1px solid #294555}.packet-inspector{max-height:none}.ros-overview-bottom{grid-template-columns:1fr}}
+@media(max-width:650px){.sensor-list.sensor-matrix{grid-template-columns:1fr}.overview-link-strip{gap:9px}.overview-link-strip time{margin-left:0}.packet-browser-tools{align-items:stretch}.packet-browser-tools label{width:100%}.packet-browser-tools input{max-width:none;width:100%}.packet-browser-grid{display:block}.packet-detail-head{align-items:flex-start;flex-direction:column}.ros-overview-main .attitude-meta{grid-template-columns:1fr}.packet-record-list td{font-size:.65rem}}

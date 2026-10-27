@@ -28,7 +28,7 @@ def _iso(milliseconds: int) -> str:
     return datetime.fromtimestamp(milliseconds / 1000, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-MAX_SIM_HISTORY_PDUS = 3 * 721 + 1  # Up to one hour at the simulator's five-second cadence.
+MAX_SIM_HISTORY_PDUS = 16 * 721 + 1  # Bounded full-equipment history at five-second cadence.
 
 
 def build_snapshot(packets: list[bytes], limits: dict[str, Any], *, received_ms: int,

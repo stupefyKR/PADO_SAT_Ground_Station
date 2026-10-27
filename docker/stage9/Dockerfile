@@ -27,6 +27,7 @@ RUN apt-get update \
 COPY --from=core-builder /build/gs_stage9_core_probe /usr/local/bin/gs_stage9_core_probe
 WORKDIR /app
 COPY services/webapp /app/services/webapp
+COPY services/sim_ground/archive.py /app/services/sim_ground/archive.py
 COPY deploy/stage9/dgs_ops_gateway.py /app/deploy/stage9/dgs_ops_gateway.py
 COPY tools/pado_packet_codec.py /app/tools/pado_packet_codec.py
 COPY web /app/web

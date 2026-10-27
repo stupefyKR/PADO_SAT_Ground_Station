@@ -34,6 +34,7 @@ from tools.preview_draft_tm import (MAX_SIM_HISTORY_PDUS, build_snapshot,
                                     publish_snapshot)
 from tools.run_fds_pipeline import verified_pair
 from services.sim_sat.contact import ContactGate
+from .archive import PacketArchive, delivery_receipt
 
 
 FRAME_LENGTH = struct.Struct(">I")
@@ -41,17 +42,20 @@ MIN_PDU_BYTES = 24
 MAX_PDU_BYTES = 200
 MAX_AGE_MS = 120_000
 MAX_BACKLOG_AGE_MS = 24 * 60 * 60 * 1000
-# Three simulated PDU families at the minimum 5 s generation interval.
-MAX_BACKLOG_REPLAY_PDUS = 3 * 24 * 60 * 60 // 5
+# Bound the fast replay cache; the durable archive also rejects conflicting bytes.
+MAX_BACKLOG_REPLAY_PDUS = 16 * 24 * 60 * 60 // 5
 BURST_PUBLISH_EVERY = 1024
 HISTORY_WINDOW_MS = 60 * 60 * 1000
 MAX_HISTORY_PER_SOURCE = 721  # 60 minutes inclusive at the simulator's 5 s cadence.
 GNSS_BRIDGE_PERIOD_MS = 300_000
 MAX_N11_PAIRS = 288  # 24 hours at the five-minute bridge cadence.
 SATELLITE_NORAD_ID = 99999
-ALLOWED_TELEMETRY = frozenset({"EPS_PDU1", "AOCS_STATE", "GNSS_PVT"})
+ALLOWED_TELEMETRY = frozenset({"EPS_P60", "EPS_PDU1", "EPS_PDU2", "EPS_ACU", "EPS_BPX",
+    "AOCS_STATE", "GNSS_PVT", "OBC_HEALTH", "AX100_LINK", "SIREN_ALERT", "FDIR_EVENT",
+    "CREST_HEALTH", "SIREN_HEALTH", "FULL_HK_CHUNK"})
 RESULT_TELEMETRY = "COMMAND_RESULT"
 BEACON_TELEMETRY = "BEACON_CORE"
+BEACON_FAMILIES = frozenset({"BEACON_CORE", "MODE_BEACON", "BEACON_INFO"})
 MAX_LIVE_ACKS = 128
 TC_RESPONSE_TIMEOUT_S = 15.0
 ATTITUDE_FRAME = "SIM_BODY_TO_ITRF_NADIR"
@@ -179,6 +183,7 @@ class TmReceiver:
         self.n11_inbox = n11_inbox
         self.limits = limits
         self.packet_catalog = load_catalog()
+        self.archive = PacketArchive(snapshot.with_name("received_tm.sqlite3"))
         self.contact_gate = ContactGate(contact_view) if contact_view is not None else None
         # Keep only packet families used by the explicitly configured sensors.
         # GNSS can still feed N11 without consuming the graph history budget.
@@ -194,7 +199,7 @@ class TmReceiver:
         self._ack_seen: OrderedDict[tuple[int, int, int], None] = OrderedDict()
         self.latest_beacon: dict[str, Any] | None = None
         self.last_gnss_bridge_ms: int | None = None
-        self._backlog_seen: OrderedDict[tuple[str, int], bytes] = OrderedDict()
+        self._backlog_seen: OrderedDict[tuple, bytes] = OrderedDict()
         self._burst_unpublished = 0
         self._tc_lock = Lock()
         self._tc_pending: _PendingTc | None = None
@@ -313,6 +318,7 @@ class TmReceiver:
                     (fields["result"] == 1 and fields["reason"] in (1, 2, 3, 4, 5, 6) and
                      fields["executed_at_utc_ms"] == 0)):
                 raise ReceiverError("invalid simulated COMMAND_RESULT status")
+            self.archive.append(packet, decoded, now_ms)
             # Live ACKs may interleave with stored, older TM during a PASS.
             # Their clock and sequence cannot advance the historical TM cursor.
             self.last_ack_stamp_ms = stamp
@@ -346,15 +352,19 @@ class TmReceiver:
                 MAX_BACKLOG_AGE_MS if historical else MAX_AGE_MS):
             raise ReceiverError("TM timestamp is not a fresh whole UTC second")
         if historical:
-            replay_key = (decoded["name"], stamp)
+            replay_key = (decoded["name"], stamp,
+                decoded["fields"].get("record_id") if decoded["name"] == "FULL_HK_CHUNK" else None,
+                decoded["fields"].get("chunk_index") if decoded["name"] == "FULL_HK_CHUNK" else None)
             previous = self._backlog_seen.get(replay_key)
             if previous is not None:
                 if previous == packet:
+                    self.archive.append(packet, decoded, now_ms)
                     return None
                 raise ReceiverError("conflicting simulated TM replay")
         if not historical and self.last_stamp_ms is not None and stamp < self.last_stamp_ms:
             raise ReceiverError("TM timestamp moved backwards")
-        if not historical and self.last_stamp_by_name.get(decoded["name"], -1) >= stamp:
+        if (not historical and decoded["name"] != "FULL_HK_CHUNK" and
+                self.last_stamp_by_name.get(decoded["name"], -1) >= stamp):
             raise ReceiverError("duplicate or out-of-order TM sample")
         if not historical and self.last_sequence is not None:
             step = (decoded["sequence"] - self.last_sequence) & 0xffff
@@ -368,6 +378,10 @@ class TmReceiver:
             q = [decoded["fields"][f"q_{axis}"] for axis in "wxyz"]
             if abs(math.hypot(*q) - 1.0) > 0.02:
                 raise ReceiverError("non-unit synthetic attitude quaternion")
+
+        # Commit exact bytes before the link can acknowledge receipt. The graph
+        # is a rolling projection, not the sole record of the received packet.
+        self.archive.append(packet, decoded, now_ms)
 
         if historical:
             # A time-range dump may arrive after a newer range. u16 sequence
@@ -472,6 +486,7 @@ class TmReceiver:
     def process_connection(self, connection: socket.socket) -> int:
         """Process a duplex stream; only in-contact TM reaches ROS and FDS."""
         accepted = 0
+        self.archive.begin()
         with self._tc_lock:
             self._satellite_connected = True
         try:
@@ -519,12 +534,23 @@ class TmReceiver:
                                                 received_ms=received_ms)
                 elif decoded["name"] == BEACON_TELEMETRY:
                     self._ingest_beacon(decoded, received_ms=received_ms)
+                    self.archive.append(packet, decoded, received_ms)
+                elif decoded["name"] in BEACON_FAMILIES:
+                    if (decoded["kind"] != "TM" or decoded["operational"] is not False or
+                            decoded["utc_ms"] % 1000 or not
+                            0 <= received_ms // 1000 * 1000 - decoded["utc_ms"] <= MAX_AGE_MS):
+                        raise ReceiverError("invalid live simulated beacon")
+                    self.archive.append(packet, decoded, received_ms)
                 else:
                     ingested = self.ingest(packet, received_ms=received_ms,
                                            historical=self.contact_gate is not None,
                                            publish=self.contact_gate is None)
+                    # A retransmission is acknowledged only after the archive
+                    # confirms the already committed exact bytes as well.
+                    if hasattr(connection, "sendall"):
+                        send_framed_pdu(connection, delivery_receipt(packet))
                     if ingested is None:
-                        continue  # An exact stored-PDU replay after reconnect.
+                        continue
                     if self._burst_unpublished >= BURST_PUBLISH_EVERY:
                         self._publish_burst_preview(received_ms)
                 accepted += 1
@@ -532,6 +558,7 @@ class TmReceiver:
             try:
                 self._publish_burst_preview(int(time.time() * 1000))
             finally:
+                self.archive.close()
                 with self._tc_lock:
                     self._satellite_connected = False
                 self._fail_pending("simulated satellite TM stream closed")

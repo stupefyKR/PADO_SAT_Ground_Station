@@ -178,7 +178,7 @@ services:
     build:
       context: ../..
       dockerfile: docker/stage9/SimTm.Dockerfile
-    command: ["python3", "-m", "services.sim_ground.receiver", "--test-only", "--bind", "0.0.0.0", "--port", "9200", "--snapshot", "/tm-preview/test_tm_snapshot.json", "--n11-inbox", "/n11-inbox/scenario-ltan12-v1", "--limits", "/app/services/sim_ground/test_limits.json", "--tc-socket", "/run/sim-tc/bridge.sock", "--contact-view", "/fds-view/orbit_view.json"]
+    command: ["python3", "-m", "services.sim_ground.receiver", "--test-only", "--bind", "0.0.0.0", "--port", "9200", "--snapshot", "/tm-preview/test_tm_snapshot.json", "--n11-inbox", "/n11-inbox/scenario-ltan12-v1", "--limits", "/app/services/sim_ground/full_test_limits.json", "--tc-socket", "/run/sim-tc/bridge.sock", "--contact-view", "/fds-view/orbit_view.json"]
     depends_on:
       sim-volume-init: {condition: service_completed_successfully}
     volumes:
