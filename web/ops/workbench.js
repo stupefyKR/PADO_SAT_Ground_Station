@@ -455,7 +455,24 @@
     }
     return data;
   }
+  function renderPowerSummary() {
+    const byId = new Map((selectedTm?.sensors || []).map(sensor => [sensor.id, sensor.samples.at(-1)]));
+    const fields = [["eps-soc", "battery_soc", "%"], ["eps-voltage", "p60_voltage", "V"],
+      ["eps-solar", "solar_bus_power", "W"], ["eps-load", "equipment_load", "W"],
+      ["eps-net", "battery_net_power", "W"], ["eps-energy", "battery_energy", "Wh"]];
+    for (const [element, id, unit] of fields) {
+      const sample = byId.get(id);
+      $(element).textContent = sample ? `${sample.value.toFixed(2)} ${unit}` : "—";
+    }
+    const latest = byId.get("battery_soc");
+    const net = byId.get("battery_net_power");
+    $("eps-sample-state").textContent = latest ?
+      `${freshSample(latest, Date.now()) ? "최근 측정" : "과거 측정"} · ${latest.utc} · ${
+        !net ? "상태 대기" : net.value > 0.01 ? "충전 중" : net.value < -0.01 ? "방전 중" : "충방전 없음"}` :
+      "전력 TM 수신 대기 · 저장 TM 요청 후 값을 표시합니다";
+  }
   function renderSensors() {
+    renderPowerSummary();
     if (!selectedTm) return;
     const list = $("sensor-list");
     list.replaceChildren();

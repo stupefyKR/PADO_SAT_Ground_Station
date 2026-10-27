@@ -58,6 +58,7 @@
 .overview-link-strip{display:flex;align-items:center;gap:22px;flex-wrap:wrap;margin-bottom:12px;padding:11px 15px;border:1px solid #294555;background:#102330;color:#a8c2cc;font-size:.72rem}
 .overview-link-strip>div{display:flex;align-items:center;gap:12px}.overview-link-strip strong{color:#d6f0e8}.overview-link-strip time{margin-left:auto;font-family:Consolas,monospace;color:#93b1be}
 .ros-overview-main{display:grid;grid-template-columns:minmax(330px,.95fr) minmax(420px,1.35fr);gap:14px;align-items:start}
+.eps-summary{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:1px;margin:12px 0 14px;border:1px solid #294555;background:#294555}.eps-summary>div{padding:12px 14px;background:#102330;display:grid;gap:7px}.eps-summary span{color:#93b1be;font-size:.69rem}.eps-summary strong{color:#d2eef0;font:700 .95rem Consolas,monospace}.eps-summary p{grid-column:1/-1;margin:0;padding:8px 14px;background:#0d202c;color:#8fabb8;font-size:.67rem}@media(max-width:1100px){.eps-summary{grid-template-columns:repeat(3,minmax(0,1fr))}}@media(max-width:550px){.eps-summary{grid-template-columns:repeat(2,minmax(0,1fr))}}
 .ros-overview-main .attitude-stage{min-height:260px;padding:8px}.ros-overview-main .attitude-stage canvas{max-width:760px}
 .ros-overview-main .attitude-meta{font-size:.67rem;gap:7px 10px;padding:12px 14px;grid-template-columns:.9fr 1.4fr}
 .ros-overview-main .attitude-panel>.panel-foot{font-size:.66rem;padding:11px 14px;line-height:1.55}

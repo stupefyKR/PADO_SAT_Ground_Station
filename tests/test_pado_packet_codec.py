@@ -22,7 +22,7 @@ class PacketCodecTests(unittest.TestCase):
     def test_catalog_inventories_and_draft_boundary(self):
         self.assertFalse(self.catalog["operational"])
         self.assertEqual(len(self.catalog["commands"]), 58)
-        self.assertEqual(len(self.catalog["telemetry"]), 18)
+        self.assertEqual(len(self.catalog["telemetry"]), 19)
         for entry in self.catalog["commands"]:
             if entry["fields"] is None:
                 with self.assertRaisesRegex(PacketError, "awaits subsystem ICD"):

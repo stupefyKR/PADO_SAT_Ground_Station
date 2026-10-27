@@ -18,7 +18,7 @@ MAX_GENERATED_PDUS = 256
 SIM_MODES = {"Initial": 1, "Standby": 2, "Communication": 3,
              "Mission(CREST)": 4, "Mission(SIREN)": 5, "Safehold": 6}
 SCALAR_FAMILIES = ("EPS_PDU1", "AOCS_STATE", "GNSS_PVT", "EPS_P60", "EPS_PDU2",
-                   "EPS_ACU", "EPS_BPX", "OBC_HEALTH", "AX100_LINK", "SIREN_ALERT",
+                   "EPS_ACU", "EPS_BPX", "EPS_POWER", "OBC_HEALTH", "AX100_LINK", "SIREN_ALERT",
                    "FDIR_EVENT", "CREST_HEALTH", "SIREN_HEALTH")
 
 
@@ -47,11 +47,13 @@ def _geodetic(position):
 
 
 def equipment_snapshot(core_packets: tuple[bytes, ...], *, seed: int = 1,
-                       mode: int = 3) -> dict:
+                       mode: int = 3, power_sample: dict | None = None) -> dict:
     """All screenshot equipment groups, using a named simulation JSON contract."""
     core = {packet["name"]: packet for packet in map(decode, core_packets)}
     eps, attitude, gnss = (core[name]["fields"] for name in SCALAR_FAMILIES[:3])
     stamp_ms = core["EPS_PDU1"]["utc_ms"]
+    if power_sample is not None and power_sample.get("utc_s") != stamp_ms//1000:
+        raise ValueError("power budget and equipment TM must share the sample time")
     stamp_s = stamp_ms // 1000
     phase = (seed % 10000) * 0.017
     voltage = _wave(stamp_s, 12.0, 0.35, 5800, phase)
@@ -135,25 +137,105 @@ def equipment_snapshot(core_packets: tuple[bytes, ...], *, seed: int = 1,
     siren = {"hardware_state": 1, "backup_mode": False, "model_version": 1,
              "fault_code": 0, "risk_score": _wave(stamp_s,.20,.05,780,phase),
              "anomaly_score": _wave(stamp_s,.10,.03,920,phase)}
-    return {"schema": "pado.sim-full-hk.v1", "non_operational": True,
+    equipment = {"P60_Dock": p60, "PDU_200_1": pdu(1), "PDU_200_2": pdu(2),
+                 "ACU_200": acu, "BPX": bpx, "CubeADCS": cube, "OEM719A": oem,
+                 "A3200": obc, "AX100": ax, "SRS_4": srs, "CREST": crest, "SIREN": siren}
+    if power_sample is not None:
+        _apply_power_sample(equipment, power_sample)
+        mode = power_sample["mode_code"]
+    result = {"schema": "pado.sim-full-hk.v1", "non_operational": True,
             "sampled_utc_ms": stamp_ms, "mode": mode,
             "units": "SI; Celsius temperatures; explicit suffixes override",
-            "equipment": {"P60_Dock": p60, "PDU_200_1": pdu(1), "PDU_200_2": pdu(2),
-                "ACU_200": acu, "BPX": bpx, "CubeADCS": cube, "OEM719A": oem,
-                "A3200": obc, "AX100": ax, "SRS_4": srs, "CREST": crest, "SIREN": siren}}
+            "equipment": equipment}
+    if power_sample is not None:
+        result["power_budget"] = power_sample
+    return result
+
+
+def _apply_power_sample(e: dict, sample: dict) -> None:
+    """One physical budget feeds every EPS representation of a TM sample.
+
+    The channel assignment is a simulator display map, not a flight harness.
+    P60/PDU views represent upstream/downstream readings of the same devices;
+    their readings must not be added together as independent loads.
+    """
+    voltage = sample["battery_voltage_v"]
+    battery_mode = 1 if sample["soc"] < .1 else 2 if sample["soc"] < .25 else \
+        4 if sample["soc"] >= .98 else 3
+    p60, bpx, acu = (e[key] for key in ("P60_Dock", "BPX", "ACU_200"))
+    p60.update(vbat_v=voltage, batt_v=voltage, batt_c=sample["battery_current_a"],
+               batt_chrg=sample["charge_current_a"], batt_dischrg=sample["discharge_current_a"],
+               batt_mode=battery_mode,
+               batt_temp=[sample["battery_temperature_c"],sample["battery_temperature_c"]+.1])
+    bpx.update(vbatt=voltage, tcur=sample["battery_current_a"],
+               chargercur=sample["charge_current_a"], dischargercur=sample["discharge_current_a"],
+               battery_mode=battery_mode)
+    bpx.update({f"batt_temp{i+1}":sample["battery_temperature_c"]+i*.1 for i in range(4)})
+    loads = sample["device_loads_w"]
+    # At a power deficit the model exposes unserved demand. Channel currents
+    # show proportional average service rather than claiming every load has
+    # switched off while the battery model is still supplying some power.
+    served_fraction = max(0.,1.-sample["unserved_load_w"]/sample["load_w"]) \
+        if sample["load_w"] > 0 else 1.
+    powered = served_fraction > 1e-9
+    p60_channels = (("s_band",12.), ("crest",12.), ("gnss_receiver",3.3),
+        ("gnss_antenna",3.3), ("uhf",3.3), ("obc",3.3), ("fine_sun_sensor",3.3),
+        ("siren",5.), ("adcs_board",voltage), ("reaction_wheel",voltage),
+        ("magnetorquer",voltage), ("magnetometer",voltage), ("eps_board",voltage))
+    pdu_channels = {
+        "PDU_200_1": (("gnss_receiver",3.3), ("gnss_antenna",3.3), ("uhf",3.3),
+                      ("obc",3.3), ("fine_sun_sensor",3.3), *[(None,5.)]*4),
+        "PDU_200_2": (("s_band",12.), ("crest",12.), ("siren",5.),
+                      ("adcs_board",voltage), ("reaction_wheel",voltage),
+                      ("magnetorquer",voltage), ("magnetometer",voltage),
+                      ("eps_board",voltage), ("battery_auxiliary",voltage))}
+    for name, channels in (("P60_Dock",p60_channels), *pdu_channels.items()):
+        equipment = e[name]
+        equipment["out_en"] = [powered and loads.get(device,0.) > 0 for device,_ in channels]
+        equipment["v_out"] = [rail if enabled else 0. for (_,rail),enabled in
+                               zip(channels,equipment["out_en"])]
+        equipment["c_out"] = [loads.get(device,0.)*served_fraction/rail if enabled and rail>0 else 0.
+            for (device,rail),enabled in zip(channels,equipment["out_en"])]
+        if name != "P60_Dock":
+            equipment.update(vbat=voltage,batt_mode=battery_mode,conv_en=powered)
+    acu.update(vbat=voltage, c_in=[0.]*6, v_in=[0.]*6, power=[0.]*6)
+    for bank in sample["banks"]:
+        channel = bank["channel"]
+        if type(channel) is not int or not 0 <= channel < 6:
+            raise ValueError("ACU simulation bank channel outside 0..5")
+        acu["v_in"][channel] = bank["voltage_v"]
+        acu["c_in"][channel] = bank["current_a"]
+        acu["power"][channel] = bank["power_w"]
+    acu["vboost"] = [voltage if current>0 else 0. for current in acu["c_in"]]
+    e["CREST"].update(voltage_v=12. if powered and loads["crest"]>0 else 0.,
+                      current_a=loads["crest"]*served_fraction/12. if powered else 0.,
+                      uart_link_state=int(powered and loads["crest"]>0))
+    e["SIREN"]["hardware_state"] = int(powered and loads["siren"]>0)
+    e["OEM719A"]["HWMONITOR"]["supply_voltage_v"] = \
+        3.3 if powered and loads["gnss_receiver"]>0 else 0.
+    e["SRS_4"]["tm"]["curr"]["vin"]["value"] = loads["s_band"]*served_fraction/12. if powered else 0.
+    for key in ("3v3","1v8","1v0","pa"):
+        e["SRS_4"]["tm"]["curr"][key]["value"] = 0.
 
 
 def additional_packets(core_packets: tuple[bytes, ...], next_sequence: int, *,
-                       seed: int = 1, include_full: bool = False, mode: int = 3) -> tuple[bytes, ...]:
-    snapshot = equipment_snapshot(core_packets, seed=seed, mode=mode)
+                       seed: int = 1, include_full: bool = False, mode: int = 3,
+                       power_sample: dict | None = None) -> tuple[bytes, ...]:
+    snapshot = equipment_snapshot(core_packets, seed=seed, mode=mode, power_sample=power_sample)
     e, stamp = snapshot["equipment"], snapshot["sampled_utc_ms"]
     p60, bpx, acu, obc, ax, siren = (e[name] for name in ("P60_Dock","BPX","ACU_200","A3200","AX100","SIREN"))
+    power_fault = (power_sample["unserved_load_w"] > 1e-6 if power_sample is not None else
+                   e["PDU_200_1"]["v_out"][0] > 5.5)
     records = [
         ("EPS_P60", {"battery_mode": p60["batt_mode"], "battery_voltage_v": p60["batt_v"],
           "battery_current_a": p60["batt_c"], "battery_temperature_c": p60["batt_temp"][0],
-          "channel_enabled_bits": 8191, "latchup_bits": 0, "uptime_s": p60["uptime"]}),
-        ("EPS_PDU2", {"channel_enabled_bits": 511, "latchup_bits": 0,
-          "bus_voltage_v": e["PDU_200_2"]["v_out"][0], "temperature_c": e["PDU_200_2"]["temp"],
+          "channel_enabled_bits": sum(int(on)<<i for i,on in enumerate(p60["out_en"])),
+          "latchup_bits": 0, "uptime_s": p60["uptime"]}),
+        ("EPS_PDU2", {"channel_enabled_bits": sum(int(on)<<i for i,on in
+          enumerate(e["PDU_200_2"]["out_en"])), "latchup_bits": 0,
+          "bus_voltage_v": (5. if power_sample["load_w"]-power_sample["unserved_load_w"] > 1e-6 else 0.)
+              if power_sample is not None else e["PDU_200_2"]["v_out"][0],
+          "temperature_c": e["PDU_200_2"]["temp"],
           "uptime_s": p60["uptime"]}),
         ("EPS_ACU", {key: value for i in range(6) for key,value in
           ((f"input_voltage_{i}_v",acu["v_in"][i]),(f"input_current_{i}_a",acu["c_in"][i]))}),
@@ -167,11 +249,22 @@ def additional_packets(core_packets: tuple[bytes, ...], next_sequence: int, *,
           "rx_count": 0, "boot_count": 1, "last_contact_utc_ms": stamp}),
         ("SIREN_ALERT", {"alert_type": 0, "risk_score": siren["risk_score"],
           "anomaly_score": siren["anomaly_score"], "model_version": 1, "fault_code": 0}),
-        ("FDIR_EVENT", {"level": 1 if e["PDU_200_1"]["v_out"][0] > 5.5 else 0,
-          "source_node": 1, "fault_code": 100 if e["PDU_200_1"]["v_out"][0] > 5.5 else 0,
+        ("FDIR_EVENT", {"level": int(power_fault),
+          "source_node": 1, "fault_code": (101 if power_sample is not None else 100) if power_fault else 0,
           "action_code": 0, "recovery_state": 0}),
         ("CREST_HEALTH", e["CREST"]),
         ("SIREN_HEALTH", {key:siren[key] for key in ("hardware_state","backup_mode","model_version","fault_code")})]
+    if power_sample is not None:
+        s = power_sample
+        records.insert(4, ("EPS_POWER", {
+            "battery_soc_pct":s["soc_pct"], "solar_raw_w":s["solar_raw_w"],
+            "solar_bus_w":s["solar_available_w"], "load_w":s["load_w"],
+            "net_battery_w":s["battery_voltage_v"]*s["battery_current_a"],
+            "battery_voltage_v":s["battery_voltage_v"], "battery_current_a":s["battery_current_a"],
+            "charge_current_a":s["charge_current_a"], "discharge_current_a":s["discharge_current_a"],
+            "battery_energy_wh":s["stored_energy_wh"], "eclipse":s["eclipse"],
+            "unserved_load_w":s["unserved_load_w"], "curtailed_w":s["curtailed_power_w"],
+            "conversion_loss_w":s["solar_conversion_loss_w"], "mode":s["mode_code"]}))
     catalog = load_catalog()
     packets = [encode_tm(name, (next_sequence+i)&0xffff, stamp, fields, catalog=catalog)
                for i,(name,fields) in enumerate(records)]
@@ -191,14 +284,17 @@ def additional_packets(core_packets: tuple[bytes, ...], next_sequence: int, *,
 
 
 def mode_beacon_packets(core_packets: tuple[bytes, ...], next_sequence: int, *,
-                        seed: int = 1, mode: int = 3) -> tuple[bytes, bytes]:
+                        seed: int = 1, mode: int = 3,
+                        power_sample: dict | None = None) -> tuple[bytes, bytes]:
     """Compact status follows CORE; equipment values share the same sample time."""
-    snapshot = equipment_snapshot(core_packets, seed=seed, mode=mode)
+    snapshot = equipment_snapshot(core_packets, seed=seed, mode=mode, power_sample=power_sample)
+    mode = snapshot["mode"]
     e = snapshot["equipment"]
     p60, bpx, cube, ax, obc = (e[name] for name in ("P60_Dock","BPX","CubeADCS","AX100","A3200"))
     xyz = e["OEM719A"]["BESTXYZ"]
     fields = {"mode": mode, "format_version": 1,
-              "p60_channel_enabled_bits": 8191, "p60_uptime_s": p60["uptime"],
+              "p60_channel_enabled_bits": sum(int(on)<<i for i,on in enumerate(p60["out_en"])),
+              "p60_uptime_s": p60["uptime"],
               "p60_boot_count": 1, "battery_charge_current_a": bpx["chargercur"],
               "battery_discharge_current_a": bpx["dischargercur"], "p60_battery_mode": p60["batt_mode"],
               **{key: value for i in range(6) for key,value in
@@ -206,7 +302,8 @@ def mode_beacon_packets(core_packets: tuple[bytes, ...], next_sequence: int, *,
                    (f"solar_input_current_{i}_a",e["ACU_200"]["c_in"][i]))},
               "battery_voltage_v": bpx["vbatt"],
               **{f"battery_temperature_{i}_c": bpx[f"batt_temp{i+1}"] for i in range(4)},
-              "bpx_battery_mode": 2, "adcs_boot_index": cube["boot_index_and_status"][0],
+              "bpx_battery_mode": bpx.get("battery_mode",2),
+              "adcs_boot_index": cube["boot_index_and_status"][0],
               "adcs_state": cube["current_adcs_state"], "sram_latchup_count": 0,
               "edac_error_count": 0, "control_mode": cube["adcs_state"]["control_mode"],
               **{f"{axis}_m": xyz["position_itrf_m"][i] for i,axis in enumerate("xyz")},

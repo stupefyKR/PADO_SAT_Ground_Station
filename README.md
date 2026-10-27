@@ -70,11 +70,13 @@ ROS의 별도 `SIM ONLY` 영역에서 단계별 AOS 기준 예약과 가상 위�
 
 단계 8의 로컬 백업·복원과 퍼징 절차는 [단계 8 시험 안내](deploy/stage8/README.md)에 정리했습니다. NAS 장비 연동은 현재 개발·배포 수락 범위에서 제외하고, 장비가 정해진 뒤 별도 과제로 추가합니다([결정 #19](docs/DECISIONS.md)). 운용 전 독립 백업·복원 방안은 별도로 검증해야 합니다.
 
-단계 9의 비운용 웹 개발 기준선과 컨테이너 실행 조건은 [단계 9 안내](deploy/stage9/README.md)에 있습니다. 인증된 `/orbit` 화면은 FDS가 게시한 궤도 표본으로 3D 지구·주야간·2D 지상궤적·두 지상국 PASS polar plot을 동시에 표시합니다. 로컬 시험 스택의 기본 입력은 **고도 약 500 km, LTAN 06시의 가상 PADO-SAT SSO TLE**다. 시험 실행기가 TLE epoch를 갱신해 최대 72시간의 FDS 예측 결과를 게시한다. 별도의 가상 위성이 이 TLE에서 생성된 궤도를 기준으로 EPS/AOCS/GNSS 시험 PDU를 보내며, ROS에는 파싱된 센서·자세가, FDS에는 검증된 GNSS 시험 파일이 전달된다. 내부 TCP 9200은 Docker 내부망 전용이고 RF·CSP·AX100 장비 경로가 아니다. 원본 ISS 고정 TLE는 선택형 과거 화면 시험 자료로 보존한다. 실제 PADO-SAT N05 TLE·N11 GNSS와 실측 안테나 설정은 별도 경로다.
+단계 9의 비운용 웹 개발 기준선과 컨테이너 실행 조건은 [단계 9 안내](deploy/stage9/README.md)에 있습니다. 인증된 `/orbit` 화면은 FDS가 게시한 궤도 표본으로 3D 지구·주야간·2D 지상궤적·두 지상국 PASS polar plot을 동시에 표시합니다. 로컬 시험 스택의 기본 입력은 **고도 약 500 km, LTAN 12시의 가상 PADO-SAT SSO TLE**다. 시험 실행기가 TLE epoch를 갱신해 최대 72시간의 FDS 예측 결과를 게시한다. 별도의 가상 위성이 이 TLE에서 생성된 궤도를 기준으로 EPS/AOCS/GNSS 시험 PDU를 보내며, ROS에는 파싱된 센서·자세가, FDS에는 검증된 GNSS 시험 파일이 전달된다. 내부 TCP 9200은 Docker 내부망 전용이고 RF·CSP·AX100 장비 경로가 아니다. 원본 ISS 고정 TLE는 선택형 과거 화면 시험 자료로 보존한다. 실제 PADO-SAT N05 TLE·N11 GNSS와 실측 안테나 설정은 별도 경로다.
 
 FDS의 오프라인 Java/Orekit 계산기 입력, 두 안테나 설정, 결과 CSV와 시험 방법은 [FDS 코어 안내](services/fds/README.md)에 있습니다. 예시 주파수는 운용 RF 값이 아니며, 실제 안테나 좌표·TM ICD·정밀도 검증 전 산출물은 비운용입니다.
 
 계획된 운용 TC 경로는 MPS 시퀀스 승인 → `ros-core` 명령 DB 재검증 → `ros-signer` 승인 확인·HMAC → TLS → `dgs-gs` `tc-gate` → `kari-adapter`입니다. 현재 단계 5는 합성 프레임을 이용한 모듈 간 시험 경로이며 실제 송출 경로는 구현되지 않았습니다. [개발방향 12장](docs/PADO-SAT_지상국_개발방향.md), [MPS 시험 계약](interfaces/mps/test_contract.md), [TC 시험 계약](interfaces/tc/test_contract.md)을 참고하세요.
+
+가상 위성의 100 Wh 배터리·태양전지 발전·장치별 소비전력 모델과 VM 설정은 [전력 모델 안내](docs/SIM_EPS.md)에 있습니다.
 
 ## 저장소 구조
 

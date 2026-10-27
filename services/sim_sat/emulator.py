@@ -30,6 +30,7 @@ from typing import Callable, Sequence
 
 from tools.pado_packet_codec import PacketError, decode, encode_tm
 from .contact import ContactGate
+from .power import PowerModel, load_profile
 from .housekeeping import (FULL_HK_PERIOD_S, MAX_GENERATED_PDUS, SCALAR_FAMILIES,
                            additional_packets, mode_beacon_packets)
 from .dispatcher import (CommandContext, TcDispatcher, TcReplayState,
@@ -56,6 +57,7 @@ _SIMULATED_BOOT_S = int((datetime(2026, 10, 23, tzinfo=timezone.utc) - _EPOCH).t
 class OrbitSample:
     utc_s: int
     ecef_m: tuple[float, float, float]
+    sun_direction_itrf: tuple[float, float, float] = (1.0, 0.0, 0.0)
 
 
 @dataclass(frozen=True)
@@ -159,7 +161,10 @@ def parse_orbit_view(raw: bytes) -> OrbitView:
         if (not 6.3e6 <= radius <= 8.0e6 or
                 (previous is not None and not 0 < stamp - previous <= step)):
             raise ValueError("virtual view ECEF position or cadence is invalid")
-        samples.append(OrbitSample(stamp, xyz))
+        sun = tuple(float(component) for component in row[7:10])
+        if not 0.9 <= math.hypot(*sun) <= 1.1:
+            raise ValueError("virtual view Sun direction must be normalized")
+        samples.append(OrbitSample(stamp, xyz, sun))
         previous = stamp
     if samples[0].utc_s != start or samples[-1].utc_s != end:
         raise ValueError("virtual view sample coverage is invalid")
@@ -278,7 +283,8 @@ def _nadir_body_rates(view: OrbitView, utc_s: int,
 
 
 def generate_packet_batch(view: OrbitView, now: datetime, seq: int, *,
-                          seed: int = 1) -> tuple[tuple[bytes, bytes, bytes], int]:
+                          seed: int = 1, power_sample: dict | None = None
+                          ) -> tuple[tuple[bytes, bytes, bytes], int]:
     """Pure TM sample source; caller supplies time and starting sequence."""
     if (not isinstance(view, OrbitView) or not isinstance(now, datetime) or
             now.tzinfo is None or now.utcoffset() != timedelta(0) or
@@ -295,6 +301,8 @@ def generate_packet_batch(view: OrbitView, now: datetime, seq: int, *,
     # A roughly 220-second cycle guarantees a visible, short test overvoltage
     # episode in every five-minute ROS history window (test limit: 5.5 V).
     voltage = 5.15 + 0.42 * math.sin(stamp / 35 + phase) + 0.03 * math.sin(stamp / 31)
+    if power_sample is not None:
+        voltage = 5.0 if power_sample["load_w"]-power_sample["unserved_load_w"] > 1e-6 else 0.0
     temperature = 22.0 + 4.0 * math.sin(stamp / 570 + phase / 2)
     # TLE refreshes every 15 minutes; spacecraft boot time must not reset
     # with each FDS view. This fixed epoch is synthetic, not flight TM.
@@ -322,14 +330,36 @@ def generate_packet_batch(view: OrbitView, now: datetime, seq: int, *,
 
 def generate_housekeeping_batch(view: OrbitView, now: datetime, seq: int, *,
                                 seed: int = 1, include_full: bool = False,
-                                mode: int = 3) -> tuple[tuple[bytes, ...], int]:
+                                mode: int = 3, power_sample: dict | None = None
+                                ) -> tuple[tuple[bytes, ...], int]:
     """All defined equipment TM; full named JSON is explicitly test-only."""
-    core, next_seq = generate_packet_batch(view, now, seq, seed=seed)
+    if power_sample is None:
+        power_sample = _evaluate_power(PowerModel(), view, int(now.timestamp()), mode)
+    core, next_seq = generate_packet_batch(view, now, seq, seed=seed,
+                                           power_sample=power_sample)
     packets = core + additional_packets(core, next_seq, seed=seed,
-                                        include_full=include_full, mode=mode)
+                                        include_full=include_full, mode=mode,
+                                        power_sample=power_sample)
     if len(packets) > MAX_GENERATED_PDUS:
         raise ValueError("generated housekeeping tick exceeds PDU bound")
     return packets, (seq + len(packets)) & 0xffff
+
+
+def _evaluate_power(model: PowerModel, view: OrbitView, stamp: int, mode) -> dict:
+    """Reuse the FDS truth position/Sun direction; no second propagator runs."""
+    position, velocity = _interpolated_ecef(view, stamp)
+    index = max(0, min(len(view.samples)-2, bisect.bisect_right(view.times_s, stamp)-1))
+    before, after = view.samples[index:index+2]
+    fraction = (stamp-before.utc_s)/(after.utc_s-before.utc_s)
+    direction = tuple(a+(b-a)*fraction for a,b in
+                      zip(before.sun_direction_itrf, after.sun_direction_itrf))
+    length = math.hypot(*direction)
+    if length <= 0:
+        raise ValueError("invalid interpolated Sun direction")
+    # OrbitViewWriter publishes a unit Earth-to-Sun direction. The battery
+    # model accepts metres so it can also account for satellite parallax.
+    sun_m = tuple(component/length*149_597_870_700.0 for component in direction)
+    return model.step(stamp, position, sun_m, _nadir_quaternion(position, velocity), mode=mode)
 
 
 class TmSpool:
@@ -341,7 +371,8 @@ class TmSpool:
     """
 
     def __init__(self, path: Path, *, interval_s: int = 5,
-                 max_ticks: int | None = None, full_housekeeping: bool = False):
+                 max_ticks: int | None = None, full_housekeeping: bool = False,
+                 power_profile: dict | None = None, power_mode: str | int = "standby"):
         if type(interval_s) is not int or not 5 <= interval_s <= 60:
             raise ValueError("5..60 second simulator sample cadence required")
         if max_ticks is None:
@@ -356,6 +387,10 @@ class TmSpool:
         self.interval_s = interval_s
         self.max_ticks = max_ticks
         self.full_housekeeping = full_housekeeping
+        self.power_profile = load_profile() if power_profile is None else power_profile
+        self.power_mode = power_mode
+        self.power_sample: dict | None = None
+        self.power_model: PowerModel | None = None
         self.connection = sqlite3.connect(path, timeout=5)
         try:
             os.chmod(path, 0o600)
@@ -372,6 +407,8 @@ class TmSpool:
                                         "issued_ms INTEGER NOT NULL, sequence INTEGER NOT NULL, "
                                         "received_ms INTEGER NOT NULL, "
                                         "PRIMARY KEY(issued_ms,sequence))")
+                self.connection.execute("CREATE TABLE IF NOT EXISTS power_state ("
+                                        "id INTEGER PRIMARY KEY CHECK(id=1), document TEXT NOT NULL)")
                 recorded_interval = self.connection.execute(
                     "SELECT value FROM spool_meta WHERE key = ?", ("interval_s",)).fetchone()
                 if recorded_interval is None:
@@ -393,6 +430,19 @@ class TmSpool:
             full_result = self.connection.execute(
                 "SELECT value FROM spool_meta WHERE key='last_full_hk_s'").fetchone()
             self.last_full_hk_s: int | None = full_result[0] if full_result else None
+            saved = self.connection.execute("SELECT document FROM power_state WHERE id=1").fetchone()
+            if self.full_housekeeping:
+                if saved is not None:
+                    if len(saved[0]) > 128*1024:
+                        raise ValueError("bounded simulator battery state required")
+                    document = json.loads(saved[0])
+                    self.power_model = PowerModel(self.power_profile, state=document["state"])
+                    self.power_sample = document["sample"]
+                    if (not isinstance(self.power_sample, dict) or
+                            self.power_sample.get("utc_s") != self.last_generated_s):
+                        raise ValueError("battery state and TM generation cursor disagree")
+                else:
+                    self.power_model = PowerModel(self.power_profile)
         except BaseException:
             self.connection.close()
             raise
@@ -499,8 +549,17 @@ class TmSpool:
         include_full = self.full_housekeeping and (self.last_full_hk_s is None or
                                                    stamp-self.last_full_hk_s >= FULL_HK_PERIOD_S)
         if self.full_housekeeping:
+            # Work on a copy. Failed packet encoding or a failed SQLite commit
+            # must leave both the battery and the generation cursor unchanged.
+            candidate_model = PowerModel(self.power_profile, state=self.power_model.snapshot())
+            if (self.last_generated_s is not None and stamp > self.last_generated_s+self.interval_s
+                    and view.start_s > self.last_generated_s+self.interval_s):
+                candidate_model.reanchor(stamp)
+            power_sample = _evaluate_power(candidate_model, view, stamp, self.power_mode)
             packets, _ = generate_housekeeping_batch(view, now, sequence, seed=seed,
-                                                     include_full=include_full)
+                                                     include_full=include_full,
+                                                     mode=power_sample["mode_code"],
+                                                     power_sample=power_sample)
         else:
             packets, _ = generate_packet_batch(view, now, sequence, seed=seed)
         dropped = 0
@@ -514,6 +573,14 @@ class TmSpool:
             if include_full:
                 self.connection.execute("INSERT INTO spool_meta(key,value) VALUES (?,?) "
                     "ON CONFLICT(key) DO UPDATE SET value=excluded.value", ("last_full_hk_s",stamp))
+            if self.full_housekeeping:
+                state_json = json.dumps({"state": candidate_model.snapshot(),
+                                         "sample": power_sample}, separators=(",",":"),
+                                        allow_nan=False)
+                if len(state_json) > 128*1024:
+                    raise ValueError("bounded simulator battery state required")
+                self.connection.execute("INSERT INTO power_state(id,document) VALUES (1,?) "
+                    "ON CONFLICT(id) DO UPDATE SET document=excluded.document", (state_json,))
             cutoff = stamp - self.interval_s * self.max_ticks
             cursor = self.connection.execute("DELETE FROM tm_spool WHERE sampled_s <= ?",
                                              (cutoff,))
@@ -526,6 +593,9 @@ class TmSpool:
                     "DELETE FROM tm_spool WHERE sampled_s = ?", (oldest,))
                 dropped += cursor.rowcount
         self.last_generated_s = stamp
+        if self.full_housekeeping:
+            self.power_model = candidate_model
+            self.power_sample = power_sample
         if include_full:
             self.last_full_hk_s = stamp
         if dropped:
@@ -654,16 +724,22 @@ class SatelliteSession:
         counter = self.spool.next_beacon_counter()
         sequence = self.spool.next_control_sequence() & 0xffff
         usage = min(100, self.spool.pending_count() * 100 // self.spool.max_pdus)
+        power_sample = self.spool.power_sample
+        mode = power_sample["mode_code"] if power_sample is not None else 3
         if self.spool.full_housekeeping:
             if view is not None:
+                sampled_s = power_sample["utc_s"] if power_sample is not None else now_ms//1000
                 self.latest_core_packets = generate_packet_batch(
-                    view, _EPOCH+timedelta(seconds=now_ms//1000), 0, seed=seed)[0]
+                    view, _EPOCH+timedelta(seconds=sampled_s), 0, seed=seed,
+                    power_sample=power_sample)[0]
             else:
                 self.latest_core_packets = self.spool.latest_core() or self.latest_core_packets
         voltage_alarm = (self.latest_core_packets is not None and
                          decode(self.latest_core_packets[0])["fields"]["bus_voltage_v"] > 5.5)
+        if power_sample is not None:
+            voltage_alarm = power_sample["unserved_load_w"] > 1e-6
         beacon = encode_tm("BEACON_CORE", sequence, now_ms // 1000 * 1000,
-                           {"mode": 3, "beacon_counter": counter,
+                           {"mode": mode, "beacon_counter": counter,
                             "beacon_period_s": self.beacon_period_s, "boot_count": 1,
                             "reset_cause": 0, "fsw_image": 1, "crash_count": 0,
                             "watchdog_state": 1, "nor_usage_pct": usage,
@@ -672,7 +748,8 @@ class SatelliteSession:
         if self.spool.full_housekeeping:
             if self.latest_core_packets is not None:
                 next_sequence = self.spool.next_control_sequence() & 0xffff
-                extra = mode_beacon_packets(self.latest_core_packets, next_sequence, seed=seed)
+                extra = mode_beacon_packets(self.latest_core_packets, next_sequence, seed=seed,
+                                            mode=mode, power_sample=power_sample)
                 self.spool.next_control_sequence()  # Reserve both status packet sequences.
                 send_packet_batch(connection, extra)
         return True
@@ -759,6 +836,7 @@ def run_forever(orbit_view: Path, host: str, port: int, interval_s: int,
                 seed: int, spool_path: Path, *,
                 scenario_id: str | None = None,
                 beacon_period_s: int = DEFAULT_BEACON_PERIOD_S,
+                power_profile: dict | None = None, power_mode: str = "standby",
                 clock: Callable[[], datetime] | None = None,
                 sleeper: Callable[[float], None] = time.sleep) -> None:
     """Store every TM tick; beacon in contact, dump only when commanded."""
@@ -769,7 +847,8 @@ def run_forever(orbit_view: Path, host: str, port: int, interval_s: int,
     clock = clock or (lambda: datetime.now(timezone.utc))
     connection: socket.socket | None = None
     gate = ContactGate(orbit_view)
-    spool = TmSpool(spool_path, interval_s=interval_s, full_housekeeping=True)
+    spool = TmSpool(spool_path, interval_s=interval_s, full_housekeeping=True,
+                    power_profile=power_profile, power_mode=power_mode)
     session = SatelliteSession(spool, beacon_period_s=beacon_period_s)
     previous_contact: bool | None = None
     last_beacon_ms: int | None = None
@@ -864,6 +943,11 @@ def main() -> None:
     parser.add_argument("--beacon-period-seconds", type=int, default=DEFAULT_BEACON_PERIOD_S)
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--spool", type=Path, required=True)
+    parser.add_argument("--power-profile", type=Path,
+                        help="optional simulator EPS profile JSON override")
+    parser.add_argument("--power-mode", default="standby",
+                        choices=("detumbling", "standby", "communication", "crest", "siren", "safehold"),
+                        help="explicit EPS load profile; contact does not enable the S-band transmitter")
     parser.add_argument("--scenario-id",
                         help="wait for the matching synthetic truth scenario before producing TM")
     args = parser.parse_args()
@@ -875,7 +959,8 @@ def main() -> None:
     try:
         run_forever(args.orbit_view, args.host, args.port, args.interval_seconds,
                     args.seed, args.spool, scenario_id=args.scenario_id,
-                    beacon_period_s=args.beacon_period_seconds)
+                    beacon_period_s=args.beacon_period_seconds,
+                    power_profile=load_profile(args.power_profile), power_mode=args.power_mode)
     except KeyboardInterrupt:
         pass
 

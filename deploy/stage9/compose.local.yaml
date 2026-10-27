@@ -196,7 +196,7 @@ services:
     build:
       context: ../..
       dockerfile: docker/stage9/SimTm.Dockerfile
-    command: ["python3", "-m", "services.sim_sat.emulator", "--test-only", "--orbit-view", "/fds-view/orbit_view.json", "--host", "sim-ground", "--port", "9200", "--interval-seconds", "5", "--seed", "1", "--spool", "/state/test_tm_spool-ltan12-v1.sqlite3", "--scenario-id", "ltan12-v1"]
+    command: ["python3", "-m", "services.sim_sat.emulator", "--test-only", "--orbit-view", "/fds-view/orbit_view.json", "--host", "sim-ground", "--port", "9200", "--interval-seconds", "5", "--seed", "1", "--spool", "/state/test_tm_spool-ltan12-v1.sqlite3", "--scenario-id", "ltan12-v1", "--power-mode", "${PADO_SIM_POWER_MODE:-standby}"]
     depends_on:
       sim-ground: {condition: service_started}
       fds-synthetic-demo: {condition: service_started}

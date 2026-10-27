@@ -1,0 +1,70 @@
+{
+  "schema": "pado-sim-power-profile-v1",
+  "profile_id": "pado-100wh-28cell-v1",
+  "test_only": true,
+  "provenance": {
+    "confirmed": [
+      "User: battery capacity 100 Wh; Battery Pack row is maximum 6 W consumption.",
+      "User: 24 DSP cells at 2.32 V / 0.490 A and 4 MSP cells at 2.18 V / 0.420 A, all active normals BODY +X.",
+      "User: power conversion efficiency 80 percent.",
+      "PDR appendix: BPX 4S2P, nominal 14.4 V, operating 11.8 to 16.0 V; DSP two 4S3P assemblies, MSP 4S1P."
+    ],
+    "assumptions": [
+      "Battery auxiliary load uses its conservative 6 W maximum continuously; change its mode loads for measured heater/BMS duty cycles.",
+      "OCV curve, resistance, charge/discharge current limits and charge efficiencies are simulation parameters, not a validated BPX cell/BMS model.",
+      "SOC is the fraction of the configured usable energy capacity; current throughput is integrated separately in Ah.",
+      "Solar cells operate at the supplied maximum-power point; wiring changes voltage/current, not total cell power.",
+      "Safehold uses the standby load table until a separate approved equipment state is supplied.",
+      "Device table values are peak allocations, not measured time-varying consumption."
+    ]
+  },
+  "max_step_s": 5.0,
+  "max_catchup_s": 300.0,
+  "solar": {
+    "conversion_efficiency": 0.8,
+    "earth_radius_m": 6378137.0,
+    "sun_radius_m": 695700000.0,
+    "distance_scaling": false,
+    "banks": [
+      {"id": "dsp_port", "channel": 0, "kind": "DSP", "cell_count": 12, "series": 4, "parallel": 3, "cell_voltage_v": 2.32, "cell_current_a": 0.49, "normal_body": [1, 0, 0]},
+      {"id": "dsp_starboard", "channel": 1, "kind": "DSP", "cell_count": 12, "series": 4, "parallel": 3, "cell_voltage_v": 2.32, "cell_current_a": 0.49, "normal_body": [1, 0, 0]},
+      {"id": "msp_body", "channel": 2, "kind": "MSP", "cell_count": 4, "series": 4, "parallel": 1, "cell_voltage_v": 2.18, "cell_current_a": 0.42, "normal_body": [1, 0, 0]}
+    ]
+  },
+  "battery": {
+    "capacity_wh": 100.0,
+    "series_cells": 4,
+    "parallel_cells": 2,
+    "nominal_voltage_v": 14.4,
+    "initial_soc": 0.7,
+    "minimum_voltage_v": 11.8,
+    "maximum_voltage_v": 16.0,
+    "internal_resistance_ohm": 0.12,
+    "max_charge_current_a": 2.0,
+    "max_discharge_current_a": 4.0,
+    "charge_efficiency": 0.97,
+    "discharge_efficiency": 0.99,
+    "ocv_curve": [[0.0, 11.8], [0.05, 12.6], [0.1, 13.2], [0.2, 13.8], [0.5, 14.4], [0.7, 14.9], [0.85, 15.4], [0.95, 15.8], [1.0, 16.0]],
+    "thermal_capacity_j_k": 1000.0,
+    "thermal_time_constant_s": 3600.0,
+    "initial_temperature_c": 20.0,
+    "sunlit_equilibrium_c": 22.0,
+    "eclipse_equilibrium_c": 10.0
+  },
+  "devices": {
+    "eps_board": {"voltage_v": null, "power_w_by_mode": {"detumbling": 1.0, "standby": 1.0, "communication": 1.0, "crest": 1.0, "siren": 1.0, "safehold": 1.0}},
+    "battery_auxiliary": {"voltage_v": null, "power_w_by_mode": {"detumbling": 6.0, "standby": 6.0, "communication": 6.0, "crest": 6.0, "siren": 6.0, "safehold": 6.0}},
+    "s_band": {"voltage_v": 12.0, "power_w_by_mode": {"detumbling": 0.0, "standby": 0.0, "communication": 10.8, "crest": 0.0, "siren": 0.0, "safehold": 0.0}},
+    "crest": {"voltage_v": 12.0, "power_w_by_mode": {"detumbling": 0.0, "standby": 0.0, "communication": 0.0, "crest": 2.5, "siren": 0.0, "safehold": 0.0}},
+    "gnss_receiver": {"voltage_v": 3.3, "power_w_by_mode": {"detumbling": 0.0, "standby": 0.9, "communication": 0.9, "crest": 0.9, "siren": 0.9, "safehold": 0.9}},
+    "gnss_antenna": {"voltage_v": 3.3, "power_w_by_mode": {"detumbling": 0.0, "standby": 0.05, "communication": 0.05, "crest": 0.05, "siren": 0.05, "safehold": 0.05}},
+    "uhf": {"voltage_v": 3.3, "power_w_by_mode": {"detumbling": 3.3, "standby": 3.3, "communication": 3.3, "crest": 3.3, "siren": 3.3, "safehold": 3.3}},
+    "obc": {"voltage_v": 3.3, "power_w_by_mode": {"detumbling": 0.9, "standby": 0.9, "communication": 0.9, "crest": 0.9, "siren": 0.9, "safehold": 0.9}},
+    "fine_sun_sensor": {"voltage_v": 3.3, "power_w_by_mode": {"detumbling": 0.01, "standby": 0.01, "communication": 0.01, "crest": 0.01, "siren": 0.01, "safehold": 0.01}},
+    "siren": {"voltage_v": 5.0, "power_w_by_mode": {"detumbling": 0.0, "standby": 0.0, "communication": 0.0, "crest": 0.0, "siren": 4.5, "safehold": 0.0}},
+    "adcs_board": {"voltage_v": null, "power_w_by_mode": {"detumbling": 0.3, "standby": 0.3, "communication": 0.3, "crest": 0.3, "siren": 0.3, "safehold": 0.3}},
+    "reaction_wheel": {"voltage_v": null, "power_w_by_mode": {"detumbling": 2.6, "standby": 2.6, "communication": 2.6, "crest": 2.6, "siren": 2.6, "safehold": 2.6}},
+    "magnetorquer": {"voltage_v": null, "power_w_by_mode": {"detumbling": 1.2, "standby": 1.2, "communication": 1.2, "crest": 1.2, "siren": 1.2, "safehold": 1.2}},
+    "magnetometer": {"voltage_v": null, "power_w_by_mode": {"detumbling": 0.23, "standby": 0.23, "communication": 0.23, "crest": 0.23, "siren": 0.23, "safehold": 0.23}}
+  }
+}
