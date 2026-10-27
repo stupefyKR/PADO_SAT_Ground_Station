@@ -294,7 +294,9 @@ jobs:
           print('new samples retained pending another TC:', queued)
           PY
           "${compose[@]}" exec -T ros-api python3 - <<'PY'
+          import json
           import time
+          from datetime import datetime
           from pathlib import Path
           from services.webapp.ros_workbench import RosDraftStore
           from services.webapp.sim_tc_dispatch import send_sim_tc
@@ -327,8 +329,8 @@ jobs:
                   'aos_utc_s': aos,
                   'los_utc_s': aos + 180,
                   'revision': 1,
-                  'steps': [{'offset_s': 5, 'command_name': 'mm_get_mode',
-                             'parameters': {}}],
+                  'steps': [{'offset_s': 10, 'command_name': 'hk_dump',
+                             'parameters': {'start_utc_ms': 0, 'end_utc_ms': 0}}],
               }, 'ci')
               reservation = store.reserve_sim(sequence['sha256'], 1, 'ci')
               deadline = time.monotonic() + 65
@@ -337,7 +339,7 @@ jobs:
                                  if row['id'] == reservation['id'])
                   if current['status'] == 'ACKED':
                       saved_ack = current['ack']
-                      assert saved_ack['command_id'] == 4098, current
+                      assert saved_ack['command_id'] == 4116, current
                       assert saved_ack['command_sequence'] == (
                           (reservation['id'] - 1) % 65535 + 1), current
                       assert saved_ack['result'] == 0 and saved_ack['reason'] == 0, current
@@ -347,6 +349,23 @@ jobs:
                   time.sleep(0.5)
               else:
                   raise TimeoutError(f'ROS dispatcher did not finish: {current}')
+              # Acceptance alone does not prove delivery. The scheduled dump
+              # must publish newly generated sensor data through ROS as well.
+              deadline = time.monotonic() + 10
+              snapshot_path = Path('/tm-preview/test_tm_snapshot.json')
+              while time.monotonic() < deadline:
+                  snapshot = json.loads(snapshot_path.read_text())
+                  latest = min(datetime.fromisoformat(sensor['samples'][-1]['utc']
+                      .replace('Z', '+00:00')).timestamp() for sensor in snapshot['sensors'])
+                  # The runtime samples on 5 s ticks; its loop phase can add
+                  # another cadence before that tick is queued on board.
+                  if latest >= reservation['target_utc_s'] - 10:
+                      assert snapshot['attitude']['frame'] == 'SIM_BODY_TO_ITRF_NADIR'
+                      print('scheduled hk_dump delivered sensor TM at', latest)
+                      break
+                  time.sleep(0.25)
+              else:
+                  raise TimeoutError('scheduled dump ACKed but did not deliver fresh sensor TM')
           finally:
               store.close()
           PY

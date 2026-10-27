@@ -298,8 +298,18 @@ function mpsRenderSequenceEditor(pass, schedule, session, drafts) {
   const drawFields = () => {
     fields.replaceChildren();
     const command = mpsDraftCommands.find((item) => item.name === select.value);
-    for (const [name, type] of Object.entries(command?.field_types ?? {}))
-      fields.append(mpsFieldInput(name, type, editable));
+    for (const [name, type] of Object.entries(command?.field_types ?? {})) {
+      const label = mpsFieldInput(name, type, editable);
+      if (command.name === "hk_dump") label.querySelector("input").value = "0";
+      fields.append(label);
+    }
+    if (command?.name === "hk_dump") {
+      if (offset.value === "0")
+        offset.value = String(Math.min(10, pass.los_utc_s - pass.aos_utc_s - 1));
+      const help = document.createElement("p"); help.className = "inspector-note";
+      help.textContent = "두 시각을 0으로 두면 요청 시점의 저장 TM 전체를 받습니다. 기본 AOS + 10초는 비콘 연결을 기다리는 여유입니다.";
+      fields.append(help);
+    }
   };
   select.addEventListener("change", drawFields);
   const add = document.createElement("button"); add.type = "button"; add.textContent = "단계 추가";
@@ -335,11 +345,11 @@ function mpsRenderSequenceEditor(pass, schedule, session, drafts) {
   const tbody = table.querySelector("tbody");
   const note = document.createElement("p"); note.className = "inspector-note";
   const simUplink = pass.station_id === "yonsei" && pass.band === "UHF";
-  const simQueries = new Set(["mm_get_mode", "hk_get", "eps_get_hk", "aocs_get_hk",
-    "cs_get_hk", "siren_get_hk", "crest_get_hk"]);
+  const simCommands = new Set(["mm_get_mode", "hk_get", "eps_get_hk", "aocs_get_hk",
+    "cs_get_hk", "siren_get_hk", "crest_get_hk", "hk_dump"]);
   note.textContent = needsReview ?
     "FDS 일정 갱신으로 PASS가 짧아졌습니다. 범위를 벗어난 실행 오프셋을 수정한 뒤 다시 저장하세요." :
-    simUplink ? "연세대 UHF의 조회 명령 7종만 가상 위성에 전달할 수 있습니다. 실제 TC 승인·운용 송출은 차단됩니다." :
+    simUplink ? "연세대 UHF에서 조회 명령과 저장 TM 요청(hk_dump)을 가상 위성에 전달할 수 있습니다. 실제 TC 승인·운용 송출은 차단됩니다." :
       "가상 위성 TC 왕복은 연세대 UHF 패스에서만 지원합니다. 이 패스의 시퀀스 초안은 저장할 수 있습니다.";
   scroll.replaceChildren(form, note, table);
   const save = document.createElement("button"); save.type = "button";
@@ -362,7 +372,7 @@ function mpsRenderSequenceEditor(pass, schedule, session, drafts) {
       savedSteps = JSON.stringify(saved.steps);
       handoffStatus.textContent = "";
       note.textContent = simUplink ?
-        "연세대 UHF의 조회 명령 7종만 가상 위성에 전달할 수 있습니다. 실제 TC 승인·운용 송출은 차단됩니다." :
+        "연세대 UHF에서 조회 명령과 저장 TM 요청(hk_dump)을 가상 위성에 전달할 수 있습니다. 실제 TC 승인·운용 송출은 차단됩니다." :
         "가상 위성 TC 왕복은 연세대 UHF 패스에서만 지원합니다. 이 패스의 시퀀스 초안은 저장할 수 있습니다.";
       const position = drafts.findIndex((item) => item.pass_id === pass.pass_id);
       if (position < 0) drafts.push(saved); else drafts[position] = saved;
@@ -398,7 +408,7 @@ function mpsRenderSequenceEditor(pass, schedule, session, drafts) {
       revision ? `시험 초안 · 리비전 ${revision}` : "새 시험 초안";
     tag.className = needsReview ? "tag warning" : "tag neutral";
     handoff.disabled = !editable || !simUplink || !revision || !steps.length || needsReview ||
-      steps.some((step) => !simQueries.has(step.command_name)) ||
+      steps.some((step) => !simCommands.has(step.command_name)) ||
       JSON.stringify(steps) !== savedSteps;
     steps.forEach((step, index) => {
       const row = document.createElement("tr");
