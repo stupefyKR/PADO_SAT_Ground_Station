@@ -41,6 +41,21 @@ if name == "ip":
     sys.exit(0)
 
 if name == "docker":
+    diagnostic = (args[:1] == ["inspect"] or "logs" in args or
+                  ("ps" in args and "--all" in args))
+    if diagnostic and os.environ.get("PADO_LAUNCHER_TEST_DIAGNOSTICS_FAIL") == "1":
+        print("fake diagnostics unavailable", file=sys.stderr)
+        sys.exit(9)
+    if args[:1] == ["inspect"]:
+        print("/pado-stage9-local-mps-core-read-1 status=running exit=0 error=\"\" health=unhealthy")
+        print("health exit=1 output=core probe unavailable")
+        sys.exit(0)
+    if "logs" in args:
+        print("mps-core-read | fake bounded startup diagnostic")
+        sys.exit(0)
+    if "ps" in args and "--all" in args and "--quiet" in args:
+        print(os.environ.get("PADO_LAUNCHER_TEST_DIAGNOSTIC_IDS", "a" * 64))
+        sys.exit(0)
     if os.environ.get("PADO_LAUNCHER_TEST_DOCKER_FAIL") == "up" and "up" in args:
         sys.exit(42)
     if (os.environ.get("PADO_LAUNCHER_TEST_PORTAL_FAIL") == "1" and
@@ -376,6 +391,56 @@ class LauncherLifecycleTests(unittest.TestCase):
         docker_calls = [call for call in self.calls() if call[0] == "docker"]
         self.assertTrue(any("up" in call for call in docker_calls), docker_calls)
         self.assertGreaterEqual(sum("stop" in call for call in docker_calls), 2, docker_calls)
+        self.assertNotIn("PADO_GS_LOCAL", self.rules())
+        self.assertEqual(self.rules()["DOCKER-USER"], [])
+        self.assertEqual(self.rules()["INPUT"], [])
+
+    def test_failure_reports_stage_and_diagnostics_before_cleanup(self):
+        self.env["PADO_LAUNCHER_TEST_DOCKER_FAIL"] = "up"
+        self.env["PADO_LAUNCHER_TEST_DIAGNOSTIC_IDS"] = "a" * 64 + "\n--unsafe\nforeign"
+        result = self.invoke("start")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Startup failed at stage: compose-up", result.stdout)
+        self.assertIn("core probe unavailable", result.stdout)
+        self.assertIn("stage 'compose-up'", result.stderr)
+        calls = [call for call in self.calls() if call[0] == "docker"]
+        up = next(index for index, call in enumerate(calls) if "up" in call)
+        diagnostics = [(index, call) for index, call in enumerate(calls)
+                       if index > up and ("logs" in call or call[1:2] == ["inspect"] or
+                                          ("ps" in call and "--all" in call))]
+        stop = next(index for index, call in enumerate(calls)
+                    if index > up and "stop" in call)
+        down = next(index for index, call in enumerate(calls)
+                    if index > stop and "down" in call)
+        self.assertTrue(diagnostics)
+        self.assertTrue(all(index < stop for index, _ in diagnostics))
+        self.assertLess(stop, down)
+        inspect = next(call for _, call in diagnostics if call[1:2] == ["inspect"])
+        self.assertEqual(inspect[-1], "a" * 64)
+        self.assertNotIn("--unsafe", inspect)
+        self.assertNotIn("foreign", inspect)
+        self.assertIn("--format", inspect)
+        self.assertNotIn(".Config", " ".join(inspect))
+        logs = next(call for _, call in diagnostics if "logs" in call)
+        self.assertEqual(logs[logs.index("--tail") + 1], "40")
+        self.assertNotIn("init-token", logs)
+        self.assertNotIn("PADO_GS_LOCAL", self.rules())
+
+    def test_diagnostic_failure_never_prevents_safe_rollback(self):
+        self.env["PADO_LAUNCHER_TEST_DOCKER_FAIL"] = "up"
+        self.env["PADO_LAUNCHER_TEST_DIAGNOSTICS_FAIL"] = "1"
+        result = self.invoke("start")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("cleanup continues", result.stdout)
+        self.assertIn("diagnostic command failed", result.stdout.lower())
+        calls = [call for call in self.calls() if call[0] == "docker"]
+        up = next(index for index, call in enumerate(calls) if "up" in call)
+        self.assertTrue(any(index > up and "stop" in call
+                            for index, call in enumerate(calls)))
+        self.assertTrue(any(index > up and "down" in call
+                            for index, call in enumerate(calls)))
+        self.assertFalse(any("--volumes" in call for call in calls))
+        self.assertEqual(self.sentinel.read_text(encoding="utf-8"), "keep repo output")
         self.assertNotIn("PADO_GS_LOCAL", self.rules())
         self.assertEqual(self.rules()["DOCKER-USER"], [])
         self.assertEqual(self.rules()["INPUT"], [])

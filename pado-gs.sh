@@ -324,7 +324,85 @@ wait_for_services() {
   return 1
 }
 
+startup_diagnostic_command() {
+  local label="$1"
+  shift
+  note "$label"
+  # Never expose full inspect/config/environment data. Each caller supplies a
+  # fixed, read-only command, with bounded output and a short deadline.
+  if ! python3 - "$@" <<'PY'
+import subprocess
+import sys
+
+limit = 32768
+try:
+    result = subprocess.run(sys.argv[1:], stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, timeout=8, check=False)
+    output = result.stdout
+    code = result.returncode
+except subprocess.TimeoutExpired as error:
+    output = error.stdout or b""
+    code = 124
+except OSError as error:
+    output = str(error).encode("utf-8", errors="replace")
+    code = 1
+sys.stdout.write(output[:limit].decode("utf-8", errors="replace"))
+if output and not output.endswith(b"\n"):
+    sys.stdout.write("\n")
+if len(output) > limit:
+    print("[diagnostic output truncated]")
+if code:
+    print(f"[diagnostic command unavailable: exit {code}; cleanup continues]")
+sys.exit(code != 0)
+PY
+  then
+    note 'A diagnostic command failed; continuing startup rollback.'
+  fi
+  return 0
+}
+
+startup_diagnostics() {
+  local stage="$1" container_id
+  local -a container_ids=()
+  note "Startup failed at stage: $stage. Capturing diagnostics before cleanup."
+  startup_diagnostic_command 'Container status before cleanup:' \
+    docker compose -p "$PROJECT" -f "$COMPOSE_FILE" ps --all
+  startup_diagnostic_command 'Recent application/core logs (last 40 lines per service):' \
+    docker compose -p "$PROJECT" -f "$COMPOSE_FILE" logs --no-color --tail 40 \
+      dgs-ops-gateway portal ros-api mps-api ros-core-read mps-core-read \
+      fds-synthetic-demo fds-iss-display sim-volume-init sim-ground sim-satellite
+  # Query only this Compose project's containers. No user-supplied ID or
+  # unrestricted Docker inspect output is accepted here.
+  while IFS= read -r container_id; do
+    if [[ "$container_id" =~ ^[0-9a-f]{12,64}$ && ${#container_ids[@]} -lt 16 ]]; then
+      container_ids+=("$container_id")
+    fi
+  done < <(python3 - "$PROJECT" "$COMPOSE_FILE" <<'PY'
+import subprocess
+import sys
+
+try:
+    result = subprocess.run(["docker", "compose", "-p", sys.argv[1], "-f", sys.argv[2],
+                             "ps", "--all", "--quiet"], stdout=subprocess.PIPE,
+                            stderr=subprocess.DEVNULL, timeout=5, check=False)
+    if result.returncode == 0:
+        sys.stdout.write(result.stdout[:4096].decode("ascii", errors="ignore"))
+except (OSError, subprocess.TimeoutExpired):
+    pass
+PY
+  )
+  if (( ${#container_ids[@]} )); then
+    startup_diagnostic_command 'Container exit errors and healthcheck output:' \
+      docker inspect --format \
+      '{{.Name}} status={{.State.Status}} exit={{.State.ExitCode}} error={{json .State.Error}}{{if .State.Health}} health={{.State.Health.Status}}{{range .State.Health.Log}}{{printf "\n"}}health exit={{.ExitCode}} output={{printf "%.2000s" .Output}}{{end}}{{end}}' \
+      "${container_ids[@]}"
+  fi
+  return 0
+}
+
 rollback_start() {
+  local stage="${1:-unknown}"
+  startup_diagnostics "$stage" || true
   if ! compose stop; then
     die 'Startup failed and containers could not be stopped. Firewall rule retained.'
   fi
@@ -332,7 +410,7 @@ rollback_start() {
     die 'Startup failed and containers or networks could not be removed. Firewall rule retained.'
   fi
   remove_firewall
-  die 'Startup failed; containers and networks removed, data volumes kept, firewall rule removed.'
+  die "Startup failed at stage '$stage'; containers and networks removed, data volumes kept, firewall rule removed."
 }
 
 verify_runtime_networks() {
@@ -371,25 +449,25 @@ start_stack() {
   ensure_account
   install_firewall
   if ! compose create --no-build; then
-    rollback_start
+    rollback_start compose-create
   fi
   if ! verify_runtime_networks; then
-    rollback_start
+    rollback_start network-validation
   fi
   if ! compose up -d; then
-    rollback_start
+    rollback_start compose-up
   fi
   if ! wait_for_services; then
-    rollback_start
+    rollback_start services-running
   fi
   if ! wait_for_portal; then
-    rollback_start
+    rollback_start portal-ready
   fi
   if ! firewall_rules_present; then
-    rollback_start
+    rollback_start firewall-validation
   fi
   if ! verify_runtime_networks --require-gateway; then
-    rollback_start
+    rollback_start gateway-network-validation
   fi
   note "Open http://$PADO_LOCAL_BIND_IP:$PORT/login from the operator PC ($PADO_OPERATOR_CIDR)."
   compose ps

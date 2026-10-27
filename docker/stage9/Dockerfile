@@ -31,8 +31,11 @@ COPY services/sim_ground/archive.py /app/services/sim_ground/archive.py
 COPY deploy/stage9/dgs_ops_gateway.py /app/deploy/stage9/dgs_ops_gateway.py
 COPY tools/pado_packet_codec.py /app/tools/pado_packet_codec.py
 COPY web /app/web
-# Checkout permissions depend on the host umask. The core rejects group/world
-# writable input; these image-owned catalogs must have a deterministic mode.
-COPY --chmod=0444 interfaces/command_db/commands.json /app/interfaces/command_db/commands.json
-COPY --chmod=0444 interfaces/pado_packets/draft_v0.json /app/interfaces/pado_packets/draft_v0.json
+# Explicitly create searchable parents: read-only file modes must never remove
+# directory traversal for the non-root service user.
+RUN mkdir -p /app/interfaces/command_db /app/interfaces/pado_packets
+COPY interfaces/command_db/commands.json /app/interfaces/command_db/commands.json
+COPY interfaces/pado_packets/draft_v0.json /app/interfaces/pado_packets/draft_v0.json
+RUN chmod 0755 /app /app/interfaces /app/interfaces/command_db /app/interfaces/pado_packets \
+    && chmod 0444 /app/interfaces/command_db/commands.json /app/interfaces/pado_packets/draft_v0.json
 USER 10001:10001
