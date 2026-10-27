@@ -31,6 +31,8 @@ COPY services/sim_ground/archive.py /app/services/sim_ground/archive.py
 COPY deploy/stage9/dgs_ops_gateway.py /app/deploy/stage9/dgs_ops_gateway.py
 COPY tools/pado_packet_codec.py /app/tools/pado_packet_codec.py
 COPY web /app/web
-COPY interfaces/command_db/commands.json /app/interfaces/command_db/commands.json
-COPY interfaces/pado_packets/draft_v0.json /app/interfaces/pado_packets/draft_v0.json
+# Checkout permissions depend on the host umask. The core rejects group/world
+# writable input; these image-owned catalogs must have a deterministic mode.
+COPY --chmod=0444 interfaces/command_db/commands.json /app/interfaces/command_db/commands.json
+COPY --chmod=0444 interfaces/pado_packets/draft_v0.json /app/interfaces/pado_packets/draft_v0.json
 USER 10001:10001

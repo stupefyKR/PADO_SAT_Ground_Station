@@ -106,6 +106,18 @@ class CoreProbeTests(unittest.TestCase):
             source.write_bytes(b"{" + b" " * 4096 + b"}")
             self.assertNotEqual(self.call("mps-catalog", source).returncode, 0)
 
+    def test_mps_catalog_rejects_group_writable_and_accepts_image_read_only_mode(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / "commands.json"
+            source.write_bytes((ROOT / "interfaces/command_db/commands.json").read_bytes())
+            source.chmod(0o664)
+            self.assertNotEqual(self.call("mps-catalog", source).returncode, 0)
+            source.chmod(0o444)
+            valid = self.call("mps-catalog", source)
+            self.assertEqual(valid.returncode, 0, valid.stderr)
+            self.assertEqual(json.loads(valid.stdout), {
+                "version": 1, "command_count": 0, "operational": False})
+
     def test_ros_record_counts_only_validated_simulator_frames(self):
         with tempfile.TemporaryDirectory() as folder:
             record = Path(folder) / "ros.record"

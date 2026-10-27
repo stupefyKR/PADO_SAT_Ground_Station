@@ -72,9 +72,21 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p out/mps-schedules
-          trap 'docker compose -f deploy/stage9/compose.dev.yaml down --volumes --remove-orphans' EXIT
+          command_db_mode="$(stat -c '%a' interfaces/command_db/commands.json)"
+          draft_catalog_mode="$(stat -c '%a' interfaces/pado_packets/draft_v0.json)"
+          cleanup() {
+            chmod "$command_db_mode" interfaces/command_db/commands.json
+            chmod "$draft_catalog_mode" interfaces/pado_packets/draft_v0.json
+            docker compose -f deploy/stage9/compose.dev.yaml down --volumes --remove-orphans
+          }
+          trap cleanup EXIT
           docker compose -f deploy/stage9/compose.dev.yaml config --quiet
+          # Reproduce VM checkouts created with umask 0002. Image catalogs must
+          # stay read-only and readable by the C validator after COPY.
+          chmod 0664 interfaces/command_db/commands.json interfaces/pado_packets/draft_v0.json
           docker compose -f deploy/stage9/compose.dev.yaml build
+          docker compose -f deploy/stage9/compose.dev.yaml run --rm --no-deps mps-core-read \
+            python3 -c 'import json,stat,subprocess; from pathlib import Path; paths=[Path("/app/interfaces/command_db/commands.json"),Path("/app/interfaces/pado_packets/draft_v0.json")]; assert all(stat.S_IMODE(p.stat().st_mode)==0o444 for p in paths); result=json.loads(subprocess.check_output(["/usr/local/bin/gs_stage9_core_probe","mps-catalog",str(paths[0])])); assert result=={"version":1,"command_count":0,"operational":False}; print("Catalog COPY permissions and C read verified")'
           docker compose -f deploy/stage9/compose.dev.yaml up -d --wait --no-deps ros-core-read mps-core-read
           docker compose -f deploy/stage9/compose.dev.yaml run --rm --no-deps ros-api \
             python3 -c 'from pathlib import Path; from services.webapp.core import ros_summary; assert ros_summary(Path("/run/core/core.sock"))["record_state"] == "absent"'
