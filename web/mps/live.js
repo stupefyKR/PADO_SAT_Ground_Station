@@ -96,7 +96,7 @@ function mpsPassPoint(rows, at) {
 function mpsPassSamples(orbit, pass) {
   const aos = pass.aos_utc_s * 1000, los = pass.los_utc_s * 1000;
   const station = orbit.stations?.find((item) => item.id === pass.station_id);
-  const matched = station?.passes?.some((item) =>
+  const matched = station?.passes?.find((item) =>
     Math.abs(Date.parse(item.aos_utc) - aos) <= 1500 &&
     Math.abs(Date.parse(item.los_utc) - los) <= 1500);
   if (orbit.schema !== "fds.orbit-view.v1" || !matched ||
@@ -106,9 +106,22 @@ function mpsPassSamples(orbit, pass) {
     throw new Error("FDS 위치 자료와 선택한 N13 패스가 일치하지 않거나 TLE가 만료됐습니다.");
   }
   const rows = orbit.samples;
-  return { station, rows: [mpsPassPoint(rows, aos),
+  return { station, prediction: matched, rows: [mpsPassPoint(rows, aos),
     ...rows.filter((row) => Date.parse(row[0]) > aos && Date.parse(row[0]) < los),
     mpsPassPoint(rows, los)] };
+}
+
+function mpsPolarEvents(pass, prediction = {}) {
+  const aos = pass.aos_utc_s * 1000, los = pass.los_utc_s * 1000;
+  const candidates = [[Date.parse(prediction.peak_utc), prediction.max_elevation_deg],
+    [pass.peak_utc_s * 1000, pass.max_elevation_deg]];
+  const peak = candidates.find(([at, elevation]) => Number.isFinite(at) &&
+    at >= aos && at <= los && Number.isFinite(elevation) && elevation >= 0 && elevation <= 90);
+  return {aos, los, peak: peak ? {at: peak[0], elevation: peak[1]} : null};
+}
+
+function mpsPolarUtc(at) {
+  return new Date(at).toISOString().slice(0, 19).replace("T", " ") + " UTC";
 }
 
 function mpsGroundContext(orbit, pass) {
@@ -179,12 +192,14 @@ function mpsDrawPass(pass) {
     contextTrack = mpsGroundContext(mpsOrbitView, pass);
   }
   catch (error) { state.textContent = "경로 확인 불가"; note.textContent = error.message; return; }
-  const { station, rows } = geometry;
+  const { station, rows, prediction } = geometry;
+  const events = mpsPolarEvents(pass, prediction);
   state.textContent = `${pass.station_id === "yonsei" ? "연세대" : "항우연"} · ${pass.band} · FDS 확인`;
   const clipped = contextTrack.clippedBefore || contextTrack.clippedAfter ?
     ` · FDS 표본 범위로 ${contextTrack.clippedBefore && contextTrack.clippedAfter ? "양쪽" :
       contextTrack.clippedBefore ? "이전" : "이후"} 궤도 일부만 표시` : "";
-  note.textContent = `AOS ${new Date(pass.aos_utc_s * 1000).toISOString()} · LOS ${new Date(pass.los_utc_s * 1000).toISOString()} · 이전·이후 각 2주기${clipped} · 시험용 근사 안테나 좌표`;
+  note.textContent = `AOS ${mpsPolarUtc(events.aos)} · ${events.peak ?
+    `MAX ${mpsPolarUtc(events.peak.at)} · ${events.peak.elevation.toFixed(1)}° · ` : ""}LOS ${mpsPolarUtc(events.los)} · 이전·이후 각 2주기${clipped} · 시험용 근사 안테나 좌표`;
   const w = ground.width, h = ground.height;
   g.fillStyle = "#0b2331"; g.fillRect(0, 0, w, h);
   const image = document.getElementById("mps-earth-image");
@@ -217,11 +232,17 @@ function mpsDrawPass(pass) {
   const sy = (90 - station.latitude_deg) / 180 * h;
   g.fillStyle = "#71ffcf"; g.beginPath(); g.arc(sx, sy, 6, 0, Math.PI * 2); g.fill();
   g.font = "bold 13px system-ui"; g.fillText(pass.station_id.toUpperCase(), sx + 9, sy - 8);
-  const cx = polar.width / 2, cy = polar.height / 2, radius = Math.min(cx, cy) - 35;
+  const cx = polar.width / 2, cy = (polar.height - 54) / 2;
+  const radius = Math.min(cx - 35, cy - 31);
   p.fillStyle = "#091b2a"; p.fillRect(0, 0, polar.width, polar.height);
   p.strokeStyle = "#45606c"; p.lineWidth = 1;
   for (const elevation of [0, 30, 60]) {
-    p.beginPath(); p.arc(cx, cy, radius * (1 - elevation / 90), 0, Math.PI * 2); p.stroke();
+    const ring = radius * (1 - elevation / 90);
+    p.beginPath(); p.arc(cx, cy, ring, 0, Math.PI * 2); p.stroke();
+    const tx = cx + ring / Math.SQRT2 + 3, ty = cy - ring / Math.SQRT2 - 3;
+    p.fillStyle = "#091b2a"; p.fillRect(tx - 2, ty - 10, 27, 13);
+    p.fillStyle = "#9dbbc9"; p.font = "11px system-ui";
+    p.fillText(`${elevation}°`, tx, ty);
   }
   p.beginPath(); p.moveTo(cx - radius, cy); p.lineTo(cx + radius, cy);
   p.moveTo(cx, cy - radius); p.lineTo(cx, cy + radius); p.stroke();
@@ -229,15 +250,51 @@ function mpsDrawPass(pass) {
   [["N", cx - 5, cy - radius - 8], ["E", cx + radius + 8, cy + 4],
    ["S", cx - 5, cy + radius + 18], ["W", cx - radius - 20, cy + 4]]
     .forEach(([label, x, y]) => p.fillText(label, x, y));
-  p.strokeStyle = "#ffde82"; p.lineWidth = 3; p.beginPath();
-  rows.forEach((row, index) => {
+  const point = (row, elevation) => {
     const { az, el } = mpsObserve(row, station);
-    const distance = radius * (1 - Math.max(0, Math.min(90, el)) / 90);
-    const x = cx + distance * Math.sin(az * Math.PI / 180);
-    const y = cy - distance * Math.cos(az * Math.PI / 180);
-    if (index === 0) p.moveTo(x, y); else p.lineTo(x, y);
+    const distance = radius * (1 - Math.max(0, Math.min(90, elevation ?? el)) / 90);
+    return {x: cx + distance * Math.sin(az * Math.PI / 180),
+      y: cy - distance * Math.cos(az * Math.PI / 180)};
+  };
+  const track = rows.map(row => ({at: Date.parse(row[0]), point: point(row)}));
+  const landmarks = [{label: "AOS", at: events.aos, point: track[0].point},
+    {label: "LOS", at: events.los, point: track.at(-1).point}];
+  if (events.peak) {
+    const peakPoint = point(mpsPassPoint(mpsOrbitView.samples, events.peak.at), events.peak.elevation);
+    const index = track.findIndex(item => item.at === events.peak.at);
+    if (index < 0) track.push({at: events.peak.at, point: peakPoint});
+    else track[index].point = peakPoint;
+    track.sort((a, b) => a.at - b.at);
+    landmarks.push({label: "MAX", at: events.peak.at, point: peakPoint});
+  }
+  p.strokeStyle = "#ffde82"; p.lineWidth = 3; p.beginPath();
+  track.forEach(({point: location}, index) => {
+    if (index === 0) p.moveTo(location.x, location.y); else p.lineTo(location.x, location.y);
   });
   p.stroke();
+  const occupied = [];
+  for (const {label, point: location} of landmarks) {
+    p.fillStyle = label === "MAX" ? "#71ffcf" : "#ffde82";
+    p.beginPath(); p.arc(location.x, location.y, label === "MAX" ? 5 : 4, 0, Math.PI * 2); p.fill();
+    const width = label.length * 8 + 6;
+    const choices = label === "LOS" ? [[8, 19], [-width - 5, 19], [8, -9], [-width - 5, -9]] :
+      [[8, -9], [-width - 5, -9], [8, 19], [-width - 5, 19]];
+    const boxes = choices.map(([dx, dy]) => ({x: Math.max(6, Math.min(polar.width - width - 6, location.x + dx)),
+      y: Math.max(16, Math.min(cy + radius + 17, location.y + dy)), width}));
+    const box = boxes.find(candidate => occupied.every(other => candidate.x + width < other.x ||
+      candidate.x > other.x + other.width || candidate.y < other.y - 15 || candidate.y - 15 > other.y)) || boxes[0];
+    occupied.push(box);
+    p.strokeStyle = "#89aab7"; p.lineWidth = 1; p.beginPath();
+    p.moveTo(location.x, location.y); p.lineTo(box.x + width / 2, box.y - 5); p.stroke();
+    p.fillStyle = "#091b2a"; p.fillRect(box.x - 2, box.y - 12, width + 4, 16);
+    p.fillStyle = "#e1f0f3"; p.font = "bold 11px system-ui"; p.fillText(label, box.x, box.y);
+  }
+  p.font = "12px Consolas,monospace"; p.fillStyle = "#c4dbe4";
+  p.fillText(`AOS  ${mpsPolarUtc(events.aos)}`, 12, polar.height - 43);
+  p.fillStyle = "#8ae3c1";
+  p.fillText(events.peak ? `MAX  ${mpsPolarUtc(events.peak.at)} · ${events.peak.elevation.toFixed(1)}°` :
+    "MAX  정점 자료 대기", 12, polar.height - 25);
+  p.fillStyle = "#c4dbe4"; p.fillText(`LOS  ${mpsPolarUtc(events.los)}`, 12, polar.height - 7);
 }
 
 function mpsSetOrbit(orbit) {

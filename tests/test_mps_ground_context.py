@@ -40,7 +40,7 @@ function orbit(start, end, aos, los, longitude = (index) => -100 + index) {
 
 class CanvasContext {
   constructor() {
-    this.strokes = []; this.path = []; this.lineWidth = 1;
+    this.strokes = []; this.path = []; this.lineWidth = 1; this.texts = []; this.arcs = [];
     this.strokeStyle = '#000';
   }
   beginPath() { this.path = []; }
@@ -51,9 +51,9 @@ class CanvasContext {
   clearRect() {}
   fillRect() {}
   drawImage() {}
-  arc() {}
+  arc(x, y, radius) {this.arcs.push({x, y, radius});}
   fill() {}
-  fillText() {}
+  fillText(text, x, y) {this.texts.push({text, x, y});}
   setLineDash() {}
   save() {}
   restore() {}
@@ -107,6 +107,34 @@ const polarPass = polarContext.strokes.findLast((stroke) => stroke.width === 3);
 assert.equal(polarPass.path.filter(([operation]) => operation === 'L').length,
   context.mpsPassSamples(crossing, choice).rows.length - 1,
   'polar plot remains limited to the selected contact');
+for (const label of ['0°', '30°', '60°', 'AOS', 'LOS'])
+  assert.ok(polarContext.texts.some(entry => entry.text === label), `polar annotation ${label}`);
+assert.ok(polarContext.texts.some(entry => entry.text.includes(
+  stamp(aos).slice(0, 19).replace('T', ' ') + ' UTC')), 'AOS includes exact UTC');
+assert.ok(polarContext.texts.some(entry => entry.text.includes(
+  stamp(los).slice(0, 19).replace('T', ' ') + ' UTC')), 'LOS includes exact UTC');
+
+// Peak events come from FDS, including times between the 60-second samples.
+const peakAt = aos + 45000;
+fullOrbit.stations[0].passes[0].peak_utc = stamp(peakAt);
+fullOrbit.stations[0].passes[0].max_elevation_deg = 62.3;
+const peakChoice = {...choice, peak_utc_s: aos / 1000 + 40, max_elevation_deg: 61};
+assert.equal(context.mpsPolarEvents(peakChoice, fullOrbit.stations[0].passes[0]).peak.at, peakAt);
+assert.equal(context.mpsPolarEvents(peakChoice, {}).peak.elevation, 61, 'N13 peak fallback');
+assert.equal(context.mpsPolarEvents(choice, {peak_utc:stamp(los+1000),max_elevation_deg:85}).peak,
+  null, 'never invent an out-of-contact peak');
+context.mpsSetOrbit(fullOrbit); context.mpsDrawPass(peakChoice);
+assert.ok(polarContext.texts.some(entry => entry.text === 'MAX'));
+assert.ok(polarContext.texts.some(entry => entry.text.includes('62.3°') &&
+  entry.text.includes(stamp(peakAt).slice(0, 19).replace('T', ' ') + ' UTC')));
+const peakMark = polarContext.arcs.findLast(entry => entry.radius === 5);
+assert.ok(Math.abs(Math.hypot(peakMark.x-210,peakMark.y-143)-112*(1-62.3/90)) < 1e-8,
+  'peak mark uses FDS maximum elevation rather than the largest sampled elevation');
+const peakPath = polarContext.strokes.findLast(stroke => stroke.width === 3);
+assert.equal(peakPath.path.filter(([operation]) => operation === 'L').length,
+  context.mpsPassSamples(fullOrbit, peakChoice).rows.length,
+  'insert the peak vertex so its marker lies on the contact path');
+assert.ok(polarContext.texts.every(entry => entry.x >= 0 && entry.x <= 420 && entry.y >= 0 && entry.y < 340));
 const tracks = groundContext.strokes.filter((stroke) =>
   stroke.path.some(([operation]) => operation === 'L') && stroke.width > 1);
 assert.ok(tracks.length >= 2, 'context and selected contact both have visible tracks');

@@ -429,32 +429,61 @@ function drawPolar(canvas, station, pass, now) {
   for (const [label, x, y] of [["N", cx, cy - radius - 11 * scale],
     ["E", cx + radius + 11 * scale, cy], ["S", cx, cy + radius + 11 * scale],
     ["W", cx - radius - 11 * scale, cy]]) context.fillText(label, x, y);
-  context.fillStyle = "#86a9b8"; context.textAlign = "left";
-  context.fillText("30°", cx + radius * 2 / 3 + 3 * scale, cy - 5 * scale);
-  context.fillText("60°", cx + radius / 3 + 3 * scale, cy - 5 * scale);
+  context.fillStyle = "#a0bfcb"; context.textAlign = "left";
+  for (const elevation of [0, 30, 60]) {
+    const distance = radius * (90 - elevation) / 90;
+    context.fillText(`${elevation}°`, cx + distance / Math.SQRT2 + 3 * scale,
+      cy - distance / Math.SQRT2 - 4 * scale);
+  }
   if (!pass) {
     context.fillStyle = "#a9bdc6"; context.textAlign = "center";
     context.fillText("예측 기간 내 PASS 없음", cx, cy + radius / 2);
     return;
   }
-  const point = (time) => {
+  const hasPeak = Number.isFinite(pass.peak) && pass.aos <= pass.peak && pass.peak <= pass.los &&
+    Number.isFinite(pass.max) && pass.max >= 0 && pass.max <= 90;
+  const point = (time, elevation = null) => {
     const observation = stationObservation(station, sampleAt(time).xyz);
-    const distance = radius * (90 - clamp(observation.el, 0, 90)) / 90;
+    const distance = radius * (90 - clamp(elevation ?? observation.el, 0, 90)) / 90;
     return { x: cx + Math.sin(rad(observation.az)) * distance,
       y: cy - Math.cos(rad(observation.az)) * distance };
   };
   const times = [pass.aos];
   for (let t = pass.aos + 30000; t < pass.los; t += 30000) times.push(t);
   times.push(pass.los);
-  const points = times.map(point);
+  if (hasPeak && !times.includes(pass.peak)) times.push(pass.peak);
+  times.sort((a, b) => a - b);
+  const points = times.map(time => point(time, hasPeak && time === pass.peak ? pass.max : null));
   context.strokeStyle = color; context.lineWidth = 2.5 * scale;
   context.beginPath(); context.moveTo(points[0].x, points[0].y);
   for (const p of points.slice(1)) context.lineTo(p.x, p.y);
   context.stroke();
-  for (const [label, p] of [["A", points[0]], ["L", points.at(-1)]]) {
+  const events = [["AOS", points[0], -9], ["LOS", points.at(-1), 11]];
+  if (hasPeak) events.push(["MAX", point(pass.peak, pass.max), -11]);
+  const labelBoxes = [];
+  for (const [label, p, dy] of events) {
     context.fillStyle = color; context.beginPath(); context.arc(p.x, p.y, 3.5 * scale, 0, Math.PI * 2); context.fill();
     context.fillStyle = "#e9f5f6"; context.textAlign = "left";
-    context.fillText(label, p.x + 5 * scale, p.y - 5 * scale);
+    const width = label.length * 6 * scale, height = 12 * scale;
+    const candidates = [[p.x + 6 * scale, p.y + dy * scale],
+      [p.x + 6 * scale, p.y - dy * scale],
+      [p.x - width - 6 * scale, p.y + dy * scale],
+      [p.x - width - 6 * scale, p.y - dy * scale],
+      ...[-28, 28, -44, 44].map(offset => [p.x - width / 2, p.y + offset * scale])];
+    const positions = candidates.map(([x, y]) => {
+      x = clamp(x, 4 * scale, w - width - 4 * scale);
+      y = clamp(y, 8 * scale, h - 8 * scale);
+      return {x, y, left: x - scale, right: x + width + scale,
+        top: y - height / 2 - scale, bottom: y + height / 2 + scale};
+    });
+    const chosen = positions.find(box => labelBoxes.every(previous =>
+      box.right <= previous.left || box.left >= previous.right ||
+      box.bottom <= previous.top || box.top >= previous.bottom)) || positions[0];
+    labelBoxes.push(chosen);
+    context.strokeStyle = "#8eacb9"; context.lineWidth = .7 * scale;
+    context.beginPath(); context.moveTo(p.x, p.y);
+    context.lineTo(clamp(p.x, chosen.left, chosen.right), chosen.y); context.stroke();
+    context.fillText(label, chosen.x, chosen.y);
   }
   if (pass.aos <= now && now < pass.los) {
     const current = point(now);
@@ -500,9 +529,16 @@ function updateOrbitUi() {
     const polar = document.createElement("canvas"); polar.className = "orbit-polar";
     polar.setAttribute("aria-label", `${name.textContent} ${contact ? "현재" : "다음"} PASS 방위각·고각 polar plot`);
     const caption = document.createElement("div"); caption.className = "orbit-polar-caption";
-    const first = document.createElement("span"); first.textContent = "A = AOS · L = LOS";
-    const second = document.createElement("span"); second.textContent = contact ? "● 현재 위치" : "다음 경로";
-    caption.append(first, second);
+    if (next) {
+      const hasPeak = Number.isFinite(next.peak) && next.aos <= next.peak && next.peak <= next.los &&
+        Number.isFinite(next.max) && next.max >= 0 && next.max <= 90;
+      const labels = [`AOS · ${formattedUtc(next.aos)}`,
+        hasPeak ? `MAX ${next.max.toFixed(1)}° · ${formattedUtc(next.peak)}` : "MAX · 정점 자료 없음",
+        `LOS · ${formattedUtc(next.los)}`];
+      for (const text of labels) {
+        const row = document.createElement("span"); row.textContent = text; caption.append(row);
+      }
+    }
     section.append(title, detail, note, polar, caption); stationContainer.append(section);
     drawPolar(polar, station, next, orbitState.time);
   }
