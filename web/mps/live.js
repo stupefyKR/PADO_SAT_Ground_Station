@@ -274,6 +274,10 @@ function mpsRenderSequenceEditor(pass, schedule, session, drafts) {
   let steps = structuredClone(existing?.steps ?? []);
   let savedSteps = JSON.stringify(existing?.steps ?? []);
   let needsReview = existing?.needs_review === true;
+  let legacyTiming = new Set(steps.map(step => step.offset_s)).size > 1;
+  let saving = false;
+  let handingOff = false;
+  const duration = pass.los_utc_s - pass.aos_utc_s;
   const editable = ["planner", "operator", "lead"].includes(session.role) &&
     pass.station_id === "yonsei" && pass.band === "UHF";
   if (pass.station_id !== "yonsei" || pass.band !== "UHF") {
@@ -289,11 +293,6 @@ function mpsRenderSequenceEditor(pass, schedule, session, drafts) {
   mpsDraftCommands.filter((item) => item.fields_defined).forEach((item) =>
     select.add(new Option(`${item.group} · ${item.name}`, item.name)));
   select.disabled = !editable;
-  const offset = document.createElement("input"); offset.type = "number";
-  offset.min = "0"; offset.max = String(pass.los_utc_s - pass.aos_utc_s - 1);
-  offset.step = "1"; offset.value = "0"; offset.disabled = !editable;
-  const offsetLabel = document.createElement("label");
-  offsetLabel.textContent = "AOS 이후 초"; offsetLabel.append(offset);
   const fields = document.createElement("div"); fields.className = "mps-sequence-actions";
   const drawFields = () => {
     fields.replaceChildren();
@@ -304,22 +303,18 @@ function mpsRenderSequenceEditor(pass, schedule, session, drafts) {
       fields.append(label);
     }
     if (command?.name === "hk_dump") {
-      if (offset.value === "0")
-        offset.value = String(Math.min(10, pass.los_utc_s - pass.aos_utc_s - 1));
       const help = document.createElement("p"); help.className = "inspector-note";
-      help.textContent = "두 시각을 0으로 두면 요청 시점의 저장 TM 전체를 받습니다. 기본 AOS + 10초는 비콘 연결을 기다리는 여유입니다.";
+      help.textContent = "두 시각을 0으로 두면 요청 시점의 저장 TM 전체를 받습니다.";
       fields.append(help);
     }
   };
   select.addEventListener("change", drawFields);
-  const add = document.createElement("button"); add.type = "button"; add.textContent = "단계 추가";
+  const add = document.createElement("button"); add.type = "button"; add.textContent = "TC 추가";
   add.disabled = !editable;
   add.addEventListener("click", () => {
     const command = mpsDraftCommands.find((item) => item.name === select.value);
-    const seconds = Number(offset.value);
-    if (!command || !command.fields_defined || !offset.value.trim() || !Number.isInteger(seconds) ||
-        seconds < 0 || seconds >= pass.los_utc_s - pass.aos_utc_s || steps.length >= 64) {
-      showError("명령과 PASS 내부의 실행 오프셋을 확인하세요."); return;
+    if (!command || !command.fields_defined || steps.length >= 64) {
+      showError("명령을 선택하세요. 시퀀스에는 TC를 최대 64개까지 추가할 수 있습니다."); return;
     }
     const parameters = {};
     for (const input of fields.querySelectorAll("input")) {
@@ -337,51 +332,63 @@ function mpsRenderSequenceEditor(pass, schedule, session, drafts) {
       }
       parameters[input.dataset.field] = entry;
     }
-    steps.push({ offset_s: seconds, command_name: command.name, parameters }); draw();
+    steps.push({ offset_s: 0, command_name: command.name, parameters }); draw();
   });
-  form.append(select, offsetLabel, fields, add);
+  form.append(select, fields, add);
   const table = document.createElement("table");
-  table.innerHTML = "<thead><tr><th>#</th><th>AOS + 초</th><th>명령</th><th>인자</th><th>편집</th></tr></thead><tbody></tbody>";
+  table.innerHTML = "<thead><tr><th>순서</th><th>명령</th><th>인자</th><th>편집</th></tr></thead><tbody></tbody>";
   const tbody = table.querySelector("tbody");
+  const timing = document.createElement("div"); timing.className = "mps-sequence-timing";
+  const offset = document.createElement("input"); offset.type = "number";
+  offset.id = "mps-sequence-start-offset";
+  offset.min = "0"; offset.max = String(duration - 1); offset.step = "1";
+  offset.value = String(existing?.steps?.[0]?.offset_s ?? Math.min(10, duration - 1));
+  offset.disabled = !editable;
+  const offsetLabel = document.createElement("label");
+  offsetLabel.textContent = "시퀀스 전체 전송 시작 · AOS 몇 초 후"; offsetLabel.append(offset);
+  const timingUtc = document.createElement("strong"); timingUtc.id = "mps-sequence-start-utc";
+  timingUtc.setAttribute("role", "status");
+  const timingHelp = document.createElement("small");
+  timingHelp.textContent = "이 시각부터 위의 순서대로 보냅니다. 각 TC는 앞선 TC의 ACK 수신 후 전송합니다.";
+  timing.append(offsetLabel, timingUtc, timingHelp);
+  const validOffset = () => /^\d+$/.test(offset.value) && Number.isSafeInteger(Number(offset.value)) &&
+    Number(offset.value) >= 0 && Number(offset.value) < duration;
+  const plannedSteps = () => steps.map(step => ({offset_s: Number(offset.value),
+    command_name: step.command_name, parameters: step.parameters}));
   const note = document.createElement("p"); note.className = "inspector-note";
-  const simUplink = pass.station_id === "yonsei" && pass.band === "UHF";
   const simCommands = new Set(["mm_get_mode", "hk_get", "eps_get_hk", "aocs_get_hk",
     "cs_get_hk", "siren_get_hk", "crest_get_hk", "hk_dump"]);
-  note.textContent = needsReview ?
-    "FDS 일정 갱신으로 PASS가 짧아졌습니다. 범위를 벗어난 실행 오프셋을 수정한 뒤 다시 저장하세요." :
-    simUplink ? "연세대 UHF에서 조회 명령과 저장 TM 요청(hk_dump)을 가상 위성에 전달할 수 있습니다. 실제 TC 승인·운용 송출은 차단됩니다." :
-      "가상 위성 TC 왕복은 연세대 UHF 패스에서만 지원합니다. 이 패스의 시퀀스 초안은 저장할 수 있습니다.";
-  scroll.replaceChildren(form, note, table);
+  scroll.replaceChildren(form, table, timing, note);
   const save = document.createElement("button"); save.type = "button";
-  save.textContent = "시험 시퀀스 저장"; save.disabled = !editable;
+  save.textContent = "시험 시퀀스 저장";
   const handoff = document.createElement("button"); handoff.type = "button";
   handoff.textContent = "ROS 시험 초안으로 전달";
   const handoffStatus = document.createElement("span");
   handoffStatus.className = "mps-handoff-status";
   handoffStatus.setAttribute("role", "status");
   save.addEventListener("click", async () => {
-    save.disabled = true;
+    if (!editable || !validOffset() || saving) return;
+    const submitted = plannedSteps();
+    saving = true; draw();
     try {
       const saved = await api("/api/mps/test-sequences", {
         method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": session.csrf },
         body: JSON.stringify({ pass_id: pass.pass_id, schedule_sha256: schedule.schedule_sha256,
-          expected_revision: revision, steps })
+          expected_revision: revision, steps: submitted })
       });
       revision = saved.revision;
       needsReview = false;
+      legacyTiming = false;
       savedSteps = JSON.stringify(saved.steps);
       handoffStatus.textContent = "";
-      note.textContent = simUplink ?
-        "연세대 UHF에서 조회 명령과 저장 TM 요청(hk_dump)을 가상 위성에 전달할 수 있습니다. 실제 TC 승인·운용 송출은 차단됩니다." :
-        "가상 위성 TC 왕복은 연세대 UHF 패스에서만 지원합니다. 이 패스의 시퀀스 초안은 저장할 수 있습니다.";
       const position = drafts.findIndex((item) => item.pass_id === pass.pass_id);
       if (position < 0) drafts.push(saved); else drafts[position] = saved;
-      document.getElementById("api-error").hidden = true; draw();
+      document.getElementById("api-error").hidden = true;
     } catch (_) { showError("저장 실패: 일정 또는 리비전 변경과 인자 범위를 확인하세요."); }
-    finally { save.disabled = !editable; }
+    finally { saving = false; draw(); }
   });
   handoff.addEventListener("click", async () => {
-    handoff.disabled = true;
+    handingOff = true; draw();
     handoffStatus.textContent = "ROS에 시험 초안을 전달하는 중입니다.";
     try {
       await api("/api/mps/test-sequences/handoff", {
@@ -396,23 +403,32 @@ function mpsRenderSequenceEditor(pass, schedule, session, drafts) {
     } catch (error) {
       handoffStatus.textContent = "전달 실패";
       showError(`ROS 전달 실패: ${error.message}`);
-    } finally { draw(); }
+    } finally { handingOff = false; draw(); }
   });
   actions.replaceChildren(save, handoff, handoffStatus);
   const draw = () => {
     tbody.replaceChildren();
+    const valid = validOffset();
+    const startLabel = valid ? `AOS ${offset.value}초 후 · ${new Date((pass.aos_utc_s + Number(offset.value)) * 1000).toISOString().replace(".000Z", "Z")} UTC` :
+      "PASS 내부의 시작 초를 입력하세요";
+    timingUtc.textContent = startLabel;
     value("mps-review-commands", steps.length ? steps.map((item) => item.command_name).join(" → ") : "미등록");
     value("mps-review-revision", revision || "미저장");
-    value("mps-review-summary", `${pass.pass_id} · 시험 단계 ${steps.length}개 · 충돌 검사·승인·송출 차단`);
-    tag.textContent = needsReview ? "시각 재검토 필요" :
+    value("mps-review-summary", `${pass.pass_id} · TC ${steps.length}개 · ${startLabel} · 입력 순서대로 전송`);
+    note.textContent = legacyTiming ?
+      "기존 초안은 TC마다 시작 시각이 다릅니다. 전체 시작 시각을 확인하고 다시 저장하면 한 시각에서 순차 전송하는 시퀀스로 바뀝니다. 기존 예약은 변경되지 않습니다." :
+      needsReview ? "FDS 일정이 갱신되었습니다. 전체 전송 시작 시각을 확인한 뒤 다시 저장하세요." :
+      "한 번의 예약으로 시퀀스 전체를 전송합니다. 실제 TC 승인·운용 송출은 연결되지 않았습니다.";
+    tag.textContent = legacyTiming ? "전체 시작 시각 저장 필요" : needsReview ? "시각 재검토 필요" :
       revision ? `시험 초안 · 리비전 ${revision}` : "새 시험 초안";
-    tag.className = needsReview ? "tag warning" : "tag neutral";
-    handoff.disabled = !editable || !simUplink || !revision || !steps.length || needsReview ||
-      steps.some((step) => !simCommands.has(step.command_name)) ||
-      JSON.stringify(steps) !== savedSteps;
+    tag.className = needsReview || legacyTiming ? "tag warning" : "tag neutral";
+    save.disabled = !editable || !valid || saving;
+    handoff.disabled = !editable || !revision || !steps.length || needsReview || legacyTiming ||
+      !valid || saving || handingOff || steps.some((step) => !simCommands.has(step.command_name)) ||
+      JSON.stringify(plannedSteps()) !== savedSteps;
     steps.forEach((step, index) => {
       const row = document.createElement("tr");
-      [index + 1, step.offset_s, step.command_name,
+      [index + 1, step.command_name,
         Object.entries(step.parameters).map(([key, data]) => `${key}=${data}`).join(", ") || "없음"]
         .forEach((item) => { const cell = document.createElement("td"); cell.textContent = String(item); row.append(cell); });
       const cell = document.createElement("td");
@@ -420,17 +436,18 @@ function mpsRenderSequenceEditor(pass, schedule, session, drafts) {
         const move = document.createElement("button"); move.type = "button";
         move.textContent = label;
         move.setAttribute("aria-label", `${step.command_name} ${label === "↑" ? "위로" : "아래로"}`);
-        move.disabled = !editable || next < 0 || next >= steps.length;
+        move.disabled = !editable || next < 0 || next >= steps.length || saving;
         move.addEventListener("click", () => {
           [steps[index], steps[next]] = [steps[next], steps[index]]; draw();
         });
         cell.append(move);
       }
       const remove = document.createElement("button"); remove.type = "button";
-      remove.textContent = "제거"; remove.disabled = !editable;
+      remove.textContent = "제거"; remove.disabled = !editable || saving;
       remove.addEventListener("click", () => { steps.splice(index, 1); draw(); });
       cell.append(remove); row.append(cell); tbody.append(row);
     });
   };
+  offset.addEventListener("input", draw);
   draw();
 }

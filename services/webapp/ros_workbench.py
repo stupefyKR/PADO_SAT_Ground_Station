@@ -209,6 +209,11 @@ class RosDraftStore:
                         "payload TEXT NOT NULL, imported_by TEXT NOT NULL, "
                         "imported_at INTEGER NOT NULL, "
                         "UNIQUE(pass_id,schedule_sha256,revision))")
+        self.db.execute("CREATE TABLE IF NOT EXISTS sim_reservation_batches ("
+                        "id INTEGER PRIMARY KEY, sha256 TEXT NOT NULL "
+                        "REFERENCES sim_sequences(sha256), target_utc_s INTEGER NOT NULL, "
+                        "created_by TEXT NOT NULL, created_at INTEGER NOT NULL, "
+                        "step_count INTEGER NOT NULL, stop_reason TEXT, blocked_by_step_id INTEGER)")
         self.db.execute("CREATE TABLE IF NOT EXISTS sim_reservations ("
                         "id INTEGER PRIMARY KEY, sha256 TEXT NOT NULL REFERENCES sim_sequences(sha256), "
                         "step_id INTEGER NOT NULL, target_utc_s INTEGER NOT NULL, "
@@ -217,10 +222,18 @@ class RosDraftStore:
                         "('SCHEDULED','SENDING','ACKED','REJECTED','TIMEOUT','SEND_FAILED',"
                         "'MISSED','UNKNOWN','CANCELLED')), "
                         "ack TEXT, finished_at INTEGER)")
+        # Existing volumes keep every reservation. Only new whole-sequence
+        # reservations are associated with an ACK-ordered batch.
+        columns = {row[1] for row in self.db.execute("PRAGMA table_info(sim_reservations)")}
+        if "batch_id" not in columns:
+            self.db.execute("ALTER TABLE sim_reservations ADD COLUMN batch_id INTEGER "
+                            "REFERENCES sim_reservation_batches(id)")
         self.db.execute("CREATE UNIQUE INDEX IF NOT EXISTS sim_reservations_one_active "
                         "ON sim_reservations(sha256,step_id) WHERE status!='CANCELLED'")
         self.db.execute("CREATE INDEX IF NOT EXISTS sim_reservations_due "
                         "ON sim_reservations(status,target_utc_s)")
+        self.db.execute("CREATE INDEX IF NOT EXISTS sim_reservations_batch_order "
+                        "ON sim_reservations(batch_id,step_id)")
         self.db.execute("CREATE TABLE IF NOT EXISTS sim_tm_requests ("
                         "id INTEGER PRIMARY KEY, created_by TEXT NOT NULL, "
                         "created_at INTEGER NOT NULL, status TEXT NOT NULL CHECK(status IN "
@@ -230,10 +243,29 @@ class RosDraftStore:
         # automatically, because an ACK could have been lost on restart.
         self.db.execute("UPDATE sim_reservations SET status='UNKNOWN',finished_at=? "
                         "WHERE status='SENDING'", (int(time.time()),))
+        self._stop_failed_batches_locked(int(time.time()))
         self.db.execute("UPDATE sim_tm_requests SET status='UNKNOWN',finished_at=? "
                         "WHERE status='SENDING'", (int(time.time()),))
         self.db.commit()
         self.lock = threading.Lock()
+
+    def _stop_batch_locked(self, batch_id: int, reason: str,
+                           step_id: int | None, now_s: int) -> int:
+        """Retain the first reason and cancel only commands not yet sent."""
+        self.db.execute("UPDATE sim_reservation_batches SET stop_reason=?,blocked_by_step_id=? "
+                        "WHERE id=? AND stop_reason IS NULL", (reason, step_id, batch_id))
+        return self.db.execute("UPDATE sim_reservations SET status='CANCELLED',finished_at=? "
+                               "WHERE batch_id=? AND status='SCHEDULED'",
+                               (now_s, batch_id)).rowcount
+
+    def _stop_failed_batches_locked(self, now_s: int) -> None:
+        rows = self.db.execute(
+            "SELECT batch_id,step_id,status FROM sim_reservations "
+            "WHERE batch_id IS NOT NULL AND status IN "
+            "('REJECTED','TIMEOUT','SEND_FAILED','MISSED','UNKNOWN','CANCELLED') "
+            "ORDER BY id").fetchall()
+        for batch_id, step_id, status in rows:
+            self._stop_batch_locked(batch_id, status, step_id, now_s)
 
     def close(self) -> None:
         with self.lock:
@@ -270,9 +302,21 @@ class RosDraftStore:
         if not _integer(now_s, 1, 9007199254740991):
             raise DraftError("invalid_sim_clock")
         with self.lock, self.db:
+            # Connection.__enter__ does not start a transaction. Acquire the
+            # write reservation before any transmitter-state decision reads,
+            # so another worker cannot claim a different queue between them.
+            self.db.execute("BEGIN IMMEDIATE")
             self.db.execute("UPDATE sim_tm_requests SET status='MISSED',finished_at=? "
                             "WHERE status='QUEUED' AND created_at<?",
                             (now_s, now_s - SIM_SEND_GRACE_S))
+            busy = self.db.execute("SELECT 1 FROM sim_reservations AS r "
+                "WHERE r.status='SENDING' OR (r.batch_id IS NOT NULL AND "
+                "r.status='ACKED' AND EXISTS (SELECT 1 FROM sim_reservations AS n "
+                "WHERE n.batch_id=r.batch_id AND n.status='SCHEDULED')) LIMIT 1").fetchone()
+            immediate_sending = self.db.execute("SELECT 1 FROM sim_tm_requests "
+                "WHERE status='SENDING' LIMIT 1").fetchone()
+            if busy or immediate_sending:
+                return None
             row = self.db.execute("SELECT id,created_at FROM sim_tm_requests "
                                   "WHERE status='QUEUED' ORDER BY id LIMIT 1").fetchone()
             if row is None:
@@ -429,17 +473,95 @@ class RosDraftStore:
         with self.lock:
             rows = self.db.execute(
                 "SELECT r.id,r.sha256,r.step_id,r.target_utc_s,r.created_by,r.status,"
-                "r.ack,s.payload FROM sim_reservations AS r JOIN sim_sequences AS s "
-                "ON r.sha256=s.sha256 ORDER BY r.id DESC LIMIT 128").fetchall()
+                "r.ack,s.payload,r.batch_id,b.step_count,b.stop_reason,b.blocked_by_step_id "
+                "FROM sim_reservations AS r JOIN sim_sequences AS s ON r.sha256=s.sha256 "
+                "LEFT JOIN sim_reservation_batches AS b ON b.id=r.batch_id "
+                "ORDER BY r.id DESC LIMIT 128").fetchall()
         result = []
-        for ident, digest, step_id, target, actor, status, ack, payload in rows:
+        for (ident, digest, step_id, target, actor, status, ack, payload,
+             batch_id, batch_size, stop_reason, blocked_by_step_id) in rows:
             sequence = json.loads(payload)
             step = next(item for item in sequence["steps"] if item["step_id"] == step_id)
             result.append({"id": ident, "sha256": digest, "step_id": step_id,
                            "target_utc_s": target, "created_by": actor,
                            "status": status, "command_name": step["command_name"],
-                           "ack": json.loads(ack) if ack else None})
+                           "ack": json.loads(ack) if ack else None,
+                           "batch_id": batch_id, "batch_size": batch_size or 1,
+                           "start_offset_s": target-sequence["aos_utc_s"],
+                           "batch_stop_reason": stop_reason,
+                           "blocked_by_step_id": blocked_by_step_id})
         return result
+
+    def reserve_sim_batch(self, sha256: str, actor: str) -> dict:
+        """Reserve one shared AOS-relative start, preserving command list order.
+
+        The existing v1 envelope retains offset_s on every command for old
+        readers. A batch requires those values to agree; it never silently
+        changes previously saved command times.
+        """
+        if not isinstance(sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", sha256) or \
+                not isinstance(actor, str) or not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", actor):
+            raise DraftError("invalid_sim_reservation")
+        with self.lock, self.db:
+            row = self.db.execute("SELECT payload FROM sim_sequences WHERE sha256=?",
+                                  (sha256,)).fetchone()
+            if row is None:
+                raise DraftError("unknown_sim_sequence")
+            sequence = json.loads(row[0])
+            steps = sequence["steps"]
+            if (sequence["station_id"] != "yonsei" or sequence["band"] != "UHF" or
+                    not steps or [step["step_id"] for step in steps] != list(range(1,len(steps)+1))):
+                raise DraftError("invalid_sim_reservation")
+            offsets = {step["offset_s"] for step in steps}
+            if len(offsets) != 1:
+                raise DraftError("sim_sequence_mixed_start")
+            offset = steps[0]["offset_s"]
+            target = sequence["aos_utc_s"] + offset
+            now_s = int(time.time())
+            if target <= now_s or target < sequence["aos_utc_s"] or target >= sequence["los_utc_s"]:
+                raise DraftError("past_sim_reservation")
+            existing = self.db.execute("SELECT 1 FROM sim_reservations "
+                "WHERE sha256=? AND status!='CANCELLED' LIMIT 1", (sha256,)).fetchone()
+            if existing:
+                raise DraftError("sim_already_reserved")
+            try:
+                cursor = self.db.execute("INSERT INTO sim_reservation_batches "
+                    "(sha256,target_utc_s,created_by,created_at,step_count) VALUES (?,?,?,?,?)",
+                    (sha256,target,actor,now_s,len(steps)))
+                batch_id = cursor.lastrowid
+                reservations = []
+                for step in steps:
+                    cursor = self.db.execute("INSERT INTO sim_reservations "
+                        "(sha256,step_id,target_utc_s,created_by,created_at,status,batch_id) "
+                        "VALUES (?,?,?,?,?,'SCHEDULED',?)",
+                        (sha256,step["step_id"],target,actor,now_s,batch_id))
+                    reservations.append({"id":cursor.lastrowid,"sha256":sha256,
+                        "step_id":step["step_id"],"target_utc_s":target,
+                        "created_by":actor,"status":"SCHEDULED",
+                        "command_name":step["command_name"],"ack":None,
+                        "batch_id":batch_id,"batch_size":len(steps),
+                        "start_offset_s":offset,"batch_stop_reason":None,
+                        "blocked_by_step_id":None})
+            except sqlite3.IntegrityError as exc:
+                raise DraftError("sim_already_reserved") from exc
+            return {"batch_id":batch_id,"sha256":sha256,"target_utc_s":target,
+                    "start_offset_s":offset,"count":len(steps),"reservations":reservations}
+
+    def cancel_sim_batch(self, batch_id: int, actor: str) -> dict:
+        if not _integer(batch_id, 1, 0x7fffffffffffffff) or \
+                not isinstance(actor, str) or not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", actor):
+            raise DraftError("invalid_sim_reservation")
+        with self.lock, self.db:
+            row = self.db.execute("SELECT created_by FROM sim_reservation_batches WHERE id=?",
+                                  (batch_id,)).fetchone()
+            if row is None or row[0] != actor:
+                raise DraftError("sim_not_cancellable")
+            count = self.db.execute("SELECT COUNT(*) FROM sim_reservations "
+                "WHERE batch_id=? AND status='SCHEDULED'",(batch_id,)).fetchone()[0]
+            if not count:
+                raise DraftError("sim_not_cancellable")
+            self._stop_batch_locked(batch_id,"OPERATOR_CANCELLED",None,int(time.time()))
+            return {"status":"CANCELLED","batch_id":batch_id,"count":count}
 
     def n10_test_ack_items(self) -> list[dict]:
         """Project only received simulator ACKs for an MPS read-only view.
@@ -515,6 +637,17 @@ class RosDraftStore:
                 not isinstance(actor, str) or not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", actor):
             raise DraftError("invalid_sim_reservation")
         with self.lock, self.db:
+            batch = self.db.execute("SELECT batch_id FROM sim_reservations "
+                                    "WHERE id=? AND created_by=?",
+                                    (reservation_id, actor)).fetchone()
+            if batch is not None and batch[0] is not None:
+                # An older client cancelling one row must not leave a batch
+                # that skips the cancelled predecessor and continues sending.
+                count = self._stop_batch_locked(batch[0],"OPERATOR_CANCELLED",None,
+                                                int(time.time()))
+                if not count:
+                    raise DraftError("sim_not_cancellable")
+                return
             result = self.db.execute(
                 "UPDATE sim_reservations SET status='CANCELLED',finished_at=? "
                 "WHERE id=? AND status='SCHEDULED' AND created_by=?",
@@ -527,20 +660,60 @@ class RosDraftStore:
         if not _integer(now_s, 1, 9007199254740991):
             raise DraftError("invalid_sim_clock")
         with self.lock, self.db:
+            self.db.execute("BEGIN IMMEDIATE")
             while True:
+                # A claimed batch command owns the transmitter until its
+                # correlated outcome is recorded, including across workers.
+                if self.db.execute("SELECT 1 FROM sim_reservations "
+                    "WHERE batch_id IS NOT NULL AND status='SENDING' LIMIT 1").fetchone():
+                    return None
+                if self.db.execute("SELECT 1 FROM sim_tm_requests "
+                    "WHERE status='SENDING' LIMIT 1").fetchone():
+                    return None
+                active = self.db.execute("SELECT b.id FROM sim_reservation_batches AS b "
+                    "WHERE EXISTS (SELECT 1 FROM sim_reservations AS p WHERE p.batch_id=b.id "
+                    "AND p.status='ACKED') AND EXISTS (SELECT 1 FROM sim_reservations AS n "
+                    "WHERE n.batch_id=b.id AND n.status='SCHEDULED') "
+                    "ORDER BY b.target_utc_s,b.id LIMIT 1").fetchone()
+                active_id = active[0] if active else None
                 row = self.db.execute(
-                    "SELECT r.id,r.sha256,r.step_id,r.target_utc_s,s.payload "
+                    "SELECT r.id,r.sha256,r.step_id,r.target_utc_s,s.payload,r.batch_id "
                     "FROM sim_reservations AS r JOIN sim_sequences AS s ON r.sha256=s.sha256 "
                     "WHERE r.status='SCHEDULED' AND r.target_utc_s<=? "
-                    "ORDER BY r.target_utc_s,r.step_id,r.id LIMIT 1", (now_s,)).fetchone()
+                    "AND (r.batch_id IS NULL OR NOT EXISTS (SELECT 1 FROM sim_reservations AS p "
+                    "WHERE p.batch_id=r.batch_id AND p.step_id<r.step_id "
+                    "AND p.status IN ('SCHEDULED','SENDING'))) "
+                    "AND (? IS NULL OR r.batch_id=?) "
+                    "ORDER BY r.target_utc_s,CASE WHEN r.batch_id IS NULL THEN 0 ELSE "
+                    "(SELECT MIN(f.id) FROM sim_reservations AS f WHERE f.batch_id=r.batch_id) END,"
+                    "r.step_id,r.id LIMIT 1",
+                    (now_s,active_id,active_id)).fetchone()
                 if row is None:
                     return None
-                ident, digest, step_id, target, payload = row
+                ident, digest, step_id, target, payload, batch_id = row
                 sequence = json.loads(payload)
-                if now_s >= sequence["los_utc_s"] or now_s - target > SIM_SEND_GRACE_S:
+                if batch_id is not None:
+                    # New batches also wait for an older individual command.
+                    # The individual-reservation API retains its legacy order.
+                    if self.db.execute("SELECT 1 FROM sim_reservations "
+                        "WHERE status='SENDING' LIMIT 1").fetchone():
+                        return None
+                    failed = self.db.execute("SELECT step_id,status FROM sim_reservations "
+                        "WHERE batch_id=? AND step_id<? AND status!='ACKED' "
+                        "ORDER BY step_id LIMIT 1", (batch_id,step_id)).fetchone()
+                    if failed:
+                        self._stop_batch_locked(batch_id,failed[1],failed[0],now_s)
+                        continue
+                # Only the first command has a start-time grace period. Later
+                # commands may be delayed by predecessor ACKs, but never cross LOS.
+                start_expired = (batch_id is None or step_id == 1) and \
+                    now_s-target > SIM_SEND_GRACE_S
+                if now_s >= sequence["los_utc_s"] or start_expired:
                     self.db.execute("UPDATE sim_reservations SET status='MISSED',"
                                     "finished_at=? WHERE id=? AND status='SCHEDULED'",
                                     (now_s, ident))
+                    if batch_id is not None:
+                        self._stop_batch_locked(batch_id,"MISSED",step_id,now_s)
                     continue
                 step = next(item for item in sequence["steps"] if item["step_id"] == step_id)
                 changed = self.db.execute(
@@ -557,7 +730,8 @@ class RosDraftStore:
                         "aos_utc_s": sequence["aos_utc_s"],
                         "los_utc_s": sequence["los_utc_s"],
                         "schedule_sha256": sequence["schedule_sha256"],
-                        "revision": sequence["revision"]}
+                        "revision": sequence["revision"],"batch_id":batch_id,
+                        "start_offset_s":target-sequence["aos_utc_s"]}
 
     def finish_sim(self, reservation_id: int, status: str,
                    ack: dict | None = None) -> dict:
@@ -600,6 +774,10 @@ class RosDraftStore:
                             "WHERE id=? AND status='SENDING'",
                             (status, json.dumps(ack, separators=(",", ":")) if ack else None,
                              int(time.time()), reservation_id))
+            batch = self.db.execute("SELECT batch_id FROM sim_reservations WHERE id=?",
+                                    (reservation_id,)).fetchone()[0]
+            if batch is not None and status != "ACKED":
+                self._stop_batch_locked(batch,status,step_id,int(time.time()))
             return {"id": reservation_id, "sha256": digest, "step_id": step_id,
                     "target_utc_s": target, "created_by": actor, "status": status,
                     "command_name": step["command_name"], "ack": ack}

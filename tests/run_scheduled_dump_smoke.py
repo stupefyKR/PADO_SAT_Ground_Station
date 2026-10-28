@@ -106,7 +106,8 @@ def run_smoke(base: Path) -> dict:
     errors = []
     commands = []
     stats = {"queued": 0, "sent_pdus": 0, "pending": 0, "sample_ticks": 0,
-             "transfer_active": False}
+             "transfer_active": False, "first_tm_sent_ms": None,
+             "tm_sent_before_dump": False}
     satellite, ground = socket.socketpair()
     satellite.settimeout(3)
     ground.settimeout(3)
@@ -153,11 +154,18 @@ def run_smoke(base: Path) -> dict:
                         break
                     if not packet.startswith(b"PSR1"):
                         decoded = decode(packet)
-                        commands.append({"name": decoded["name"], "utc_ms": decoded["utc_ms"],
+                        commands.append({"name": decoded["name"], "id": decoded["id"],
+                                         "sequence": decoded["sequence"], "utc_ms": decoded["utc_ms"],
                                          "received_ms": int(time.time() * 1000)})
                     session.handle_uplink(packet, satellite, gate, now_ms=int(time.time() * 1000))
-                stats["sent_pdus"] += session.flush_requested(
+                sent = session.flush_requested(
                     satellite, gate, clock_ms=lambda: int(time.time() * 1000))
+                if sent:
+                    if stats["first_tm_sent_ms"] is None:
+                        stats["first_tm_sent_ms"] = int(time.time() * 1000)
+                    if not any(command["name"] == "hk_dump" for command in commands):
+                        stats["tm_sent_before_dump"] = True
+                stats["sent_pdus"] += sent
                 stats["pending"] = spool.pending_count()
                 stats["transfer_active"] = session.dump_window is not None
         except Exception as error:
@@ -225,17 +233,23 @@ def run_smoke(base: Path) -> dict:
             assert listed["passes"][0]["aos_utc_s"] == aos_s
             reference = {"pass_id": schedule["passes"][0]["pass_id"],
                          "schedule_sha256": schedule["schedule_sha256"], "expected_revision": 1}
+            command_order = ["mm_get_mode", "eps_get_hk", "hk_dump"]
             _, saved = request("/api/mps/test-sequences", {**reference,
                 "expected_revision": 0, "steps": [{"offset_s": target_s - aos_s,
-                    "command_name": "hk_dump", "parameters": {
-                        "start_utc_ms": 0, "end_utc_ms": 0}}]}, authorized)
+                    "command_name": name, "parameters": {
+                        "start_utc_ms": 0, "end_utc_ms": 0} if name == "hk_dump" else {}}
+                    for name in command_order]}, authorized)
             assert saved["revision"] == 1
             _, handoff = request("/api/mps/test-sequences/handoff", reference, authorized)
-            assert handoff["steps"][0]["command_name"] == "hk_dump"
-            _, reservation = request("/api/ros/test-sim-reservations", {
-                "sha256": handoff["sha256"], "step_id": 1}, authorized)
-            assert reservation["status"] == "SCHEDULED"
-            assert reservation["target_utc_s"] == target_s
+            assert [step["command_name"] for step in handoff["steps"]] == command_order
+            _, batch = request("/api/ros/test-sim-reservations", {
+                "sha256": handoff["sha256"]}, authorized)
+            reservations = batch["reservations"]
+            assert batch["count"] == len(command_order)
+            assert batch["target_utc_s"] == target_s
+            assert [item["step_id"] for item in reservations] == [1, 2, 3]
+            assert all(item["status"] == "SCHEDULED" and item["target_utc_s"] == target_s
+                       and item["batch_id"] == batch["batch_id"] for item in reservations)
             assert time.time() < aos_s, "test setup consumed pre-AOS observation window"
             tc = encode_tc("hk_dump", 500, int(time.time() * 1000),
                            {"start_utc_ms": 0, "end_utc_ms": 0})
@@ -250,26 +264,40 @@ def run_smoke(base: Path) -> dict:
             assert commands == [], commands
             assert not snapshot_path.exists(), "TM arrived before scheduled command"
             _, before = request("/api/ros/test-sim-reservations", headers=cookie)
-            assert before["items"][0]["status"] == "SCHEDULED"
+            assert len(before["items"]) == len(command_order)
+            assert all(item["status"] == "SCHEDULED" for item in before["items"])
             _, beacon = request("/api/ros/test-beacon", headers=cookie)
             assert beacon["type"] == "TEST_ONLY_BEACON"
 
             def acked():
                 _, result = request("/api/ros/test-sim-reservations", headers=cookie)
-                item = next(item for item in result["items"] if item["id"] == reservation["id"])
-                assert item["status"] not in ("REJECTED", "SEND_FAILED", "TIMEOUT", "MISSED"), item
-                return item if item["status"] == "ACKED" else None
+                items = sorted((item for item in result["items"]
+                    if item["batch_id"] == batch["batch_id"]), key=lambda item: item["step_id"])
+                assert len(items) == len(command_order)
+                assert all(item["status"] not in ("REJECTED", "SEND_FAILED", "TIMEOUT",
+                                                 "MISSED", "CANCELLED", "UNKNOWN")
+                           for item in items), items
+                return items if all(item["status"] == "ACKED" for item in items) else None
 
-            completed = _wait(acked, 6, "scheduled dump did not ACK")
+            completed = _wait(acked, 8, "ordered sequence did not ACK")
             def snapshot_ready():
                 assert not errors, errors
                 return snapshot_path.exists()
             _wait(snapshot_ready, 10, "TM snapshot not published")
             _, snapshot = request("/api/ros/test-tm-snapshot", headers=cookie)
-            assert len(commands) == 1 and commands[0]["name"] == "hk_dump", commands
-            assert target_s * 1000 <= commands[0]["received_ms"] < los_s * 1000
-            assert completed["ack"]["command_id"] == 4116
-            assert completed["ack"]["result"] == 0
+            assert [command["name"] for command in commands] == command_order, commands
+            assert all(target_s * 1000 <= command["received_ms"] < los_s * 1000
+                       for command in commands)
+            assert all(left["received_ms"] <= right["received_ms"]
+                       for left, right in zip(commands, commands[1:]))
+            assert not stats["tm_sent_before_dump"]
+            assert stats["first_tm_sent_ms"] >= commands[-1]["received_ms"]
+            for command, item in zip(commands, completed):
+                assert item["ack"]["command_id"] == command["id"]
+                assert item["ack"]["command_sequence"] == command["sequence"]
+                assert item["ack"]["result"] == 0
+                assert item["target_utc_s"] == target_s
+                assert item["start_offset_s"] == target_s - aos_s
             assert snapshot["attitude"]["frame"] == "SIM_BODY_TO_ITRF_NADIR"
             sample_counts = {row["id"]: len(row["samples"]) for row in snapshot["sensors"]}
             assert min(sample_counts.values()) >= stats["sample_ticks"], sample_counts
@@ -292,7 +320,9 @@ def run_smoke(base: Path) -> dict:
             assert full_hk["full_hk"]["parameters"]
             _, feedback = request("/api/mps/test-ros-feedback", headers=cookie)
             assert feedback["bus_soh_state"] == "CURRENT", feedback
-            assert feedback["ack_items"][0]["ack"]["command_id"] == 4116, feedback
+            assert {item["command_name"] for item in feedback["ack_items"]} == set(command_order), feedback
+            assert {item["ack"]["command_sequence"] for item in feedback["ack_items"]} == {
+                command["sequence"] for command in commands}, feedback
 
             _wait(lambda: time.time() >= los_s + 0.05,
                   max(1, los_s - time.time() + 1), "LOS did not arrive")
@@ -304,14 +334,19 @@ def run_smoke(base: Path) -> dict:
                 assert "outside Yonsei UHF contact" in str(error), error
             else:
                 raise AssertionError("post-LOS TC was accepted")
-            assert len(commands) == 1, commands
+            assert [command["name"] for command in commands] == command_order, commands
             assert stats["pending"] >= 3, stats
             assert not errors, errors
             report = {"schema": "pado.scheduled-tm-smoke.v1", "result": "PASS",
                       "non_operational": True, "schedule_source": "short synthetic PASS fixture",
-                      "mps_revision": saved["revision"], "reservation_status": completed["status"],
+                      "mps_revision": saved["revision"], "reservation_status": "ACKED",
+                      "batch_id": batch["batch_id"], "batch_size": batch["count"],
+                      "start_offset_s": target_s - aos_s,
+                      "reservation_statuses": [item["status"] for item in completed],
                       "aos_utc": _utc(aos_s), "target_utc": _utc(target_s), "los_utc": _utc(los_s),
-                      "commands_received": commands, "ack": completed["ack"],
+                      "commands_received": commands, "ack": completed[-1]["ack"],
+                      "acks": [item["ack"] for item in completed],
+                      "ordered_sequence_verified": True, "no_tm_before_dump": True,
                       "pre_aos_blocked": True, "no_tm_before_tc": True,
                       "post_los_blocked": True, "sensor_sample_counts": sample_counts,
                       "n11_pairs": n11_pairs, "sent_pdus": stats["sent_pdus"],

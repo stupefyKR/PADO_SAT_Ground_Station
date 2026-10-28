@@ -70,13 +70,14 @@
 .sensor-matrix .sensor-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#e2eef2;font-size:.71rem}
 .sensor-matrix .sensor-value{font:700 .73rem Consolas,monospace;color:#c9e9eb}.sensor-matrix .sensor-group,.sensor-matrix .sensor-state{font-size:.62rem}
 .sensor-matrix .sensor-state{text-align:right}.sensor-matrix .sensor-state.alert{color:#f2ba8c}
-.sensor-sparkline{grid-column:1/-1;width:100%;height:76px;margin-top:3px;overflow:visible}
+.sensor-sparkline{grid-column:1/-1;width:100%;height:108px;margin-top:3px;overflow:visible}
 .sparkline-limit{fill:#22473e;opacity:.5}.sparkline-value{fill:none;stroke:#7bd0db;stroke-width:1.5;vector-effect:non-scaling-stroke}.sparkline-grid{fill:none;stroke:#244250;stroke-width:1;stroke-dasharray:3 4}
 .sensor-chart-hint{grid-column:1/-1;color:#6e9bab;font-size:.63rem;padding-top:7px}.sensor-no-match{grid-column:1/-1;padding:20px}
 .selected-trend{margin-top:12px;border:1px solid #294555;background:#102330}.selected-trend>summary{padding:12px 15px;cursor:pointer;color:#b8d3dd;font-size:.73rem}.selected-trend>.panel{border:0}
 .ros-overview-bottom{grid-template-columns:minmax(250px,.75fr) minmax(420px,1.5fr);gap:14px;margin-top:14px}
 .ros-overview-bottom .current-alerts{min-height:90px;max-height:210px;overflow:auto;padding:12px 14px}.ros-overview-bottom .alarm-panel .table-scroll{max-height:240px}
 .spacecraft-events-panel{margin-top:14px}.spacecraft-events-panel .table-scroll{max-height:220px}
+.sim-sequence-timing{padding:13px 16px;border-top:1px solid #294555;border-bottom:1px solid #294555;background:#153240;color:#d2eef0;font:700 .78rem/1.6 Consolas,"Malgun Gothic",sans-serif;overflow-wrap:anywhere}.sim-sequence-controls{display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;padding:13px 16px}.sim-sequence-controls small{color:#94b4c1;font-size:.69rem;line-height:1.6}
 .packet-browser-tools{display:flex;align-items:end;gap:10px;flex-wrap:wrap;padding:14px 16px;background:#102330;border-bottom:1px solid #294555}
 .packet-browser-tools label{display:grid;gap:6px;color:#9fb6c1;font-size:.71rem}.packet-browser-tools input{min-width:130px;max-width:235px;background:#091b28;border:1px solid #3a5667;color:#dfedf0;padding:8px;font-size:.73rem}
 .packet-browser-grid{display:grid;grid-template-columns:minmax(400px,1.05fr) minmax(400px,1.2fr);gap:0;border-top:1px solid #294555}
@@ -92,3 +93,12 @@
 @media(min-width:1700px){.sensor-list.sensor-matrix{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media(max-width:1200px){.ros-overview-main{grid-template-columns:1fr}.ros-overview-main .attitude-stage canvas{max-width:730px}.ros-overview-main .attitude-stage{min-height:280px}.packet-browser-grid{grid-template-columns:1fr}.packet-record-list{max-height:380px;border-right:0;border-bottom:1px solid #294555}.packet-inspector{max-height:none}.ros-overview-bottom{grid-template-columns:1fr}}
 @media(max-width:650px){.sensor-list.sensor-matrix{grid-template-columns:1fr}.overview-link-strip{gap:9px}.overview-link-strip time{margin-left:0}.packet-browser-tools{align-items:stretch}.packet-browser-tools label{width:100%}.packet-browser-tools input{max-width:none;width:100%}.packet-browser-grid{display:block}.packet-detail-head{align-items:flex-start;flex-direction:column}.ros-overview-main .attitude-meta{grid-template-columns:1fr}.packet-record-list td{font-size:.65rem}}
+
+.legacy-draft-details{margin-top:16px;border:1px solid #294555;background:#0e202d}.legacy-draft-details>summary{padding:13px 16px;color:#9fbbc7;cursor:pointer;font-size:.75rem}.legacy-draft-details>.workspace-grid{padding:0 12px 12px}
+
+.sensor-matrix .sensor-measured-time{grid-column:1/-1;color:#9cbac5;font:400 .62rem/1.5 Consolas,"Malgun Gothic",sans-serif;white-space:normal;overflow-wrap:anywhere}
+.sparkline-time-tick,.sparkline-time-context{fill:#94b3c0;font:400 9px Consolas,monospace}.sparkline-time-context{fill:#7097a8}.chart-time-tick{fill:#a2bec9;font:400 12px Consolas,monospace}
+.chart-time-context{margin:0;padding:7px 16px;color:#95b4c0;font:400 .68rem/1.6 Consolas,"Malgun Gothic",sans-serif;overflow-wrap:anywhere}.chart-inspection{display:block;min-height:34px;padding:8px 16px;background:#0a1d2a;color:#d5f0f0;font:700 .73rem/1.6 Consolas,"Malgun Gothic",sans-serif;overflow-wrap:anywhere}.chart-inspection-help{margin:0;padding:8px 16px;color:#89a9b8;font-size:.66rem;line-height:1.6}
+#telemetry-chart:focus-visible{outline:2px solid #87d1da;outline-offset:-2px}.sample-crosshair{stroke:#b3e4ed;stroke-width:1;stroke-dasharray:3 3;vector-effect:non-scaling-stroke}.sample-hover-dot{fill:#effcfd;stroke:#183d52;stroke-width:1.5;vector-effect:non-scaling-stroke}.sample-tooltip-box{fill:#071723;stroke:#709da9;stroke-width:1}.sample-tooltip-time,.sample-tooltip-value{fill:#e4f5f7;font-family:Consolas,"Malgun Gothic",monospace}.sample-tooltip-value{fill:#9ee0df}.trend-measured-time strong{overflow-wrap:anywhere}
+
+.trend-meta>.trend-measured-time{grid-column:1/-1}.trend-meta>.trend-measured-time strong{white-space:normal;overflow:visible;text-overflow:clip;font-family:Consolas,monospace}

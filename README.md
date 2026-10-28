@@ -39,7 +39,7 @@ PDU를 내부 Docker TCP 연결로 보내고, 시험 지상 수신기가 이를 
 ROS 화면 자료와 FDS용 N11 시험 파일을 만든다. FDS는 새 GNSS가 유효하면
 그 상태를 우선 사용하고 72시간 이상 낡거나 없으면 가상 TLE로 전환한다.
 MPS에서 연세대 UHF PASS에 저장한 읽기 전용 시험 시퀀스를 ROS에 전달하면,
-ROS의 별도 `SIM ONLY` 영역에서 단계별 AOS 기준 예약과 가상 위성의
+ROS의 별도 `SIM ONLY` 영역에서 시퀀스 단위 AOS 기준 예약과 가상 위성의
 `COMMAND_RESULT` 응답을 볼 수 있다. 이 왕복 경로는 실제 TC 승인·송출과
 분리돼 있다.
 연결 구조와 로그 확인 명령은 [단계 9 안내](deploy/stage9/README.md)에 있다.

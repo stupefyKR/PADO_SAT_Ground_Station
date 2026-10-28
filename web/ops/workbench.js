@@ -38,6 +38,8 @@
   let simTmRequests = [];
   let simTmAvailable = false;
   let simRequestPending = false;
+  let simSequencePending = false;
+  const simCancellationPending = new Set();
   let selectedTm = null;
   let selectedSensor = null;
   let minutes = 30;
@@ -235,45 +237,53 @@
   function showSimSequence() {
     const sequence = selectedSimSequence();
     const rows = $("sim-sequence-steps");
-    rows.replaceChildren();
+    const controls = $("sim-sequence-controls");
+    rows.replaceChildren(); controls.replaceChildren();
     if (!sequence) {
-      empty(rows, 5, "MPS에서 전달한 시험 시퀀스가 없습니다.");
+      empty(rows, 3, "MPS에서 전달한 시험 시퀀스가 없습니다.");
       $("sim-sequence-pass").textContent = "패스 미선택";
+      $("sim-sequence-timing").textContent = "시퀀스 시작 시각 미정";
       return;
     }
     $("sim-sequence-pass").textContent =
-      `${sequence.pass_id} · ${utc(sequence.aos_utc_s)} → ${utc(sequence.los_utc_s)} · SIM ONLY`;
+      `${sequence.pass_id} · ${utc(sequence.aos_utc_s)} → ${utc(sequence.los_utc_s)}`;
+    const offsets = new Set(sequence.steps.map(step => step.offset_s));
+    const shared = offsets.size === 1;
+    const offset = sequence.steps[0]?.offset_s;
+    const target = sequence.aos_utc_s + offset;
+    $("sim-sequence-timing").textContent = shared ?
+      `시퀀스 전체 · AOS ${offset}초 후 · ${utc(target)} UTC` :
+      "TC별 시각이 다른 기존 초안입니다. MPS에서 전체 시작 시각을 정해 다시 저장·전달하세요.";
     for (const step of sequence.steps) {
       const row = document.createElement("tr");
       cell(row, step.step_id);
       cell(row, step.command_name);
       cell(row, Object.entries(step.parameters).map(([key, value]) => `${key}=${value}`).join(", ") || "없음");
-      cell(row, utc(sequence.aos_utc_s + step.offset_s));
-      const control = document.createElement("td");
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "outline";
-      const already = simReservations.some((item) => item.sha256 === sequence.sha256 &&
-        item.step_id === step.step_id && item.status !== "CANCELLED");
-      button.textContent = already ? "예약 기록 있음" : "가상 위성 예약";
-      button.disabled = already || session?.role === "auditor" ||
-        sequence.aos_utc_s + step.offset_s <= Math.floor(Date.now() / 1000);
-      button.addEventListener("click", async () => {
-        button.disabled = true;
-        try {
-          await api("/api/ros/test-sim-reservations", {
-            method: "POST", headers: {"Content-Type": "application/json", "X-CSRF-Token": session.csrf},
-            body: JSON.stringify({sha256: sequence.sha256, step_id: step.step_id})
-          });
-          await refreshSimDrafts(sequence.sha256);
-          message("sim-sequence-message", "가상 위성 시험 예약을 등록했습니다. 실제 RF 송출은 없습니다.");
-        } catch (error) {
-          message("sim-sequence-message", `시험 예약 실패: ${error.message}`, true);
-          button.disabled = false;
-        }
-      });
-      control.append(button); row.append(control); rows.append(row);
+      rows.append(row);
     }
+    const already = simReservations.some(item => item.sha256 === sequence.sha256 && item.status !== "CANCELLED");
+    const button = document.createElement("button");
+    button.type = "button"; button.className = "outline"; button.id = "sim-sequence-reserve";
+    button.textContent = already ? "시퀀스 예약 기록 있음" : "시퀀스 전체 예약";
+    button.disabled = already || simSequencePending || !shared || session?.role === "auditor" ||
+      !sequence.steps.length || target <= Math.floor(Date.now() / 1000);
+    button.addEventListener("click", async () => {
+      if (simSequencePending) return;
+      simSequencePending = true; showSimSequence();
+      try {
+        const result = await api("/api/ros/test-sim-reservations", {
+          method: "POST", headers: {"Content-Type": "application/json", "X-CSRF-Token": session.csrf},
+          body: JSON.stringify({sha256: sequence.sha256})
+        });
+        await refreshSimDrafts(sequence.sha256);
+        message("sim-sequence-message", `TC ${result.count}개를 한 시퀀스로 예약했습니다. AOS ${offset}초 후 · ${utc(result.target_utc_s)} UTC부터 순서대로 전송합니다.`);
+      } catch (error) {
+        message("sim-sequence-message", `시퀀스 예약 실패: ${error.message}`, true);
+      } finally { simSequencePending = false; showSimSequence(); }
+    });
+    const note = document.createElement("small");
+    note.textContent = "앞선 TC의 ACK 수신 후 다음 TC를 전송합니다. 실패하면 남은 TC를 중단합니다.";
+    controls.append(button, note);
   }
   function showSimReservations() {
     const rows = $("sim-reservation-rows");
@@ -287,33 +297,40 @@
       REJECTED: "거절", TIMEOUT: "ACK 시간 초과", SEND_FAILED: "전송 실패",
       MISSED: "예약 시각 경과", UNKNOWN: "결과 불명", CANCELLED: "취소"
     };
-    for (const item of simReservations) {
+    const cancelShown = new Set();
+    const ordered = [...simReservations].sort((a, b) => {
+      if (a.batch_id != null && a.batch_id === b.batch_id) return a.step_id - b.step_id;
+      return b.id - a.id;
+    });
+    for (const item of ordered) {
       const row = document.createElement("tr");
-      cell(row, statusText[item.status] || item.status);
-      cell(row, item.command_name);
-      cell(row, utc(item.target_utc_s));
+      cell(row, item.status === "CANCELLED" && item.blocked_by_step_id ?
+        `TC ${item.blocked_by_step_id} 이후 중단` : statusText[item.status] || item.status);
+      cell(row, item.batch_id != null ? `${item.step_id}/${item.batch_size} · ${item.command_name}` : item.command_name);
+      cell(row, `${Number.isInteger(item.start_offset_s) ? `AOS ${item.start_offset_s}초 후 · ` : ""}${utc(item.target_utc_s)}`);
       const detail = typeof item.ack === "string" ? item.ack :
-        item.ack ? JSON.stringify(item.ack) : "—";
+        item.ack ? JSON.stringify(item.ack) : item.batch_stop_reason ? "시퀀스 중단" : "—";
       cell(row, detail.length > 180 ? detail.slice(0, 180) + "…" : detail);
       const control = document.createElement("td");
-      if (item.status === "SCHEDULED" && session?.role !== "auditor") {
+      const key = item.batch_id != null ? `batch:${item.batch_id}` : `row:${item.id}`;
+      if (item.status === "SCHEDULED" && session?.role !== "auditor" && !cancelShown.has(key)) {
+        cancelShown.add(key);
         const button = document.createElement("button");
-        button.type = "button";
-        button.className = "outline";
-        button.textContent = "예약 취소";
+        button.type = "button"; button.className = "outline";
+        button.textContent = item.batch_id != null ? "남은 시퀀스 취소" : "예약 취소";
+        button.disabled = simCancellationPending.has(key);
         button.addEventListener("click", async () => {
-          button.disabled = true;
+          simCancellationPending.add(key); button.disabled = true;
           try {
             await api("/api/ros/test-sim-reservations/cancel", {
               method: "POST", headers: {"Content-Type": "application/json", "X-CSRF-Token": session.csrf},
-              body: JSON.stringify({id: item.id})
+              body: JSON.stringify(item.batch_id != null ? {batch_id: item.batch_id} : {id: item.id})
             });
             await refreshSimDrafts();
-            message("sim-reservation-message", "가상 위성 시험 예약을 취소했습니다.");
+            message("sim-reservation-message", item.batch_id != null ? "남은 시퀀스 예약을 취소했습니다." : "가상 위성 시험 예약을 취소했습니다.");
           } catch (error) {
             message("sim-reservation-message", `취소 실패: ${error.message}`, true);
-            button.disabled = false;
-          }
+          } finally { simCancellationPending.delete(key); showSimReservations(); }
         });
         control.append(button);
       }
@@ -471,6 +488,91 @@
         !net ? "상태 대기" : net.value > 0.01 ? "충전 중" : net.value < -0.01 ? "방전 중" : "충방전 없음"}` :
       "전력 TM 수신 대기 · 저장 TM 요청 후 값을 표시합니다";
   }
+  const plotInspectors = new WeakMap();
+  function measurementUtc(value) {
+    return new Date(value).toISOString().slice(0, 19).replace("T", " ") + " UTC";
+  }
+  function clockUtc(milliseconds) {
+    return new Date(milliseconds).toISOString().slice(11, 19);
+  }
+  function plotDateContext(start, end) {
+    const first = new Date(start).toISOString().slice(0, 10);
+    const last = new Date(end).toISOString().slice(0, 10);
+    return `${first === last ? first : `${first} → ${last}`} UTC`;
+  }
+  function nearestSampleIndex(samples, target) {
+    let low = 0, high = samples.length - 1;
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2);
+      if (Date.parse(samples[middle].utc) < target) low = middle + 1;
+      else high = middle;
+    }
+    if (!low) return 0;
+    return target - Date.parse(samples[low - 1].utc) <= Date.parse(samples[low].utc) - target ? low - 1 : low;
+  }
+  function installSampleInspector(chart, sensor, samples, geometry, readout = null) {
+    const previous = plotInspectors.get(chart);
+    previous?.dispose();
+    if (!samples.length || typeof chart.addEventListener !== "function") return;
+    const {width, left, right, top, bottom, start, end, x, y, keyboard = false} = geometry;
+    const compact = width < 400;
+    const layer = svg("g", {class: "sample-inspection-layer", visibility: "hidden", "pointer-events": "none"});
+    const line = svg("line", {class: "sample-crosshair", y1: top, y2: bottom});
+    const marker = svg("circle", {class: "sample-hover-dot", r: compact ? 3 : 4});
+    const boxWidth = compact ? width - 12 : 300, boxHeight = compact ? 29 : 42;
+    const box = svg("rect", {class: "sample-tooltip-box", width: boxWidth, height: boxHeight, rx: 3});
+    const stamp = svg("text", {class: "sample-tooltip-time", "font-size": compact ? 9 : 12});
+    const value = svg("text", {class: "sample-tooltip-value", "font-size": compact ? 9 : 12});
+    layer.append(line, marker, box, stamp, value); chart.append(layer);
+    let index = samples.length - 1;
+    if (previous?.sampleUtc && previous.sensorId === sensor.id) index = nearestSampleIndex(samples, Date.parse(previous.sampleUtc));
+    let focused = keyboard && document.activeElement === chart;
+    let visibleIndex = null;
+    const state = {sampleUtc: samples[index].utc, sensorId: sensor.id, dispose() {}};
+    const show = next => {
+      index = Math.max(0, Math.min(samples.length - 1, next));
+      if (index === visibleIndex) return;
+      visibleIndex = index;
+      const sample = samples[index], px = x(sample), py = y(sample.value);
+      state.sampleUtc = sample.utc;
+      line.setAttribute("x1", px); line.setAttribute("x2", px);
+      marker.setAttribute("cx", px); marker.setAttribute("cy", py);
+      const boxX = Math.max(6, Math.min(width - boxWidth - 6, px - boxWidth / 2));
+      const boxY = Math.max(top + 2, Math.min(bottom - boxHeight - 2, py - boxHeight - 8));
+      box.setAttribute("x", boxX); box.setAttribute("y", boxY);
+      stamp.setAttribute("x", boxX + 7); stamp.setAttribute("y", boxY + (compact ? 11 : 16));
+      value.setAttribute("x", boxX + 7); value.setAttribute("y", boxY + (compact ? 23 : 32));
+      stamp.textContent = measurementUtc(sample.utc);
+      value.textContent = `${sample.value} ${sensor.unit}`;
+      layer.setAttribute("visibility", "visible");
+      if (readout) readout.textContent = `측정 ${measurementUtc(sample.utc)} · ${sample.value} ${sensor.unit} · 표본 ${index + 1}/${samples.length}`;
+    };
+    const hide = () => { if (!focused) { layer.setAttribute("visibility", "hidden"); visibleIndex = null; } };
+    const move = event => {
+      const bounds = chart.getBoundingClientRect();
+      if (!bounds.width) return;
+      const px = Math.max(left, Math.min(right, (event.clientX - bounds.left) * width / bounds.width));
+      const target = start + (px - left) / (right - left) * (end - start);
+      show(nearestSampleIndex(samples, target));
+    };
+    const focus = () => { focused = true; show(index); };
+    const blur = () => { focused = false; hide(); };
+    const keydown = event => {
+      const next = event.key === "ArrowLeft" ? index - 1 : event.key === "ArrowRight" ? index + 1 :
+        event.key === "Home" ? 0 : event.key === "End" ? samples.length - 1 : null;
+      if (next !== null) { event.preventDefault(); show(next); }
+      else if (event.key === "Escape") { layer.setAttribute("visibility", "hidden"); visibleIndex = null; }
+    };
+    const listeners = [["pointermove", move], ["pointerleave", hide]];
+    if (keyboard) listeners.push(["focus", focus], ["blur", blur], ["keydown", keydown]);
+    for (const [name, listener] of listeners) chart.addEventListener(name, listener);
+    state.dispose = () => {
+      for (const [name, listener] of listeners) chart.removeEventListener?.(name, listener);
+    };
+    plotInspectors.set(chart, state);
+    if (readout) readout.textContent = `최근 측정 ${measurementUtc(samples.at(-1).utc)} · ${samples.at(-1).value} ${sensor.unit}`;
+    if (focused) show(index);
+  }
   function renderSensors() {
     renderPowerSummary();
     if (!selectedTm) return;
@@ -499,6 +601,10 @@
         span.textContent = text;
         button.append(span);
       }
+      const measured = document.createElement("time");
+      measured.className = "sensor-measured-time"; measured.dateTime = sample.utc;
+      measured.textContent = `측정 ${measurementUtc(sample.utc)}`;
+      button.append(measured);
       button.append(sensorSparkline(sensor));
       button.addEventListener("click", () => {
         selectedSensor = sensor;
@@ -537,40 +643,64 @@
       }
       plotted = [...selected].sort((a, b) => a - b).map((index) => samples[index]);
     }
-    const chart = svg("svg", {viewBox: "0 0 300 86", class: "sensor-sparkline",
-      role: "img", "aria-label": `${sensor.name} 최근 ${minutes}분 추세`, preserveAspectRatio: "none"});
+    const start = end - minutes * 60000;
+    const chart = svg("svg", {viewBox: "0 0 300 115", class: "sensor-sparkline",
+      role: "img", "aria-label": `${sensor.name} 측정 추세 · ${plotDateContext(start, end)}`, preserveAspectRatio: "none"});
     const margin = Math.max((sensor.upper - sensor.lower) * 0.15, 0.1);
     const bottom = Math.min(sensor.lower - margin, ...samples.map((item) => item.value));
     const top = Math.max(sensor.upper + margin, ...samples.map((item) => item.value));
-    const x = (sample) => 5 + (Date.parse(sample.utc) - end + minutes * 60000) / (minutes * 60000) * 290;
-    const y = (value) => 79 - (value - bottom) / (top - bottom) * 72;
+    const x = (sample) => 5 + (Date.parse(sample.utc) - start) / (end - start) * 290;
+    const y = (value) => 73 - (value - bottom) / (top - bottom) * 66;
     chart.append(svg("rect", {class: "sparkline-limit", x: 5, y: y(sensor.upper),
       width: 290, height: y(sensor.lower) - y(sensor.upper)}));
-    chart.append(svg("path", {class: "sparkline-grid", d: "M5 43H295"}));
+    chart.append(svg("path", {class: "sparkline-grid", d: "M5 40H295 M5 73H295"}));
     chart.append(svg("path", {class: "sparkline-value", d: plotted.map((sample, index) =>
       `${index ? "L" : "M"}${x(sample).toFixed(1)} ${y(sample.value).toFixed(1)}`).join(" ")}));
     for (const sample of plotted) if (sample.value < sensor.lower || sample.value > sensor.upper)
       chart.append(svg("circle", {class: "chart-breach", cx: x(sample), cy: y(sample.value), r: 2.5}));
+    [0, .5, 1].forEach(fraction => chart.append(svg("text", {class: "sparkline-time-tick",
+      x: 5 + fraction * 290, y: 89, "text-anchor": fraction === 0 ? "start" : fraction === 1 ? "end" : "middle"},
+      clockUtc(start + fraction * (end - start)))));
+    chart.append(svg("text", {class: "sparkline-time-context", x: 5, y: 108}, plotDateContext(start, end)));
+    installSampleInspector(chart, sensor, samples, {width: 300, left: 5, right: 295, top: 7, bottom: 73,
+      start, end, x, y});
     return chart;
   }
   function renderTrend() {
     const sensor = selectedSensor;
-    if (!sensor) return;
+    if (!sensor) {
+      const chart = $("telemetry-chart");
+      plotInspectors.get(chart)?.dispose(); plotInspectors.delete(chart);
+      chart.setAttribute("aria-label", "선택한 센서 없음");
+      chart.replaceChildren(svg("text", {x: 400, y: 134, "text-anchor": "middle", class: "chart-placeholder"},
+        "센서를 선택하면 측정 시각과 값을 표시합니다"));
+      $("selected-sensor").textContent = "선택 안 됨";
+      $("latest-value").textContent = "—"; $("limit-values").textContent = "—";
+      $("selected-state").textContent = "평가 불가"; $("selected-measured-time").textContent = "—";
+      $("chart-time-range").textContent = "측정 시간축 UTC · 센서 선택 대기";
+      $("chart-inspection").textContent = "선택한 센서가 없습니다";
+      return;
+    }
     const latest = sensor.samples.at(-1);
     // A batch received during contact may contain older measurements. Chart
     // time follows the measurement window, never the later downlink time.
     const end = Date.parse(latest.utc);
-    const samples = sensor.samples.filter((sample) => Date.parse(sample.utc) >= end - minutes * 60000);
+    const start = end - minutes * 60000;
+    const samples = sensor.samples.filter((sample) => Date.parse(sample.utc) >= start);
     $("selected-sensor").textContent = sensor.name;
     $("latest-value").textContent = `${latest.value} ${sensor.unit}`;
+    $("selected-measured-time").textContent = measurementUtc(latest.utc);
     $("limit-values").textContent = `${sensor.lower} / ${sensor.upper} ${sensor.unit}`;
     $("selected-state").textContent = freshSample(latest) ?
       (latest.value < sensor.lower || latest.value > sensor.upper ?
         "범위 초과 · 시험" : "범위 내 · 시험") :
       "과거 측정 · 현재 판정 불가";
     const chart = $("telemetry-chart");
+    chart.setAttribute("viewBox", "0 0 800 280");
+    chart.setAttribute("aria-label", `${sensor.name} UTC 측정 추세. 좌우 방향키로 실제 표본을 선택합니다.`);
+    $("chart-time-range").textContent = `측정 시간축 · ${measurementUtc(start)} → ${measurementUtc(end)}`;
     chart.replaceChildren(svg("path", {class: "chart-grid",
-      d: "M40 35H770 M40 95H770 M40 155H770 M40 215H770 M40 35V215 M220 35V215 M400 35V215 M580 35V215 M770 35V215"}));
+      d: "M40 35H770 M40 95H770 M40 155H770 M40 215H770 M40 35V215 M222.5 35V215 M405 35V215 M587.5 35V215 M770 35V215"}));
     if (!samples.length) {
       chart.append(svg("text", {x: 400, y: 134, "text-anchor": "middle", class: "chart-placeholder"},
         "선택한 구간에 시험 표본이 없습니다"));
@@ -578,7 +708,7 @@
       const spread = Math.max((sensor.upper - sensor.lower) * 0.2, 0.1);
       const bottom = Math.min(sensor.lower - spread, ...samples.map((item) => item.value));
       const top = Math.max(sensor.upper + spread, ...samples.map((item) => item.value));
-      const x = (sample) => 40 + (Date.parse(sample.utc) - (end - minutes * 60000)) / (minutes * 60000) * 730;
+      const x = (sample) => 40 + (Date.parse(sample.utc) - start) / (end - start) * 730;
       const y = (value) => 215 - (value - bottom) / (top - bottom) * 180;
       chart.append(svg("rect", {class: "chart-limit", x: 40, y: y(sensor.upper),
         width: 730, height: y(sensor.lower) - y(sensor.upper)}));
@@ -591,6 +721,11 @@
         `상한 ${sensor.upper} ${sensor.unit}`));
       chart.append(svg("text", {x: 45, y: 235, fill: "#b8a76d", "font-size": 12},
         `하한 ${sensor.lower} ${sensor.unit}`));
+      [0, .25, .5, .75, 1].forEach(fraction => chart.append(svg("text", {class: "chart-time-tick",
+        x: 40 + fraction * 730, y: 258, "text-anchor": fraction === 0 ? "start" : fraction === 1 ? "end" : "middle"},
+        clockUtc(start + fraction * (end - start)))));
+      installSampleInspector(chart, sensor, samples, {width: 800, left: 40, right: 770, top: 35, bottom: 215,
+        start, end, x, y, keyboard: true}, $("chart-inspection"));
     }
     const eventEnd = Date.parse(tmTiming(selectedTm).latestUtc);
     const events = selectedTm.sensors.flatMap((item) => item.samples

@@ -474,7 +474,7 @@ class Handler(BaseHTTPRequestHandler):
             self._error(HTTPStatus.FORBIDDEN, "role_denied")
             return
         body = self._read_json()
-        if body is None or set(body) != {"sha256", "step_id"} or \
+        if body is None or set(body) not in ({"sha256"}, {"sha256", "step_id"}) or \
                 not isinstance(body["sha256"], str) or \
                 re.fullmatch(r"[0-9a-f]{64}", body["sha256"]) is None:
             self._error(HTTPStatus.BAD_REQUEST, "invalid_request")
@@ -916,9 +916,13 @@ class Handler(BaseHTTPRequestHandler):
                 result = self.server.drafts.import_sim_handoff(body, actor)
             elif path == "/test-sim-reservations" and set(body) == {"sha256", "step_id"}:
                 result = self.server.drafts.reserve_sim(body["sha256"], body["step_id"], actor)
+            elif path == "/test-sim-reservations" and set(body) == {"sha256"}:
+                result = self.server.drafts.reserve_sim_batch(body["sha256"], actor)
             elif path == "/test-sim-reservations/cancel" and set(body) == {"id"}:
                 self.server.drafts.cancel_sim(body["id"], actor)
                 result = {"status": "CANCELLED"}
+            elif path == "/test-sim-reservations/cancel" and set(body) == {"batch_id"}:
+                result = self.server.drafts.cancel_sim_batch(body["batch_id"], actor)
             elif path == "/test-sim-tm-requests" and not body:
                 if self.server.sim_tc_socket is None:
                     self._error(HTTPStatus.SERVICE_UNAVAILABLE, "sim_tc_unavailable")

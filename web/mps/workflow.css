@@ -24,6 +24,7 @@
 .mps-sequence-form label{display:grid;gap:4px;color:#a8c5ce;font-size:.72rem}.mps-sequence-form input,.mps-sequence-form select{min-width:90px;max-width:180px}
 .mps-sequence-form .param-field{min-width:100px}.mps-sequence-form .param-field input{width:110px}
 .mps-sequence-actions{display:flex;gap:8px;flex-wrap:wrap}
+.mps-sequence-timing{display:flex;flex-wrap:wrap;align-items:center;gap:12px 20px;padding:14px;background:#102b39;border-top:1px solid #345063;border-bottom:1px solid #345063}.mps-sequence-timing label{display:grid;gap:6px;color:#b6d0d9;font-size:.74rem}.mps-sequence-timing input{width:120px;padding:8px;border:1px solid #3a596b;background:#081d2a;color:#e0f0f2}.mps-sequence-timing strong{color:#d6eef0;font:700 .8rem Consolas,monospace}.mps-sequence-timing small{flex-basis:100%;color:#94b4c1;font-size:.69rem}
 .n10-feedback-panel{margin-top:12px}
 .n10-feedback-grid{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(240px,.6fr);gap:12px;padding:12px}
 .n10-feedback-grid>div{min-width:0}
