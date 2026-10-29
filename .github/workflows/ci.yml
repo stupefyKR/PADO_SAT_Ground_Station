@@ -136,6 +136,10 @@ jobs:
             -Dexec.mainClass=kr.ac.khu.padosat.fds.SyntheticTleSelfTest \
             -Dexec.classpathScope=test \
             "-Dexec.args=$PWD/out/orekit-data-2422a7d06ee2cc3b5a503a47271203b0706f3e82 $PWD/out"
+          mvn --batch-mode --no-transfer-progress -f services/fds/pom.xml test-compile exec:java \
+            -Dexec.mainClass=kr.ac.khu.padosat.fds.OrbitReconstructionSelfTest \
+            -Dexec.classpathScope=test \
+            "-Dexec.args=$PWD/out/orekit-data-2422a7d06ee2cc3b5a503a47271203b0706f3e82 $PWD/out"
       - name: Verify fictional ISS display TLE refit
         run: |
           mvn --batch-mode --no-transfer-progress -f services/fds/pom.xml test-compile exec:java \

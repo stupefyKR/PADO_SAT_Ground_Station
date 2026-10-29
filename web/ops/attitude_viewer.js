@@ -198,6 +198,17 @@ window.rosAttitudeViewer = (() => {
     return {eye, right, up};
   }
 
+  function rotateBetween(vector, from, to) {
+    const a = unit(from), b = unit(to), cosine = clamp(dot(a, b), -1, 1);
+    if (cosine > 1 - 1e-12) return vector.slice();
+    if (cosine < -1 + 1e-9) {
+      const axis = unit(cross(a, Math.abs(a[2]) < .9 ? [0, 0, 1] : [0, 1, 0]));
+      return vector.map((value, i) => 2 * axis[i] * dot(axis, vector) - value);
+    }
+    const axis = cross(a, b), first = cross(axis, vector), second = cross(axis, first);
+    return unit(vector.map((value, i) => value + first[i] + second[i] / (1 + cosine)));
+  }
+
   function faceColor(rgb, shade) {
     const channel = (value) => Math.round(clamp(value * shade + 20, 24, 245));
     return `rgb(${channel(rgb[0])},${channel(rgb[1])},${channel(rgb[2])})`;
@@ -379,6 +390,7 @@ window.rosAttitudeViewer = (() => {
       const valid = (vector) => Array.isArray(vector) && vector.length === 3 &&
         vector.every((entry) => typeof entry === "number" && Number.isFinite(entry)) &&
         length(vector) > 1e-9;
+      const previousEarth = this.directions?.earthBody;
       this.stateProvided = true;
       if (directions && typeof directions.orientationKnown === "boolean") {
         this.directions = {...directions,
@@ -389,6 +401,13 @@ window.rosAttitudeViewer = (() => {
           directions.displayOrientationKnown === true;
         this.positionKnown = directions.positionKnown === true &&
           valid(directions.satelliteItrf) && !!this.directions.earthBody;
+        if (this.positionKnown) {
+          const previousEye = previousEarth ? cameraBasis(this.yaw, this.pitch).eye :
+            cameraBasis(DEFAULT_YAW, DEFAULT_PITCH).eye;
+          const rotatedEye = rotateBetween(previousEye, previousEarth || [-1, 0, 0], this.directions.earthBody);
+          this.yaw = Math.atan2(rotatedEye[1], rotatedEye[0]);
+          this.pitch = clamp(Math.asin(clamp(rotatedEye[2], -1, 1)), -1.56, 1.56);
+        }
       } else {
         // Retain the explicit test-preview adapter, while null always clears
         // the last pose instead of keeping an older measurement on screen.
@@ -421,6 +440,17 @@ window.rosAttitudeViewer = (() => {
       const shifted = unit(eye.map((value, index) => value + right[index] * dx + up[index] * dy));
       this.yaw = Math.atan2(shifted[1], shifted[0]);
       this.pitch = Math.asin(clamp(shifted[2], -1, 1));
+      this.zoom = 1;
+      this.requestDraw();
+      return true;
+    }
+
+    viewEarth() {
+      if (!this.directions?.earthBody) return false;
+      const eye = rotateBetween(cameraBasis(DEFAULT_YAW, DEFAULT_PITCH).eye,
+        [-1, 0, 0], this.directions.earthBody);
+      this.yaw = Math.atan2(eye[1], eye[0]);
+      this.pitch = clamp(Math.asin(clamp(eye[2], -1, 1)), -1.56, 1.56);
       this.zoom = 1;
       this.requestDraw();
       return true;

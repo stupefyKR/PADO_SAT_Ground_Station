@@ -85,6 +85,29 @@ const jump=new Cache();jump.setOrbit(orbit([[base,[6878137,0,0]],[base+60000,[-6
 assert.equal(jump.resolve(base+30000).position_itrf_m,null,'no interpolation through a scenario teleport');
 const futureEpoch=new Cache();futureEpoch.setOrbit(orbit([[base,[6878137,0,0],base],[base+60000,[6878137,450000,0],base+60000]]));
 assert.equal(futureEpoch.resolve(base+30000).position_itrf_m,null,'future input epoch cannot fill an earlier state');
+// Explicit TLE reconstruction fills pre-archive and epoch-boundary gaps without
+// treating future GNSS inputs as past measurements.
+const replay={schema:'pado.orbit-reconstruction.v1',quality:'RECONSTRUCTED_NOT_MEASURED',
+  norad_id:99999,source:'TLE',input_epoch_utc:iso(base+120000),generated_utc:iso(base+120000),
+  start_utc:iso(base-60000),end_utc:iso(base+120000),sample_step_s:60,
+  samples:[-60000,0,60000,120000].map(dt=>[iso(base+dt),6878137,dt*7.5,0,1,0,0])};
+const reconstructed=new Cache();reconstructed.setOrbit({...orbit([]),reconstruction:replay});
+let reconstructedState=reconstructed.resolve(base-30000);
+assert.ok(reconstructedState.position_itrf_m);
+assert.equal(reconstructedState.positionSource,'FDS_RECONSTRUCTED_TLE');
+assert.ok(reconstructedState.sun_itrf);assert.equal(reconstructedState.attitude,null);
+assert.equal(reconstructedState.attitudeStatus,'UNKNOWN');
+reconstructed.mergeTm(page([position(1,base)],[],1));
+assert.equal(reconstructed.resolve(base).positionSource,'GNSS_TM','measured position wins over reconstruction');
+reconstructed.setOrbit({...orbit([[base],[base+60000]]),reconstruction:replay});
+assert.equal(reconstructed.resolve(base+30000).positionSource,'FDS_TLE','archived forecast wins over reconstruction');
+futureEpoch.setOrbit({...orbit([[base,[6878137,0,0],base],
+  [base+60000,[6878137,450000,0],base+60000]]),reconstruction:replay});
+assert.equal(futureEpoch.resolve(base+30000).positionSource,'FDS_RECONSTRUCTED_TLE',
+  'epoch boundary hole uses explicitly labelled reconstruction');
+assert.equal(reconstructed.resolve(base-60001).position_itrf_m,null,'never extrapolate beyond reconstruction');
+reconstructed.setOrbit({...orbit([]),reconstruction:{...replay,quality:'MEASURED'}});
+assert.equal(reconstructed.resolve(base-30000).position_itrf_m,null,'unlabelled hindsight data is rejected');
 const reset=cache.mergeTm({schema:'pado.state-history.v1',state:'RESET_REQUIRED',next_after_id:0});
 assert.equal(reset.reset,true);assert.equal(cache.cursor,0);assert.equal(cache.attitudes.size,0);
 assert.equal(cache.resolve(base+30000).displayAttitude,null,'archive reset clears held display poses too');

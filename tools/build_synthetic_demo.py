@@ -240,6 +240,17 @@ def run_once(args: argparse.Namespace, *, now: datetime | None = None) -> tuple[
         _java(args, "FdsMain", ["--config", operator_config.resolve(), "--orekit-data",
                                 args.orekit_data.resolve(), "--tle", tle.resolve(),
                                 "--gnss", gnss.resolve(), "--out", selected_run.resolve()])
+    # Reconstruct history only for the operator's display. The forward truth
+    # product, contact schedule and simulator inputs retain their normal run.
+    reconstruction_end = max(now, _utc_now_second())
+    try:
+        _java(args, "OrbitReconstructionMain", ["--orekit-data", args.orekit_data.resolve(),
+            "--tle", tle.resolve(), "--end", reconstruction_end.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "--out", (selected_run / "orbit_reconstruction.json").resolve()])
+    except (OSError, ValueError, subprocess.CalledProcessError) as error:
+        # A display supplement must not suppress the validated forward PASS
+        # schedule or the normal operator view when its generation fails.
+        print(f"TEST_ONLY retrospective display unavailable: {error}", file=sys.stderr, flush=True)
     schedule = publish_schedule(selected_run, args.mps_schedule_dir)
     view = publish_view(selected_run, args.view_dir)
     metadata = dict(line.split("=", 1) for line in

@@ -39,6 +39,7 @@
   class Cache {
     constructor() {
       this.positions = new Map(); this.attitudes = new Map(); this.fds = [];
+      this.reconstructedRows = [];
       this.currentOrbit = null; this.currentRows = []; this.cursor = 0; this.revision = 0;
       this.orbitRevision = null; this.truncated = false; this.dirty = true;
       this.mutationVersion = 0;
@@ -90,6 +91,23 @@
         .map(row => ({time: milliseconds(row[0]), position: row.slice(1, 4), sun: row.slice(4, 7),
           source: row[7], epoch: row[8]})).sort((a, b) => a.time - b.time);
       this.orbitRevision = page.revision;
+      const replay = page.reconstruction;
+      const epoch = milliseconds(replay?.input_epoch_utc);
+      const start = milliseconds(replay?.start_utc), end = milliseconds(replay?.end_utc);
+      this.reconstructedRows = replay?.schema === "pado.orbit-reconstruction.v1" &&
+        replay.quality === "RECONSTRUCTED_NOT_MEASURED" && replay.norad_id === 99999 &&
+        replay.source === "TLE" && finite(epoch) && finite(start) && finite(end) &&
+        start < end && end-start <= WINDOW_MS && Array.isArray(replay.samples) &&
+        replay.samples.length <= 4323 ? replay.samples.filter(row => Array.isArray(row) &&
+          row.length === 7 && finite(milliseconds(row[0])) &&
+          milliseconds(row[0]) >= start && milliseconds(row[0]) <= end &&
+          Math.abs(milliseconds(row[0])-epoch) <= WINDOW_MS+1000 &&
+          vector(row.slice(1,4)) && Math.hypot(...row.slice(1,4))>6378137 &&
+          Math.hypot(...row.slice(1,4))<=8e6 && vector(row.slice(4,7)) &&
+          Math.abs(Math.hypot(...row.slice(4,7))-1)<.1)
+          .map(row=>({time:milliseconds(row[0]),position:row.slice(1,4),sun:row.slice(4,7),
+            source:"RECONSTRUCTED_TLE",epoch:replay.input_epoch_utc}))
+          .sort((a,b)=>a.time-b.time) : [];
     }
     setCurrentOrbit(view) {
       this.currentOrbit = view?.schema === "fds.orbit-view.v1" && view.norad_id === 99999 &&
@@ -123,12 +141,12 @@
       }
     }
     orbitAt(at) {
-      const result = rows => {
+      const result = (rows, reconstructed = false) => {
         const pair = brackets(rows, at);
         if (pair.exact) return {...pair.exact, position: copy(pair.exact.position), sun: unit(pair.exact.sun)};
         const {left, right} = pair;
         if (!left || !right || right.time - left.time > POSITION_GAP_MS ||
-            at < milliseconds(left.epoch) || at < milliseconds(right.epoch) ||
+            (!reconstructed && (at < milliseconds(left.epoch) || at < milliseconds(right.epoch))) ||
             Math.hypot(...right.position.map((value,index)=>value-left.position[index])) /
               ((right.time-left.time)/1000) > 15000) return null;
         const fraction = (at - left.time) / (right.time - left.time);
@@ -139,9 +157,14 @@
       const historical = result(this.fds);
       if (historical) return historical;
       const view = this.currentOrbit;
-      if (!view || !["TLE", "GNSS"].includes(view.source) || !finite(milliseconds(view.input_epoch_utc)) ||
-          at < milliseconds(view.input_epoch_utc) || at - milliseconds(view.input_epoch_utc) >= WINDOW_MS) return null;
-      return result(this.currentRows);
+      if (view && ["TLE", "GNSS"].includes(view.source) && finite(milliseconds(view.input_epoch_utc)) &&
+          at >= milliseconds(view.input_epoch_utc) && at - milliseconds(view.input_epoch_utc) < WINDOW_MS) {
+        const current = result(this.currentRows);
+        if (current) return current;
+      }
+      // A separate FDS product explicitly reconstructs earlier positions from
+      // TLE. It does not turn newer GNSS inputs into historical measurements.
+      return result(this.reconstructedRows, true);
     }
     resolve(at, {live = false} = {}) {
       this.sorted();

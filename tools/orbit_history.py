@@ -10,16 +10,21 @@ import bisect
 import json
 import math
 import os
+import re
 import sqlite3
+import stat
 from datetime import datetime, timezone
 from pathlib import Path
 
 
 HISTORY_NAME = "orbit_history.sqlite3"
+RECONSTRUCTION_NAME = "orbit_reconstruction.json"
 WINDOW_S = 72 * 3600
 MAX_ROWS = 5000
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 MAX_DATABASE_BYTES = 32 * 1024 * 1024
+MAX_RECONSTRUCTION_ROWS = 4323
+_RECONSTRUCTION_UTC = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z\Z")
 
 
 class OrbitHistoryError(ValueError):
@@ -39,6 +44,97 @@ def _utc(value: int) -> str:
 
 def _number(value) -> bool:
     return type(value) in (int, float) and math.isfinite(value)
+
+
+def _reconstruction_stamp(value) -> int:
+    if not isinstance(value, str) or not _RECONSTRUCTION_UTC.fullmatch(value):
+        raise OrbitHistoryError("invalid_orbit_reconstruction")
+    return _stamp(value)
+
+
+def _reconstruction_pairs(items):
+    result = {}
+    for key, value in items:
+        if key in result:
+            raise OrbitHistoryError("invalid_orbit_reconstruction")
+        result[key] = value
+    return result
+
+
+def read_reconstruction(path: Path | None, *, start_utc_s: int, end_utc_s: int,
+                        norad_id: int, now_s: int | None = None) -> dict | None:
+    """Read explicitly reconstructed TLE positions, independently of recorded history.
+
+    Backward propagation can precede the TLE epoch. It is never promoted to a
+    received or historically issued prediction. Invalid optional data raises
+    separately so callers can retain their usable measured/predicted history.
+    """
+    now_s = int(datetime.now(timezone.utc).timestamp()) if now_s is None else now_s
+    if (type(now_s) is not int or type(start_utc_s) is not int or
+            type(end_utc_s) is not int or not 0 < start_utc_s < end_utc_s or
+            end_utc_s-start_utc_s > WINDOW_S or end_utc_s > now_s+1 or
+            type(norad_id) is not int or not 1 <= norad_id <= 99999):
+        raise OrbitHistoryError("invalid_orbit_reconstruction_query")
+    if path is None:
+        return None
+    if (not isinstance(path, Path) or path.name != RECONSTRUCTION_NAME or
+            path.is_symlink() or path.parent.is_symlink()):
+        raise OrbitHistoryError("orbit_reconstruction_unavailable")
+    if not path.exists():
+        return None
+    if not path.is_file():
+        raise OrbitHistoryError("orbit_reconstruction_unavailable")
+    try:
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+        with os.fdopen(os.open(path, flags), "rb") as source:
+            info = os.fstat(source.fileno())
+            if not stat.S_ISREG(info.st_mode) or not 1 <= info.st_size <= MAX_RESPONSE_BYTES:
+                raise OrbitHistoryError("invalid_orbit_reconstruction")
+            raw = source.read(MAX_RESPONSE_BYTES+1)
+        if not 1 <= len(raw) <= MAX_RESPONSE_BYTES:
+            raise OrbitHistoryError("invalid_orbit_reconstruction")
+        payload = json.loads(raw.decode("utf-8"), object_pairs_hook=_reconstruction_pairs)
+        required = {"schema", "quality", "norad_id", "source", "input_epoch_utc",
+                    "generated_utc", "start_utc", "end_utc", "sample_step_s", "samples"}
+        if (not isinstance(payload, dict) or set(payload) != required or
+                payload["schema"] != "pado.orbit-reconstruction.v1" or
+                payload["quality"] != "RECONSTRUCTED_NOT_MEASURED" or
+                type(payload["norad_id"]) is not int or payload["norad_id"] != norad_id or
+                payload["source"] != "TLE" or type(payload["sample_step_s"]) is not int or
+                payload["sample_step_s"] != 60 or not isinstance(payload["samples"], list) or
+                not 2 <= len(payload["samples"]) <= MAX_RECONSTRUCTION_ROWS):
+            raise OrbitHistoryError("invalid_orbit_reconstruction")
+        epoch = _reconstruction_stamp(payload["input_epoch_utc"])
+        generated = _reconstruction_stamp(payload["generated_utc"])
+        first, last = (_reconstruction_stamp(payload[key]) for key in ("start_utc", "end_utc"))
+        # now_s is a whole-second boundary; allow its subsecond component only.
+        if (not 0 < first < last <= generated <= now_s*1000+999 or
+                last-first > WINDOW_S*1000+120000):
+            raise OrbitHistoryError("invalid_orbit_reconstruction")
+        previous = None
+        filtered = []
+        for row in payload["samples"]:
+            if (not isinstance(row, list) or len(row) != 7 or
+                    any(not _number(value) for value in row[1:]) or
+                    not 6378137 < math.hypot(*row[1:4]) <= 8e6 or
+                    abs(math.hypot(*row[4:7])-1) > .02):
+                raise OrbitHistoryError("invalid_orbit_reconstruction")
+            instant = _reconstruction_stamp(row[0])
+            if (not first <= instant <= last or abs(instant-epoch) > WINDOW_S*1000+120000 or
+                    (previous is not None and not 0 < instant-previous <= 120000)):
+                raise OrbitHistoryError("invalid_orbit_reconstruction")
+            if (previous is None and instant != first):
+                raise OrbitHistoryError("invalid_orbit_reconstruction")
+            previous = instant
+            if start_utc_s*1000-120000 <= instant <= end_utc_s*1000+120000:
+                filtered.append(row)
+        if previous != last:
+            raise OrbitHistoryError("invalid_orbit_reconstruction")
+        return {**payload, "samples": filtered, "state": "AVAILABLE", "non_operational": True}
+    except (OSError, UnicodeError, ValueError, TypeError, KeyError) as error:
+        if isinstance(error, OrbitHistoryError):
+            raise
+        raise OrbitHistoryError("invalid_orbit_reconstruction") from error
 
 
 def _path(path: Path, *, existing=False) -> None:
@@ -71,7 +167,12 @@ def record_history(payload: dict, destination: Path, *, now_s: int | None = None
                     any(not _number(v) for v in row[1:])):
                 raise OrbitHistoryError("invalid_orbit_history")
             instant = _stamp(row[0])
-            if (instant < epoch or instant - epoch > WINDOW_S * 1000 or
+            # A 72h product starts slightly after its input epoch. Validate
+            # that product span here; the archive grid below still drops
+            # individual predictions once their input reaches age72h.
+            if (instant < epoch or
+                    (not times and instant-epoch >= WINDOW_S*1000) or
+                    (times and instant-times[0] > WINDOW_S*1000) or
                     not 6.3e6 <= math.hypot(*row[1:4]) <= 8e6 or
                     not .9 <= math.hypot(*row[7:10]) <= 1.1 or
                     (times and not 0 < instant-times[-1] <= 120000)):

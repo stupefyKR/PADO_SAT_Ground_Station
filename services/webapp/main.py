@@ -33,7 +33,8 @@ from .tm_preview import MAX_SNAPSHOT_BYTES, PreviewError, load_beacon, load_snap
 from .state_history import StateHistoryError, history_query, state_history
 from .settings import SettingsError, SettingsStore
 from services.sim_ground.archive import ArchiveError, list_events, list_packets, packet_detail
-from tools.orbit_history import HISTORY_NAME, OrbitHistoryError, read_history as read_orbit_history
+from tools.orbit_history import (HISTORY_NAME, RECONSTRUCTION_NAME, OrbitHistoryError,
+    read_history as read_orbit_history, read_reconstruction)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -619,6 +620,15 @@ class Handler(BaseHTTPRequestHandler):
                     norad_id=99999 if target=="synthetic" else 25544 if target=="iss" else None,**query)
                 if target=="operational" and payload["norad_id"] in (99999,25544):
                     raise OrbitHistoryError("orbit_history_unavailable")
+                payload.update(reconstruction=None, reconstruction_state="WAITING")
+                if target == "synthetic" and source is not None:
+                    try:
+                        reconstructed = read_reconstruction(source.with_name(RECONSTRUCTION_NAME),
+                            norad_id=99999, **query)
+                        payload.update(reconstruction=reconstructed,
+                            reconstruction_state="AVAILABLE" if reconstructed is not None else "WAITING")
+                    except (OrbitHistoryError, OSError, ValueError):
+                        payload["reconstruction_state"] = "INVALID"
                 self._json(HTTPStatus.OK,payload)
             except (StateHistoryError,OrbitHistoryError,OSError,ValueError) as error:
                 self._error(HTTPStatus.BAD_REQUEST if str(error)=="invalid_query" else

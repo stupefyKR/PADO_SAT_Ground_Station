@@ -10,9 +10,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 if __package__:
-    from .orbit_history import record_history
+    from .orbit_history import read_reconstruction, record_history
 else:
-    from orbit_history import record_history
+    from orbit_history import read_reconstruction, record_history
 
 
 MAX_BYTES = 4 * 1024 * 1024
@@ -22,6 +22,39 @@ def timestamp(value: str) -> datetime:
     if not isinstance(value, str) or not value.endswith("Z"):
         raise ValueError("UTC timestamp required")
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def _reconstruction(run: Path, norad: int, now: datetime) -> bytes | None:
+    source = run / "orbit_reconstruction.json"
+    if not source.exists() and not source.is_symlink():
+        return None
+    if source.is_symlink() or not source.is_file() or not 1 <= source.stat().st_size <= 2*1024*1024:
+        raise ValueError("regular bounded FDS reconstruction required")
+    data = source.read_bytes()
+    payload = json.loads(data.decode("utf-8"))
+    validated = read_reconstruction(source,
+        start_utc_s=int(timestamp(payload["start_utc"]).timestamp()),
+        end_utc_s=int(timestamp(payload["end_utc"]).timestamp()),
+        norad_id=norad,now_s=int(now.timestamp()))
+    if validated is None:
+        raise ValueError("FDS reconstruction disappeared during validation")
+    return data
+
+
+def _atomic_publish(destination: Path, final: Path, data: bytes) -> None:
+    scratch: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=destination, prefix=".orbit-view-", suffix=".tmp",
+                                         delete=False) as handle:
+            scratch = Path(handle.name)
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(scratch, 0o644)
+        os.replace(scratch, final)
+    finally:
+        if scratch is not None:
+            scratch.unlink(missing_ok=True)
 
 
 def publish(run: Path, destination: Path) -> Path:
@@ -56,22 +89,15 @@ def publish(run: Path, destination: Path) -> Path:
     final = destination / "orbit_view.json"
     if source.resolve() == final.resolve():
         raise ValueError("published file must be separate from the original FDS run")
+    reconstruction = _reconstruction(run,payload["norad_id"],now)
     # Keep historical predictions before replacing the current-only view. The
     # portal reads this SQLite file through the existing read-only FDS mount.
     record_history(payload, destination, now_s=int(now.timestamp()))
-    scratch: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(dir=destination, prefix=".orbit-view-", suffix=".tmp",
-                                         delete=False) as handle:
-            scratch = Path(handle.name)
-            handle.write(source.read_bytes())
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.chmod(scratch, 0o644)
-        os.replace(scratch, final)
-    finally:
-        if scratch is not None:
-            scratch.unlink(missing_ok=True)
+    if reconstruction is not None:
+        # It shares the existing read-only FDS mount but remains a separate,
+        # explicitly retrospective product. It never enters forecast history.
+        _atomic_publish(destination,destination / "orbit_reconstruction.json",reconstruction)
+    _atomic_publish(destination,final,source.read_bytes())
     return final
 
 

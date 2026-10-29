@@ -112,6 +112,52 @@ class HistoryBackfillFlowTests(unittest.TestCase):
         with response:
             return response.status, dict(response.headers), json.loads(response.read())
 
+    def test_cold_history_reconstruction_keeps_earth_between_tm_times(self):
+        now = int(time.time()) // 60 * 60
+        selected = now - 3600
+        stamp = lambda second: time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(second))
+        fds = self.folder / "fds-reconstruction"
+        fds.mkdir()
+        samples = []
+        for second in range(selected - 60, now + 1, 60):
+            angle = (second-selected)*2*math.pi/5700
+            samples.append([stamp(second),6878137*math.cos(angle),6878137*math.sin(angle),0.,1.,0.,0.])
+        document = {"schema":"pado.orbit-reconstruction.v1", "quality":"RECONSTRUCTED_NOT_MEASURED",
+            "norad_id":99999,"source":"TLE","input_epoch_utc":stamp(now-2),
+            "generated_utc":stamp(now),"start_utc":samples[0][0],"end_utc":samples[-1][0],
+            "sample_step_s":60,"samples":samples}
+        (fds / "orbit_reconstruction.json").write_text(json.dumps(document), encoding="utf-8")
+        self.portal.synthetic_orbit_view = fds / "orbit_view.json"
+        status, headers, _ = self.request("/api/login", {"username":"planner01","password":self.run_password})
+        self.assertEqual(status,200)
+        status, _, orbit = self.request("/api/fds/orbit-history?target=synthetic&"+
+            f"start_utc_s={selected-60}&end_utc_s={now}",
+            headers={"Cookie":headers["Set-Cookie"].split(";",1)[0]})
+        self.assertEqual(status,200)
+        self.assertEqual(orbit["state"],"WAITING")
+        self.assertEqual(orbit["reconstruction_state"],"AVAILABLE")
+        if shutil.which("node"):
+            script = r'''
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
+const input=JSON.parse(fs.readFileSync(0,'utf8')), scope={};vm.createContext(scope);
+vm.runInContext(fs.readFileSync(process.argv[1],'utf8'),scope);
+vm.runInContext(fs.readFileSync(process.argv[2],'utf8'),scope);
+const cache=new scope.rosStateHistory.Cache();cache.setOrbit(input.orbit);
+for(const offset of [1,15,29,59,75,119]){
+  const state=cache.resolve((input.selected+offset)*1000);
+  assert.equal(state.positionSource,'FDS_RECONSTRUCTED_TLE');
+  assert.equal(state.attitudeStatus,'UNKNOWN');
+  const scene=scope.rosAttitudeMath.computeState(state);
+  assert.ok(scene.positionKnown && scene.earthBody && scene.sunBody);
+  assert.equal(scene.orientationKnown,false);
+}
+'''
+            process = subprocess.run([shutil.which("node"),"-e",script,
+                str(ROOT / "web/ops/state_history.js"),str(ROOT / "web/ops/attitude_math.js")],
+                input=json.dumps({"selected":selected,"orbit":orbit}),text=True,
+                capture_output=True,timeout=20)
+            self.assertEqual(process.returncode,0,process.stdout+process.stderr)
+
     def test_two_day_late_attitude_fills_past_gap_without_changing_measurement_time(self):
         now = int(time.time())
         selected = now - 2 * 86400

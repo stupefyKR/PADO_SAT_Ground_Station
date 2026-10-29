@@ -161,7 +161,20 @@ assert.throws(() => module.meshFromJson({...raw, triangles:Array(25001).fill([0,
   }
   viewer.setDirections({orientationKnown:false,positionKnown:false,earthBody:null,sunBody:null});
   assert.equal(viewer.sunStatus,'NO_DATA');assert.equal(viewer.viewSun(),false);
+  assert.equal(viewer.viewEarth(),false);
   assert.ok(labels.includes('자세 정보 없음 · 기준 형상 표시'));
+  // Time selection can move Earth through any body-frame direction while
+  // attitude is held. Keep its viewing angle instead of losing it behind camera.
+  viewer.setDirections({orientationKnown:false,orientationHeld:true,displayOrientationKnown:true,
+    positionKnown:true,satelliteItrf:[6878137,0,0],earthBody:[-1,0,0],sunBody:[0,0,1]});
+  assert.equal(viewer.viewEarth(),true);
+  for (const earth of [[1,0,0],[0,1,0],[0,0,1],[0,-1,0],[0,0,-1]]) {
+    const oldFrames=earthFrames.length;
+    viewer.setDirections({orientationKnown:false,orientationHeld:true,displayOrientationKnown:true,
+      positionKnown:true,satelliteItrf:earth.map(x=>-x*6878137),earthBody:earth,sunBody:[1,0,0]});
+    assert.ok(earthFrames.length>oldFrames,'Earth limb remains rendered after a large timeline jump');
+    assert.equal(viewer.orientationKnown,false,'camera tracking does not infer attitude');
+  }
 })().catch((error) => { console.error(error); process.exitCode = 1; });
 """
 

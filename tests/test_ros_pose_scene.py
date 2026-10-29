@@ -55,27 +55,28 @@ assert.equal(unknown.displayFrame,'ITRF');
 near(unknown.earthBody,[-1,0,0]);
 assert.equal(unknown.earthAlignment,null,'there is no implied nadir alignment');
 viewer.setDirections(unknown);
-assert.ok(!trace.includes('CAD'),'no CAD orientation is displayed when the attitude is unknown');
-assert.ok(!trace.includes('BODY_AXES'));
-assert.ok(!trace.includes('BODY_LABELS'));
+assert.ok(trace.includes('CAD'),'a reference CAD remains visible when the attitude is unknown');
+assert.ok(trace.includes('BODY_AXES'));
+assert.ok(trace.includes('BODY_LABELS'));
 assert.ok(trace.some(item=>item.earth),'the known position still places Earth in the scene');
-assert.ok(text.includes('자세 정보 없음'));
-assert.ok(text.some(value=>value.includes('위치만 표시')));
+assert.ok(text.includes('자세 정보 없음 · 기준 형상 표시'));
 
 // A late quaternion at this same historical time can restore the measured
-// scene. A subsequent gap clears it again; no old pose survives the update.
+// scene. A subsequent gap stays unknown while retaining a visible reference.
 trace.length=0;
 viewer.setDirections(compute({...inputs,attitude}));
 assert.ok(trace.includes('CAD'));
 trace.length=0;
 viewer.setDirections(compute({...inputs,attitude,attitudeStatus:'UNKNOWN'}));
-assert.ok(!trace.includes('CAD'),'UNKNOWN cannot accidentally retain a supplied old quaternion');
+assert.ok(trace.includes('CAD'));
+assert.equal(viewer.orientationKnown,false,'UNKNOWN cannot promote a supplied old quaternion to measured');
+assert.equal(viewer.orientationHeld,false,'only explicitly held references may retain a supplied quaternion');
 trace.length=0;text.length=0;
 viewer.setDirections(null);
 assert.equal(viewer.directions,null);
 assert.equal(viewer.orientationKnown,false);
-assert.ok(!trace.includes('CAD'));
-assert.ok(text.includes('위치 정보도 없습니다'));
+assert.ok(trace.includes('CAD'),'null directions retain the model as a labelled reference');
+assert.ok(text.includes('자세 정보 없음 · 기준 형상 표시'));
 
 // Sun coverage is independent of GNSS and attitude coverage. Do not invent a
 // solar direction or a day/night terminator to make a historical scene full.

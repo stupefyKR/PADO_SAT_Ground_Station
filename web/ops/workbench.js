@@ -791,7 +791,8 @@
       return;
     }
     const sourceLabels = {GNSS_TM:"GNSS 측정",GNSS_INTERPOLATED:"GNSS 표본 사이 보간",
-      FDS_TLE:"FDS · TLE 예측",FDS_GNSS:"FDS · GNSS 수치 전파",FDS_MIXED:"FDS 예측 경계 보간",UNKNOWN:"위치 정보 없음"};
+      FDS_TLE:"FDS · TLE 예측",FDS_GNSS:"FDS · GNSS 수치 전파",FDS_MIXED:"FDS 예측 경계 보간",
+      FDS_RECONSTRUCTED_TLE:"FDS · TLE 과거 궤도 재구성",UNKNOWN:"위치 정보 없음"};
     $("state-history-position").textContent = state.position_itrf_m ?
       state.position_itrf_m.map(value => value.toFixed(0)).join(", ") : "위치 정보 없음";
     $("state-history-position-source").textContent = `${sourceLabels[state.positionSource] || state.positionSource}${
@@ -1028,6 +1029,10 @@
         $("attitude-view-sun").addEventListener("click", () => {
           if (!attitudeViewer.viewSun())
             $("attitude-direction-state").textContent = "태양 방향 자료 없음 · FDS 위치·태양 자료를 기다립니다";
+        });
+        $("attitude-view-earth").addEventListener("click", () => {
+          if (!attitudeViewer.viewEarth())
+            $("attitude-direction-state").textContent = "위치 정보 없음 · 해당 시각의 FDS 위치 자료를 기다립니다";
         });
       } catch (_) {
         attitudeViewer = null;
