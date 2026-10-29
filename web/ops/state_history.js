@@ -179,8 +179,16 @@
       } else if (live && q.left?.valid && at >= q.left.time && at-q.left.time <= ATTITUDE_GAP_MS) {
         attitude = {...q.left}; attitudeStatus = "RECENT_SAMPLE";
       }
+      // Keep a recognizable CAD pose during a TM gap without asserting that
+      // the held orientation is known at the selected measurement time.
+      const lastValid = attitude ? null : brackets(this.validAttitudeRows, at);
+      const held = lastValid?.exact || lastValid?.left || null;
+      const displayAttitude = attitude || (held ? {...held,
+        quaternion_wxyz: copy(held.quaternion_wxyz)} : null);
+      const displayAttitudeStatus = attitude ? attitudeStatus : held ? "LAST_KNOWN" : "UNKNOWN";
       return {utc: iso(at), position_itrf_m: position, sun_itrf: predicted?.sun || null,
         positionSource, positionUtc, positionReceivedUtc, attitude, attitudeStatus,
+        displayAttitude, displayAttitudeStatus,
         attitudeReason: q.exact && !q.exact.valid ? q.exact.reason || "invalid_attitude" : null};
     }
     coverage() {

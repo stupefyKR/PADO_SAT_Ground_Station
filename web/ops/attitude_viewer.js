@@ -215,7 +215,9 @@ window.rosAttitudeViewer = (() => {
       this.directions = null;
       this.stateProvided = false;
       this.orientationKnown = false;
+      this.orientationHeld = false;
       this.positionKnown = false;
+      this.sunStatus = "NO_DATA";
       this.yaw = DEFAULT_YAW;
       this.pitch = DEFAULT_PITCH;
       this.zoom = 1;
@@ -383,6 +385,8 @@ window.rosAttitudeViewer = (() => {
           earthBody: valid(directions.earthBody) ? directions.earthBody : null,
           sunBody: valid(directions.sunBody) ? directions.sunBody : null};
         this.orientationKnown = directions.orientationKnown === true;
+        this.orientationHeld = !this.orientationKnown && directions.orientationHeld === true &&
+          directions.displayOrientationKnown === true;
         this.positionKnown = directions.positionKnown === true &&
           valid(directions.satelliteItrf) && !!this.directions.earthBody;
       } else {
@@ -391,6 +395,7 @@ window.rosAttitudeViewer = (() => {
         this.directions = directions && valid(directions.earthBody) &&
           valid(directions.sunBody) ? directions : null;
         this.orientationKnown = !!this.directions;
+        this.orientationHeld = false;
         this.positionKnown = !!this.directions;
       }
       this.requestDraw();
@@ -401,6 +406,24 @@ window.rosAttitudeViewer = (() => {
       this.pitch = DEFAULT_PITCH;
       this.zoom = 1;
       this.requestDraw();
+    }
+
+    viewSun() {
+      if (!this.directions?.sunBody) return false;
+      // Rotate only the camera. Offset the Sun from the satellite centre so
+      // the foreground CAD does not cover its disc after focusing.
+      const sun = unit(this.directions.sunBody), eye = sun.map(value => -value);
+      const right = unit(cross(Math.abs(eye[2]) > .95 ? [0, 1, 0] : [0, 0, 1], eye));
+      const up = cross(eye, right);
+      const focal = Math.min(this.canvas.width, this.canvas.height) * .33 * 4.3;
+      const dx = Math.min(.65, this.canvas.width * .25 / focal);
+      const dy = this.canvas.height * .2 / focal;
+      const shifted = unit(eye.map((value, index) => value + right[index] * dx + up[index] * dy));
+      this.yaw = Math.atan2(shifted[1], shifted[0]);
+      this.pitch = Math.asin(clamp(shifted[2], -1, 1));
+      this.zoom = 1;
+      this.requestDraw();
+      return true;
     }
 
     installControls() {
@@ -477,15 +500,12 @@ window.rosAttitudeViewer = (() => {
           y: height / 2 - dot(position, basis.up) * pixels * perspective, depth};
       };
       const origin = project([0, 0, 0]);
-      const showOrientation = !this.stateProvided || this.orientationKnown;
-      const axes = this.mesh && showOrientation ? AXES.map((direction) => ({
+      const axes = this.mesh ? AXES.map((direction) => ({
         positive: this.fitDirection(project, direction, 1.5, 30, 30),
         negative: this.fitDirection(project, direction.map((value) => -value),
           1.3, 24, 24),
       })) : [];
-      if (!showOrientation) {
-        this.drawUnknownState(origin);
-      } else if (this.mesh) {
+      if (this.mesh) {
         this.drawMesh(project, basis.eye, basis, pixels);
         this.drawBodyAxes(axes, origin);
         this.drawAxisLabels(axes, origin);
@@ -495,7 +515,9 @@ window.rosAttitudeViewer = (() => {
         ctx.textAlign = "center";
         ctx.fillText("CAD 형상을 불러오는 중이거나 표시할 수 없습니다", width / 2, height / 2);
       }
-      if (showOrientation && this.stateProvided && !this.positionKnown) {
+      if (this.stateProvided && !this.orientationKnown) {
+        this.drawAttitudeNotice();
+      } else if (this.stateProvided && !this.positionKnown) {
         ctx.fillStyle = "#d0dce2"; ctx.font = "13px Malgun Gothic, sans-serif";
         ctx.textAlign = "center";
         ctx.fillText("위치 정보 없음 · 자세 TM 표시", width / 2, height - 18);
@@ -504,30 +526,21 @@ window.rosAttitudeViewer = (() => {
         ctx.textAlign = "center";
         ctx.fillText("태양 방향 자료 없음", width / 2, height - 18);
       }
+      const sunLabels = {NO_DATA:"태양 방향 자료 없음",VISIBLE:"태양 표시 중",
+        OUT_OF_VIEW:"태양 · 시야 밖",EARTH_OCCLUDED:"태양 · 지구에 가림"};
+      ctx.font = "12px Malgun Gothic, sans-serif"; ctx.textAlign = "left";
+      ctx.fillStyle = "#07131fe6"; ctx.fillRect(10, 10, 190, 25);
+      ctx.fillStyle = "#f3d88e"; ctx.fillText(sunLabels[this.sunStatus], 18, 27);
     }
 
-    drawUnknownState(origin) {
+    drawAttitudeNotice() {
       const ctx = this.ctx;
       ctx.save(); ctx.setLineDash([]);
-      if (this.positionKnown) {
-        // A directionless location reticle cannot be mistaken for a body pose.
-        ctx.strokeStyle = "#bdd5df"; ctx.lineWidth = 1.7;
-        ctx.beginPath(); ctx.arc(origin.x, origin.y, 8, 0, Math.PI * 2); ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(origin.x - 15, origin.y); ctx.lineTo(origin.x - 10, origin.y);
-        ctx.moveTo(origin.x + 10, origin.y); ctx.lineTo(origin.x + 15, origin.y);
-        ctx.moveTo(origin.x, origin.y - 15); ctx.lineTo(origin.x, origin.y - 10);
-        ctx.moveTo(origin.x, origin.y + 10); ctx.lineTo(origin.x, origin.y + 15); ctx.stroke();
-      }
-      ctx.fillStyle = "#07131fe6";
-      ctx.fillRect(this.canvas.width / 2 - 140, origin.y + 26, 280, 48);
-      ctx.fillStyle = "#dbe9ef"; ctx.font = "bold 16px Malgun Gothic, sans-serif";
+      ctx.fillStyle = "#07131fe6"; ctx.fillRect(0, this.canvas.height - 34, this.canvas.width, 34);
+      ctx.fillStyle = "#dbe9ef"; ctx.font = "13px Malgun Gothic, sans-serif";
       ctx.textAlign = "center";
-      ctx.fillText("자세 정보 없음", this.canvas.width / 2, origin.y + 46);
-      ctx.font = "12px Malgun Gothic, sans-serif";
-      ctx.fillStyle = "#9eb7c5";
-      ctx.fillText(this.positionKnown ? "위치만 표시 · 해당 시각의 자세 TM 없음" : "위치 정보도 없습니다",
-        this.canvas.width / 2, origin.y + 64);
+      ctx.fillText(this.orientationHeld ? "자세 정보 없음 · 마지막 수신 자세 유지" :
+        "자세 정보 없음 · 기준 형상 표시", this.canvas.width / 2, this.canvas.height - 13);
       ctx.restore();
     }
 
@@ -688,6 +701,7 @@ window.rosAttitudeViewer = (() => {
     }
 
     drawSpaceScene(basis, pixels) {
+      this.sunStatus = "NO_DATA";
       if (!this.directions) return;
       const earth = this.directions.earthBody ? unit(this.directions.earthBody) : null;
       const sun = this.directions.sunBody ? unit(this.directions.sunBody) : null;
@@ -696,7 +710,11 @@ window.rosAttitudeViewer = (() => {
       // direction supplied without that field uses the 500 km demo altitude.
       const radius = Number.isFinite(angle) && angle > 0 && angle < Math.PI / 2 ?
         angle : Math.asin(6378137 / (6378137 + 500000));
-      if (sun) this.drawSunDisc(basis, pixels, sun);
+      if (sun) {
+        this.sunStatus = this.drawSunDisc(basis, pixels, sun) ? "VISIBLE" : "OUT_OF_VIEW";
+        if (earth && Math.acos(clamp(dot(earth, sun), -1, 1)) + .00465 < radius)
+          this.sunStatus = "EARTH_OCCLUDED";
+      }
       if (earth) this.drawEarthHorizon(basis, pixels, earth, sun, radius);
     }
 
@@ -704,12 +722,12 @@ window.rosAttitudeViewer = (() => {
       // Project a distant direction onto the same orbit-camera view as the CAD.
       // A source outside the camera hemisphere stays out of sight.
       const depth = -dot(sun, basis.eye);
-      if (depth <= 0.02) return;
+      if (depth <= 0.02) return false;
       const focal = pixels * 4.3;
       const x = this.canvas.width / 2 + dot(sun, basis.right) * focal / depth;
       const y = this.canvas.height / 2 - dot(sun, basis.up) * focal / depth;
       if (x < -100 || x > this.canvas.width + 100 ||
-          y < -100 || y > this.canvas.height + 100) return;
+          y < -100 || y > this.canvas.height + 100) return false;
       const ctx = this.ctx;
       const halo = ctx.createRadialGradient(x, y, 1, x, y, 88);
       halo.addColorStop(0, "rgba(255,248,205,0.96)");
@@ -719,7 +737,10 @@ window.rosAttitudeViewer = (() => {
       ctx.fillStyle = halo;
       ctx.beginPath(); ctx.arc(x, y, 88, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = "#fff8da";
-      ctx.beginPath(); ctx.arc(x, y, Math.max(4, focal * 0.00465), 0, Math.PI * 2); ctx.fill();
+      const discRadius = Math.max(4, focal * 0.00465);
+      ctx.beginPath(); ctx.arc(x, y, discRadius, 0, Math.PI * 2); ctx.fill();
+      return x >= -discRadius && x <= this.canvas.width + discRadius &&
+        y >= -discRadius && y <= this.canvas.height + discRadius;
     }
 
     drawEarthHorizon(basis, pixels, earth, sun, angularRadius) {

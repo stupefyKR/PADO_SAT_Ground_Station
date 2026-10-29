@@ -101,7 +101,7 @@ assert.throws(() => module.meshFromJson({...raw, triangles:Array(25001).fill([0,
     const original = viewer[name];
     viewer[name] = function(...args) {
       trace.push(name);
-      if (name === 'drawSpaceScene') skyAngles.push(
+      if (name === 'drawSpaceScene' && this.directions?.earthBody) skyAngles.push(
         args[0].eye.reduce((sum, value, index) =>
           sum + value * this.directions.earthBody[index], 0));
       return original.apply(this, args);
@@ -141,6 +141,27 @@ assert.throws(() => module.meshFromJson({...raw, triangles:Array(25001).fill([0,
   viewer.setDirections({earthBody:[-1,0,0], sunBody:[-1,0,0]});
   assert.deepEqual(skyDraws.slice(beforeEclipse), ['sun', 'earth'],
     'Earth is composited over the Sun when their sky directions coincide');
+  assert.equal(viewer.sunStatus,'EARTH_OCCLUDED');
+  assert.ok(labels.includes('태양 · 지구에 가림'));
+  viewer.setDirections({orientationKnown:false,orientationHeld:true,displayOrientationKnown:true,
+    positionKnown:true,satelliteItrf:[6878137,0,0],earthBody:[-1,0,0],sunBody:[0,0,1]});
+  assert.equal(viewer.orientationKnown,false);assert.equal(viewer.orientationHeld,true);
+  assert.deepEqual(trace.slice(-3),['drawSpaceScene','drawMesh','drawBodyAxes'],
+    'unknown current attitude still draws the CAD and body axes using its reference pose');
+  assert.ok(labels.includes('자세 정보 없음 · 마지막 수신 자세 유지'));
+  assert.equal(viewer.sunStatus,'OUT_OF_VIEW');
+  assert.ok(labels.includes('태양 · 시야 밖'));
+  assert.equal(viewer.viewSun(),true);
+  assert.equal(viewer.sunStatus,'VISIBLE','Sun camera focus finds a valid off-screen Sun');
+  assert.equal(viewer.orientationKnown,false,'camera focus never makes held attitude measured');
+  // Camera focusing remains usable for polar Sun directions as well.
+  for (const sun of [[1,0,0],[0,1,0],[0,0,-1]]) {
+    viewer.setDirections({orientationKnown:false,positionKnown:false,earthBody:null,sunBody:sun});
+    assert.equal(viewer.viewSun(),true);assert.equal(viewer.sunStatus,'VISIBLE');
+  }
+  viewer.setDirections({orientationKnown:false,positionKnown:false,earthBody:null,sunBody:null});
+  assert.equal(viewer.sunStatus,'NO_DATA');assert.equal(viewer.viewSun(),false);
+  assert.ok(labels.includes('자세 정보 없음 · 기준 형상 표시'));
 })().catch((error) => { console.error(error); process.exitCode = 1; });
 """
 

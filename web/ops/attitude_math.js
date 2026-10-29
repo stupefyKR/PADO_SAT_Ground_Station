@@ -131,7 +131,8 @@
   }
 
   function computeState({utc, position_itrf_m, sun_itrf, attitude = null,
-    positionSource = null, attitudeStatus = null} = {}) {
+    positionSource = null, attitudeStatus = null, displayAttitude = null,
+    displayAttitudeStatus = null} = {}) {
     // History resolution decides whether TM covers this time. This adapter
     // only transforms a supplied measurement; position never implies attitude.
     if (typeof utc !== "string" || !utc.endsWith("Z") ||
@@ -141,28 +142,34 @@
     const earthItrf = positionKnown ? unit(position_itrf_m.map(value => -value)) : null;
     const sunItrf = finiteVector(sun_itrf) && norm(sun_itrf) >= 0.9 && norm(sun_itrf) <= 1.1 ?
       unit(sun_itrf) : null;
-    const quaternion = attitude?.quaternion_wxyz;
-    const validQuaternion = Array.isArray(quaternion) && quaternion.length === 4 &&
-      quaternion.every(value => typeof value === "number" && Number.isFinite(value)) &&
-      Math.abs(Math.hypot(...quaternion) - 1) <= 0.02;
-    const orientationKnown = attitudeStatus !== "UNKNOWN" &&
-      RECEIVED_FRAMES.has(attitude?.frame) && validQuaternion &&
-      typeof attitude.utc === "string" && attitude.utc.endsWith("Z") &&
-      Number.isFinite(Date.parse(attitude.utc));
-    // With unknown attitude, the sky remains in ITRF. Identity here is only
-    // the Earth-texture display transform, never an assumed spacecraft pose.
-    const displayAxes = orientationKnown ? bodyAxesItrf(quaternion) :
+    const validAttitude = value => RECEIVED_FRAMES.has(value?.frame) &&
+      Array.isArray(value.quaternion_wxyz) && value.quaternion_wxyz.length === 4 &&
+      value.quaternion_wxyz.every(entry => typeof entry === "number" && Number.isFinite(entry)) &&
+      Math.abs(Math.hypot(...value.quaternion_wxyz) - 1) <= 0.02 &&
+      typeof value.utc === "string" && value.utc.endsWith("Z") &&
+      Number.isFinite(Date.parse(value.utc)) && Date.parse(value.utc) <= Date.parse(utc);
+    const orientationKnown = attitudeStatus !== "UNKNOWN" && validAttitude(attitude);
+    // A held pose is a visual reference only. Keep current attitude unknown,
+    // and never take a future measurement when replaying an earlier time.
+    const orientationHeld = !orientationKnown && displayAttitudeStatus === "LAST_KNOWN" &&
+      validAttitude(displayAttitude);
+    const displayOrientationKnown = orientationKnown || orientationHeld;
+    const reference = orientationKnown ? attitude : orientationHeld ? displayAttitude : null;
+    const quaternion = reference?.quaternion_wxyz;
+    const displayAxes = displayOrientationKnown ? bodyAxesItrf(quaternion) :
       [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
-    const earthBody = earthItrf && (orientationKnown ? bodyVector(earthItrf, quaternion) : earthItrf);
-    const sunBody = sunItrf && (orientationKnown ? bodyVector(sunItrf, quaternion) : sunItrf);
-    return {utc, orientationKnown, positionKnown, sunKnown: !!sunItrf,
+    const earthBody = earthItrf && (displayOrientationKnown ? bodyVector(earthItrf, quaternion) : earthItrf);
+    const sunBody = sunItrf && (displayOrientationKnown ? bodyVector(sunItrf, quaternion) : sunItrf);
+    return {utc, orientationKnown, orientationHeld, displayOrientationKnown,
+      displayAttitudeUtc: reference?.utc || null, positionKnown, sunKnown: !!sunItrf,
       attitudeStatus: orientationKnown ? (attitudeStatus || "MEASURED") : "UNKNOWN",
-      positionSource, displayFrame: orientationKnown ? "BODY" : "ITRF",
+      positionSource, displayFrame: displayOrientationKnown ? "BODY" : "ITRF",
       earthBody, sunBody, earthItrf, sunItrf, bodyToItrf: displayAxes,
       satelliteItrf: positionKnown ? position_itrf_m.slice() : null,
       earthAngularRadiusRad: positionKnown ? earthAngularRadius(position_itrf_m) : null,
       earthAlignment: orientationKnown && earthBody ? -earthBody[0] : null,
-      provenance: orientationKnown ? "RECEIVED_ATTITUDE" : "POSITION_WITHOUT_ATTITUDE"};
+      provenance: orientationKnown ? "RECEIVED_ATTITUDE" : orientationHeld ?
+        "LAST_RECEIVED_ATTITUDE" : "POSITION_WITHOUT_ATTITUDE"};
   }
 
   function predictNadir({orbitView, utc} = {}) {

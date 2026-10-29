@@ -797,19 +797,24 @@
     $("state-history-position-source").textContent = `${sourceLabels[state.positionSource] || state.positionSource}${
       state.positionReceivedUtc ? ` · 수신 ${measurementUtc(state.positionReceivedUtc)}` : ""}`;
     const labels = {MEASURED:"수신 자세 TM",INTERPOLATED:"자세 TM 사이 보간",RECENT_SAMPLE:"최근 수신 자세 TM",UNKNOWN:"자세 정보 없음"};
-    $("attitude-source").textContent = (labels[state.attitudeStatus] || "자세 정보 없음") +
+    const held = !state.attitude && state.displayAttitudeStatus === "LAST_KNOWN" && !!state.displayAttitude;
+    const shownAttitude = state.attitude || (held ? state.displayAttitude : null);
+    $("attitude-source").textContent = (held ? "자세 정보 없음 · 마지막 수신 자세 유지" :
+      state.attitudeStatus === "UNKNOWN" ? "자세 정보 없음 · 기준 형상 표시" :
+      labels[state.attitudeStatus] || "자세 정보 없음") +
       (state.attitudeStatus === "RECENT_SAMPLE" ? ` · ${Math.max(0,(state.selectedMs-Date.parse(state.attitude.utc))/1000).toFixed(1)}초 전 표본` : "");
-    $("attitude-quaternion").textContent = state.attitude ? state.attitude.quaternion_wxyz.map(value => value.toFixed(4)).join(", ") : "—";
-    $("attitude-frame").textContent = state.attitude?.frame || "자세 자료 없음";
-    $("attitude-time").textContent = state.attitude ? `${measurementUtc(state.attitude.utc)}${
-      state.attitudeStatus === "INTERPOLATED" ? " · 보간 시각" : ""}` : "선택 시각에 수신한 자세 자료가 없습니다";
-    $("attitude-received-time").textContent = state.attitude?.received_utc ? measurementUtc(state.attitude.received_utc) : "—";
+    $("attitude-quaternion").textContent = shownAttitude ? shownAttitude.quaternion_wxyz.map(value => value.toFixed(4)).join(", ") : "—";
+    $("attitude-frame").textContent = shownAttitude?.frame || "자세 자료 없음";
+    $("attitude-time").textContent = shownAttitude ? `${measurementUtc(shownAttitude.utc)}${
+      held ? " · 마지막 자세 측정" : state.attitudeStatus === "INTERPOLATED" ? " · 보간 시각" : ""}` : "선택 시각에 수신한 자세 자료가 없습니다";
+    $("attitude-received-time").textContent = shownAttitude?.received_utc ? measurementUtc(shownAttitude.received_utc) : "—";
     let directions = null;
     try {directions = window.rosAttitudeMath?.computeState(state) || null;} catch (_) {}
     attitudeViewer?.setDirections(directions);
     $("attitude-direction-state").textContent = !attitudeViewer ? "3D 뷰어 사용 불가" :
       !directions ? "방향 표시 자료·좌표계 검증 대기" : state.attitudeStatus === "UNKNOWN" ?
-      state.position_itrf_m ? "자세 정보 없음 · 위치 표식만 표시" : "위치·자세 자료 없음" : state.position_itrf_m ?
+      `${held ? "마지막 수신 자세 기준 표시 · 현재 자세 정보 없음" : "기준 형상 표시 · 자세 정보 없음"}${
+        state.position_itrf_m ? "" : " · 위치 정보 없음"}` : state.position_itrf_m ?
         state.sun_itrf ? "측정 자세·위치 기준 지구·태양 방향" : "태양 방향 자료 없음" : "위치 정보 없음";
   }
   function setupStateHistory() {
@@ -1020,6 +1025,10 @@
           return false;
         }).catch(() => {});
         $("attitude-reset-camera").addEventListener("click", () => attitudeViewer.reset());
+        $("attitude-view-sun").addEventListener("click", () => {
+          if (!attitudeViewer.viewSun())
+            $("attitude-direction-state").textContent = "태양 방향 자료 없음 · FDS 위치·태양 자료를 기다립니다";
+        });
       } catch (_) {
         attitudeViewer = null;
         $("attitude-model-state").textContent = "이 브라우저에서 3D 표시를 시작하지 못했습니다";

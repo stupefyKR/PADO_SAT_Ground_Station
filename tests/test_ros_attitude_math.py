@@ -110,6 +110,24 @@ assert.equal(predictNadir({orbitView: {...predictedView,
   samples: predictedView.samples.map((row) => row.slice(0,7).concat([0,0,0]))},
   utc:t0}), null);
 assert.equal(predictNadir({orbitView:view([6878000,0,0],[0,0,-1]), utc:t0}), null);
+
+// Keep the most recent measured pose as a display reference through a gap,
+// while Earth/Sun follow the selected position rather than the old sample.
+const stateInput = {utc:t1,position_itrf_m:[0,0,-6878000],sun_itrf:[1,0,0],
+  attitude:null,attitudeStatus:'UNKNOWN',displayAttitude:attitude([root,0,root,0]),
+  displayAttitudeStatus:'LAST_KNOWN'};
+const held=scope.rosAttitudeMath.computeState(stateInput);
+assert.equal(held.orientationKnown,false);
+assert.equal(held.orientationHeld,true);assert.equal(held.displayOrientationKnown,true);
+assert.equal(held.displayAttitudeUtc,t0);assert.equal(held.earthAlignment,null);
+near(held.earthBody,[-1,0,0]);near(held.sunBody,[0,0,1]);
+assert.equal(held.provenance,'LAST_RECEIVED_ATTITUDE');
+const future=scope.rosAttitudeMath.computeState({...stateInput,
+  displayAttitude:attitude([1,0,0,0],'2026-10-26T05:02:00.000Z')});
+assert.equal(future.orientationHeld,false,'future attitude cannot fill an earlier view');
+const neutral=scope.rosAttitudeMath.computeState({...stateInput,displayAttitude:null});
+assert.equal(neutral.orientationKnown,false);assert.equal(neutral.displayOrientationKnown,false);
+near(neutral.sunBody,[1,0,0]);
 """
 
 

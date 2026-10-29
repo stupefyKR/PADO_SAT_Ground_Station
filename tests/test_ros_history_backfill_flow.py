@@ -43,10 +43,13 @@ const scene=scope.rosAttitudeMath.computeState(after);
 assert.equal(scene.orientationKnown,true);
 assert.ok(Math.abs(scene.earthAlignment)<1e-5,'an arbitrary non-nadir quaternion stays non-nadir');
 const gap=cache.resolve(at+60000);
-assert.equal(gap.attitudeStatus,'UNKNOWN','a long missing interval is not held or assumed nadir');
+assert.equal(gap.attitudeStatus,'UNKNOWN','a held display never becomes a measured attitude');
 assert.ok(gap.positionSource.startsWith('FDS_'),'FDS supplies location independently of attitude coverage');
 assert.equal(scope.rosAttitudeMath.computeState(gap).positionKnown,true);
 assert.equal(scope.rosAttitudeMath.computeState(gap).orientationKnown,false);
+assert.equal(gap.displayAttitudeStatus,'LAST_KNOWN');
+assert.equal(scope.rosAttitudeMath.computeState(gap).orientationHeld,true);
+assert.equal(scope.rosAttitudeMath.computeState(gap).displayAttitudeUtc,after.attitude.utc);
 """
 
 
