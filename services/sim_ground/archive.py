@@ -137,6 +137,8 @@ class PacketArchive:
                     "UNIQUE(name,sampled_ms,sequence))")
                 self.connection.execute("CREATE INDEX IF NOT EXISTS packets_name_id "
                                         "ON packets(name,id)")
+                self.connection.execute("CREATE INDEX IF NOT EXISTS packets_measurement_time "
+                                        "ON packets(name,sampled_ms,id)")
                 self.connection.execute("PRAGMA user_version=1")
             self.connection.close()
             self.connection = None

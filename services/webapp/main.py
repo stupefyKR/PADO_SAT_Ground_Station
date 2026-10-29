@@ -30,7 +30,9 @@ from .mps_workbench import CandidateError, MpsCandidateStore, draft_commands
 from .ros_workbench import DraftError, RosDraftStore, normalize_sim_handoff
 from .sim_tc_dispatch import SimTcDispatcher
 from .tm_preview import MAX_SNAPSHOT_BYTES, PreviewError, load_beacon, load_snapshot
+from .state_history import StateHistoryError, history_query, state_history
 from services.sim_ground.archive import ArchiveError, list_events, list_packets, packet_detail
+from tools.orbit_history import HISTORY_NAME, OrbitHistoryError, read_history as read_orbit_history
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -66,6 +68,7 @@ ASSETS = {
     "/assets/ros-workbench.js": ("ops/workbench.js", "text/javascript; charset=utf-8"),
     "/assets/ros-packet-browser.js": ("ops/packet_browser.js", "text/javascript; charset=utf-8"),
     "/assets/ros-attitude-math.js": ("ops/attitude_math.js", "text/javascript; charset=utf-8"),
+    "/assets/ros-state-history.js": ("ops/state_history.js", "text/javascript; charset=utf-8"),
     "/assets/ros-attitude-gl.js": ("ops/attitude_gl.js", "text/javascript; charset=utf-8"),
     "/assets/ros-attitude-viewer.js": ("ops/attitude_viewer.js", "text/javascript; charset=utf-8"),
     "/assets/ros-workbench.css": ("ops/workbench.css", "text/css; charset=utf-8"),
@@ -328,7 +331,12 @@ class Handler(BaseHTTPRequestHandler):
             return ""
         if parsed.query:
             kind = archive_route(parsed.path, portal=self.server.mode == "portal")
-            if kind in ("packets", "events"):
+            if parsed.path in ("/api/ros/state-history", "/state-history", "/api/fds/orbit-history"):
+                try:
+                    history_query(parsed.query,orbit=parsed.path=="/api/fds/orbit-history")
+                except ValueError:
+                    return ""
+            elif kind in ("packets", "events"):
                 try:
                     archive_query(parsed.query, events=kind == "events")
                 except ValueError:
@@ -581,6 +589,34 @@ class Handler(BaseHTTPRequestHandler):
                            {"username": session.username, "role": session.role,
                             "csrf": session.csrf, "operational": False})
             return
+        if path == "/api/ros/state-history":
+            session = self._session()
+            if not session:
+                self._error(HTTPStatus.UNAUTHORIZED,"login_required")
+                return
+            query = history_query(urlsplit(self.path).query)
+            self._proxy(("ros","/state-history?"+urlencode(query)),session.username,session.role)
+            return
+        if path == "/api/fds/orbit-history":
+            if not self._session():
+                self._error(HTTPStatus.UNAUTHORIZED,"login_required")
+                return
+            try:
+                query = history_query(urlsplit(self.path).query,orbit=True)
+                target = query.pop("target")
+                source = {"synthetic":self.server.synthetic_orbit_view or self.server.orbit_view,
+                    "iss":self.server.iss_orbit_view,"operational":self.server.operational_orbit_view}[target]
+                if source is not None and (source.name!="orbit_view.json" or source.is_symlink()):
+                    raise OrbitHistoryError("orbit_history_unavailable")
+                payload = read_orbit_history(source.with_name(HISTORY_NAME) if source else None,
+                    norad_id=99999 if target=="synthetic" else 25544 if target=="iss" else None,**query)
+                if target=="operational" and payload["norad_id"] in (99999,25544):
+                    raise OrbitHistoryError("orbit_history_unavailable")
+                self._json(HTTPStatus.OK,payload)
+            except (StateHistoryError,OrbitHistoryError,OSError,ValueError) as error:
+                self._error(HTTPStatus.BAD_REQUEST if str(error)=="invalid_query" else
+                            HTTPStatus.SERVICE_UNAVAILABLE,str(error))
+            return
         if path == "/api/fds/orbit":
             if not self._session():
                 self._error(HTTPStatus.UNAUTHORIZED, "login_required")
@@ -693,14 +729,14 @@ class Handler(BaseHTTPRequestHandler):
             connection.request(method, path, body=payload, headers=headers)
             response = connection.getresponse()
             base_path = urlsplit(path).path
-            maximum = (MAX_TM_ARCHIVE_RESPONSE if archive_route(base_path) else
+            maximum = (MAX_TM_ARCHIVE_RESPONSE if archive_route(base_path) or base_path=="/state-history" else
                        MAX_SNAPSHOT_BYTES if path == "/test-tm-snapshot" else
                        2 * 1024 * 1024 if path == "/test-sim-sequences" else
                        1024 * 1024 if path == "/test-sequences" and service == "mps"
                        else MAX_UPSTREAM)
             data = response.read(maximum + 1)
             captured = None
-            if len(data) > maximum or (method == "GET" and not archive_route(base_path) and path not in
+            if len(data) > maximum or (method == "GET" and not archive_route(base_path) and base_path!="/state-history" and path not in
                                             ("/test-sequences", "/test-reservations",
                                              "/test-candidates",
                                              "/test-tm-snapshot", "/test-beacon") and
@@ -723,6 +759,15 @@ class Handler(BaseHTTPRequestHandler):
         role = self.headers.get("X-Pado-Role", "")
         if role not in ROLES or len(actor) > 64 or not actor:
             self._error(HTTPStatus.FORBIDDEN, "portal_identity")
+            return
+        if self.server.mode=="ros" and path=="/state-history":
+            try:
+                query = history_query(urlsplit(self.path).query)
+                archive = self.server.tm_preview.with_name("received_tm.sqlite3") if self.server.tm_preview else None
+                self._json(HTTPStatus.OK,state_history(archive,**query))
+            except StateHistoryError as error:
+                self._error(HTTPStatus.BAD_REQUEST if str(error)=="invalid_query" else
+                            HTTPStatus.SERVICE_UNAVAILABLE,str(error))
             return
         kind = archive_route(path) if self.server.mode == "ros" else None
         if kind:

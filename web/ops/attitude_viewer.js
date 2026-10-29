@@ -213,6 +213,9 @@ window.rosAttitudeViewer = (() => {
       this.glRenderer = null;
       this.textureCache = new Map();
       this.directions = null;
+      this.stateProvided = false;
+      this.orientationKnown = false;
+      this.positionKnown = false;
       this.yaw = DEFAULT_YAW;
       this.pitch = DEFAULT_PITCH;
       this.zoom = 1;
@@ -374,8 +377,22 @@ window.rosAttitudeViewer = (() => {
       const valid = (vector) => Array.isArray(vector) && vector.length === 3 &&
         vector.every((entry) => typeof entry === "number" && Number.isFinite(entry)) &&
         length(vector) > 1e-9;
-      this.directions = directions && valid(directions.earthBody) &&
-        valid(directions.sunBody) ? directions : null;
+      this.stateProvided = true;
+      if (directions && typeof directions.orientationKnown === "boolean") {
+        this.directions = {...directions,
+          earthBody: valid(directions.earthBody) ? directions.earthBody : null,
+          sunBody: valid(directions.sunBody) ? directions.sunBody : null};
+        this.orientationKnown = directions.orientationKnown === true;
+        this.positionKnown = directions.positionKnown === true &&
+          valid(directions.satelliteItrf) && !!this.directions.earthBody;
+      } else {
+        // Retain the explicit test-preview adapter, while null always clears
+        // the last pose instead of keeping an older measurement on screen.
+        this.directions = directions && valid(directions.earthBody) &&
+          valid(directions.sunBody) ? directions : null;
+        this.orientationKnown = !!this.directions;
+        this.positionKnown = !!this.directions;
+      }
       this.requestDraw();
     }
 
@@ -460,12 +477,15 @@ window.rosAttitudeViewer = (() => {
           y: height / 2 - dot(position, basis.up) * pixels * perspective, depth};
       };
       const origin = project([0, 0, 0]);
-      const axes = this.mesh ? AXES.map((direction) => ({
+      const showOrientation = !this.stateProvided || this.orientationKnown;
+      const axes = this.mesh && showOrientation ? AXES.map((direction) => ({
         positive: this.fitDirection(project, direction, 1.5, 30, 30),
         negative: this.fitDirection(project, direction.map((value) => -value),
           1.3, 24, 24),
       })) : [];
-      if (this.mesh) {
+      if (!showOrientation) {
+        this.drawUnknownState(origin);
+      } else if (this.mesh) {
         this.drawMesh(project, basis.eye, basis, pixels);
         this.drawBodyAxes(axes, origin);
         this.drawAxisLabels(axes, origin);
@@ -475,6 +495,40 @@ window.rosAttitudeViewer = (() => {
         ctx.textAlign = "center";
         ctx.fillText("CAD 형상을 불러오는 중이거나 표시할 수 없습니다", width / 2, height / 2);
       }
+      if (showOrientation && this.stateProvided && !this.positionKnown) {
+        ctx.fillStyle = "#d0dce2"; ctx.font = "13px Malgun Gothic, sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText("위치 정보 없음 · 자세 TM 표시", width / 2, height - 18);
+      } else if (this.directions && !this.directions.sunBody) {
+        ctx.fillStyle = "#9eb7c5"; ctx.font = "12px Malgun Gothic, sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText("태양 방향 자료 없음", width / 2, height - 18);
+      }
+    }
+
+    drawUnknownState(origin) {
+      const ctx = this.ctx;
+      ctx.save(); ctx.setLineDash([]);
+      if (this.positionKnown) {
+        // A directionless location reticle cannot be mistaken for a body pose.
+        ctx.strokeStyle = "#bdd5df"; ctx.lineWidth = 1.7;
+        ctx.beginPath(); ctx.arc(origin.x, origin.y, 8, 0, Math.PI * 2); ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(origin.x - 15, origin.y); ctx.lineTo(origin.x - 10, origin.y);
+        ctx.moveTo(origin.x + 10, origin.y); ctx.lineTo(origin.x + 15, origin.y);
+        ctx.moveTo(origin.x, origin.y - 15); ctx.lineTo(origin.x, origin.y - 10);
+        ctx.moveTo(origin.x, origin.y + 10); ctx.lineTo(origin.x, origin.y + 15); ctx.stroke();
+      }
+      ctx.fillStyle = "#07131fe6";
+      ctx.fillRect(this.canvas.width / 2 - 140, origin.y + 26, 280, 48);
+      ctx.fillStyle = "#dbe9ef"; ctx.font = "bold 16px Malgun Gothic, sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText("자세 정보 없음", this.canvas.width / 2, origin.y + 46);
+      ctx.font = "12px Malgun Gothic, sans-serif";
+      ctx.fillStyle = "#9eb7c5";
+      ctx.fillText(this.positionKnown ? "위치만 표시 · 해당 시각의 자세 TM 없음" : "위치 정보도 없습니다",
+        this.canvas.width / 2, origin.y + 64);
+      ctx.restore();
     }
 
     drawStars() {
@@ -635,15 +689,15 @@ window.rosAttitudeViewer = (() => {
 
     drawSpaceScene(basis, pixels) {
       if (!this.directions) return;
-      const earth = unit(this.directions.earthBody);
-      const sun = unit(this.directions.sunBody);
+      const earth = this.directions.earthBody ? unit(this.directions.earthBody) : null;
+      const sun = this.directions.sunBody ? unit(this.directions.sunBody) : null;
       const angle = this.directions.earthAngularRadiusRad;
       // The radius is computed from the FDS satellite position. A test-only
       // direction supplied without that field uses the 500 km demo altitude.
       const radius = Number.isFinite(angle) && angle > 0 && angle < Math.PI / 2 ?
         angle : Math.asin(6378137 / (6378137 + 500000));
-      this.drawSunDisc(basis, pixels, sun);
-      this.drawEarthHorizon(basis, pixels, earth, sun, radius);
+      if (sun) this.drawSunDisc(basis, pixels, sun);
+      if (earth) this.drawEarthHorizon(basis, pixels, earth, sun, radius);
     }
 
     drawSunDisc(basis, pixels, sun) {
@@ -757,8 +811,10 @@ window.rosAttitudeViewer = (() => {
             green = source[sourceIndex + 1];
             blue = source[sourceIndex + 2];
           }
-          const sunlight = Math.max(0, nx * sun[0] + ny * sun[1] + nz * sun[2]);
-          const illumination = 0.24 + 0.76 * Math.sqrt(sunlight);
+          const sunlight = sun ? Math.max(0, nx * sun[0] + ny * sun[1] + nz * sun[2]) : null;
+          // No Sun history means unknown lighting, rather than a fabricated
+          // day/night terminator in a direction chosen by the viewer.
+          const illumination = sunlight === null ? 0.72 : 0.24 + 0.76 * Math.sqrt(sunlight);
           const rim = Math.pow(1 - clamp(Math.sqrt(discriminant), 0, 1), 6);
           target[index] = Math.min(255, red * illumination + 36 * rim);
           target[index + 1] = Math.min(255, green * illumination + 96 * rim);

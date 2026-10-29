@@ -30,7 +30,9 @@ class PublishFdsViewTests(unittest.TestCase):
             "source": "TLE", "norad_id": 12345, "input_sha256": "a" * 64,
             "input_epoch_utc": iso(epoch), "start_utc": iso(start), "end_utc": iso(end),
             "stations": [{"id": "yonsei"}, {"id": "kari"}],
-            "samples": [[iso(start)], [iso(end)]],
+            "sample_step_s": 60,
+            "samples": [[iso(start+timedelta(seconds=offset)),6878137.,0.,0.,0.,0.,500000.,1.,0.,0.]
+                        for offset in range(0,24*3600+1,60)],
         }
         (self.run / "orbit_view.json").write_text(json.dumps(payload), encoding="utf-8")
         (self.run / "run.properties").write_text(
@@ -42,7 +44,8 @@ class PublishFdsViewTests(unittest.TestCase):
         self.fixture()
         final = publish(self.run, self.root / "served")
         self.assertEqual(json.loads(final.read_text())["norad_id"], 12345)
-        self.assertEqual(sorted(item.name for item in final.parent.iterdir()), ["orbit_view.json"])
+        self.assertEqual(sorted(item.name for item in final.parent.iterdir()),
+                         ["orbit_history.sqlite3", "orbit_view.json"])
 
     def test_stale_run_is_rejected(self):
         self.fixture(start_offset_hours=-100, input_offset_hours=-101)

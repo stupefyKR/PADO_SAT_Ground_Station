@@ -56,13 +56,16 @@ def build() -> list[Path]:
       item.setAttribute("aria-pressed", String(item === button)));
     renderSensors();
   }));
-  document.querySelectorAll("#ros-view-tc button, #ros-view-tc input, #ros-view-tc select, #demo-toggle, #tm-file")
+  document.querySelectorAll("#ros-view-tc button, #ros-view-tc input, #ros-view-tc select, #demo-toggle, #tm-file, .state-history-controls button, .state-history-controls input, .state-history-controls select")
     .forEach((node) => { node.disabled = true; });
   $("overview-beacon-state").textContent = "서버 연결 없음";
   $("overview-beacon-summary").textContent = "비콘·TC·수신 원문은 VM 서버에서 확인합니다.";
   $("packet-browser-state").textContent = "서버/API 연결 없음 · 수신 원문 조회는 VM 서버에서 가능합니다.";
   $("spacecraft-event-count").textContent = "서버 연결 없음";
   $("attitude-model-state").textContent = "3D CAD는 서버 화면에서 확인";
+  $("state-history-mode").textContent = "오프라인 미리보기";
+  $("state-history-selected").textContent = "서버 연결 필요";
+  $("state-history-status").textContent = "최근 72시간의 위치·자세 이력 재생은 VM 서버 연결 후 사용할 수 있습니다.";
   const canvas = $("attitude-canvas");
   const context = canvas.getContext("2d");
   if (context) {
@@ -80,7 +83,7 @@ def build() -> list[Path]:
                        packet_browser + "\n" + workbench)
             html = html.replace('<script src="/assets/ros-workbench.js" defer></script>', '')
             for script in ("ros-packet-browser.js", "ros-attitude-math.js",
-                           "ros-attitude-gl.js", "ros-attitude-viewer.js"):
+                           "ros-attitude-gl.js", "ros-attitude-viewer.js", "ros-state-history.js"):
                 html = html.replace(f'<script src="/assets/{script}" defer></script>', '')
         else:
             html = html.replace('<script src="/assets/mps-live.js" defer></script>', '')

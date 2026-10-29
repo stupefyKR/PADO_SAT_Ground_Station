@@ -9,6 +9,11 @@ import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+if __package__:
+    from .orbit_history import record_history
+else:
+    from orbit_history import record_history
+
 
 MAX_BYTES = 4 * 1024 * 1024
 
@@ -51,6 +56,9 @@ def publish(run: Path, destination: Path) -> Path:
     final = destination / "orbit_view.json"
     if source.resolve() == final.resolve():
         raise ValueError("published file must be separate from the original FDS run")
+    # Keep historical predictions before replacing the current-only view. The
+    # portal reads this SQLite file through the existing read-only FDS mount.
+    record_history(payload, destination, now_s=int(now.timestamp()))
     scratch: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(dir=destination, prefix=".orbit-view-", suffix=".tmp",

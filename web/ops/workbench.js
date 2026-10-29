@@ -50,6 +50,8 @@
   let attitudeViewer = null;
   let attitudeOrbitView = null;
   let attitudeOrbitPending = false;
+  let historyController = null;
+  let historyCoverageKey = "";
   let packetBrowser = null;
   let spacecraftEventsPending = false;
   const CURRENT_SAMPLE_AGE_MS = 120_000;
@@ -750,53 +752,94 @@
     }
   }
 
+  function drawHistoryCoverage(state) {
+    const key = `${state.cacheRevision}:${Math.floor(state.endMs/60000)}`;
+    if (historyCoverageKey === key || !historyController) return;
+    historyCoverageKey = key;
+    const canvas = $("state-history-coverage"), context = canvas.getContext("2d");
+    if (!context) return;
+    context.fillStyle = "#17303d"; context.fillRect(0,0,canvas.width,canvas.height);
+    context.fillStyle = "#80cdb5";
+    for (const [first,last] of historyController.cache.coverage()) {
+      const x = Math.max(0,(first-state.startMs)/(state.endMs-state.startMs)*canvas.width);
+      const end = Math.min(canvas.width,(last-state.startMs)/(state.endMs-state.startMs)*canvas.width);
+      context.fillRect(x,2,Math.max(1,end-x),canvas.height-4);
+    }
+  }
+  function renderHistoryState(state) {
+    $("state-history-slider").min = String(Math.floor(state.startMs/1000));
+    $("state-history-slider").max = String(Math.floor(state.endMs/1000));
+    $("state-history-slider").value = String(Math.floor(state.selectedMs/1000));
+    $("state-history-selected").textContent = measurementUtc(state.selectedMs);
+    $("state-history-selected").dateTime = state.utc;
+    $("state-history-slider").setAttribute("aria-valuetext", measurementUtc(state.selectedMs));
+    $("state-history-start").textContent = measurementUtc(state.startMs);
+    $("state-history-end").textContent = measurementUtc(state.endMs);
+    $("state-history-live").setAttribute("aria-pressed",String(state.live));
+    $("state-history-play").setAttribute("aria-pressed",String(state.playing));
+    $("state-history-play").textContent = state.playing ? "일시정지" : "재생";
+    $("state-history-previous").disabled=state.previousSampleMs===null;
+    $("state-history-next").disabled=state.nextSampleMs===null;
+    $("state-history-mode").textContent = state.live ? "현재 시각" : state.playing ? "과거 이력 재생 중" : "과거 시각 선택";
+    $("state-history-status").textContent = `${state.loading ? "이력 읽는 중" : state.error || "수신 이력 반영"}${
+      state.backfilled ? ` · 지연 수신 표본 ${state.backfilled}건 반영` : ""}${state.truncated ? " · 표본 상한으로 일부 구간 제외" : ""}`;
+    drawHistoryCoverage(state);
+    if (tmSource !== "published") {
+      $("state-history-status").textContent = "수동 시험 자료 표시 중 · 현재 버튼이나 이력 바를 선택하면 수신 이력으로 돌아갑니다.";
+      return;
+    }
+    const sourceLabels = {GNSS_TM:"GNSS 측정",GNSS_INTERPOLATED:"GNSS 표본 사이 보간",
+      FDS_TLE:"FDS · TLE 예측",FDS_GNSS:"FDS · GNSS 수치 전파",FDS_MIXED:"FDS 예측 경계 보간",UNKNOWN:"위치 정보 없음"};
+    $("state-history-position").textContent = state.position_itrf_m ?
+      state.position_itrf_m.map(value => value.toFixed(0)).join(", ") : "위치 정보 없음";
+    $("state-history-position-source").textContent = `${sourceLabels[state.positionSource] || state.positionSource}${
+      state.positionReceivedUtc ? ` · 수신 ${measurementUtc(state.positionReceivedUtc)}` : ""}`;
+    const labels = {MEASURED:"수신 자세 TM",INTERPOLATED:"자세 TM 사이 보간",RECENT_SAMPLE:"최근 수신 자세 TM",UNKNOWN:"자세 정보 없음"};
+    $("attitude-source").textContent = (labels[state.attitudeStatus] || "자세 정보 없음") +
+      (state.attitudeStatus === "RECENT_SAMPLE" ? ` · ${Math.max(0,(state.selectedMs-Date.parse(state.attitude.utc))/1000).toFixed(1)}초 전 표본` : "");
+    $("attitude-quaternion").textContent = state.attitude ? state.attitude.quaternion_wxyz.map(value => value.toFixed(4)).join(", ") : "—";
+    $("attitude-frame").textContent = state.attitude?.frame || "자세 자료 없음";
+    $("attitude-time").textContent = state.attitude ? `${measurementUtc(state.attitude.utc)}${
+      state.attitudeStatus === "INTERPOLATED" ? " · 보간 시각" : ""}` : "선택 시각에 수신한 자세 자료가 없습니다";
+    $("attitude-received-time").textContent = state.attitude?.received_utc ? measurementUtc(state.attitude.received_utc) : "—";
+    let directions = null;
+    try {directions = window.rosAttitudeMath?.computeState(state) || null;} catch (_) {}
+    attitudeViewer?.setDirections(directions);
+    $("attitude-direction-state").textContent = !attitudeViewer ? "3D 뷰어 사용 불가" :
+      !directions ? "방향 표시 자료·좌표계 검증 대기" : state.attitudeStatus === "UNKNOWN" ?
+      state.position_itrf_m ? "자세 정보 없음 · 위치 표식만 표시" : "위치·자세 자료 없음" : state.position_itrf_m ?
+        state.sun_itrf ? "측정 자세·위치 기준 지구·태양 방향" : "태양 방향 자료 없음" : "위치 정보 없음";
+  }
+  function setupStateHistory() {
+    if (!window.rosStateHistory) return;
+    historyController = new window.rosStateHistory.Controller({api,onChange:renderHistoryState});
+    const enter = action => {tmSource="published"; action();};
+    $("state-history-live").addEventListener("click",()=>enter(()=>historyController.goLive()));
+    $("state-history-play").addEventListener("click",()=>enter(()=>historyController.togglePlay()));
+    $("state-history-previous").addEventListener("click",()=>enter(()=>historyController.stepSample(-1)));
+    $("state-history-next").addEventListener("click",()=>enter(()=>historyController.stepSample(1)));
+    $("state-history-speed").addEventListener("change",()=>historyController.setSpeed($("state-history-speed").value));
+    $("state-history-slider").addEventListener("input",()=>enter(()=>historyController.seek(Number($("state-history-slider").value)*1000)));
+    historyController.emit();
+  }
   function renderAttitude(attitude) {
-    if (!attitudeViewer) {
-      $("attitude-direction-state").textContent = "3D 뷰어 사용 불가";
+    if (tmSource === "published") {
+      if (historyController) renderHistoryState(historyController.state());
+      else {
+        attitudeViewer?.setDirections(null);
+        $("attitude-source").textContent="자세 정보 없음";
+        $("attitude-direction-state").textContent="위치·자세 이력 연결 대기";
+      }
       return;
     }
     let directions = null;
-    let state = "자세 TM 표본 없음";
-    let source = attitude ? "시험 자세 TM 수신" : "데이터 없음";
-    const now = Date.now();
-    const tmAge = attitude ? now - Date.parse(attitude.utc) : Infinity;
-    const publishedTmStale = tmSource === "published" &&
-      (!attitude || !publishedReachable || !Number.isFinite(tmAge) ||
-       tmAge < -30 * 1000 || tmAge > CURRENT_SAMPLE_AGE_MS);
-    if (publishedTmStale) {
-      source = attitude ? "마지막 시험 TM · 오래됨" : "시험 자세 TM 미수신";
-      const tmState = attitude ? "마지막 TM 오래됨" : "자세 TM 미수신";
-      try {
-        directions = window.rosAttitudeMath?.predictNadir({
-          orbitView: attitudeOrbitView, utc: new Date(now).toISOString()
-        }) || null;
-      } catch (_) { directions = null; }
-      if (directions) {
-        source = "FDS 예상 자세 · 시험";
-        state = `FDS 예상 · 수신 TM 아님 · ${directions.utc} · −X-지구 0.0°`;
-      } else {
-        state = attitudeOrbitView ?
-          `${tmState} · FDS 예상 자세 산출 대기` :
-          `${tmState} · FDS 위치·태양 자료 대기`;
-      }
-    } else if (attitude && attitude.frame !== "SIM_BODY_TO_ITRF_NADIR") {
-      state = "방향 산출을 지원하지 않는 자세 좌표계";
-    } else if (attitude && !attitudeOrbitView) {
-      state = "FDS 위치·태양 자료 대기";
-    } else if (attitude) {
-      try {
-        directions = window.rosAttitudeMath?.compute({attitude, orbitView: attitudeOrbitView}) || null;
-      } catch (_) { directions = null; }
-      state = directions ?
-        `지구·태양 방향 · −X-지구 ${
-          (Math.acos(Math.max(-1, Math.min(1, directions.earthAlignment))) * 180 / Math.PI).toFixed(1)}° · 시험` :
-        "TM·FDS 시각 또는 위성 식별자 불일치";
-    }
-    if (tmSource === "manual" && attitude) source = "불러온 시험 자세 TM";
-    if (tmSource === "example" && attitude) source = "합성 예시 TM";
-    attitudeViewer.setDirections(directions);
-    $("attitude-source").textContent = source;
-    $("attitude-direction-state").textContent = state;
+    try {directions = attitude && window.rosAttitudeMath?.compute({attitude,orbitView:attitudeOrbitView}) || null;} catch (_) {}
+    attitudeViewer?.setDirections(directions);
+    $("attitude-source").textContent = tmSource === "manual" ? "불러온 시험 자세 TM" : "합성 예시 TM";
+    $("attitude-direction-state").textContent = directions ? "수동 시험 자료의 지구·태양 방향" : "수동 시험 자료의 좌표계·위치 연결 없음";
+    $("attitude-received-time").textContent = "수동 시험 입력";
+    $("state-history-position").textContent = directions?.satelliteItrf ? directions.satelliteItrf.map(value=>value.toFixed(0)).join(", ") : "수동 자료의 위치 연결 없음";
+    $("state-history-position-source").textContent = "수동 시험 입력 · 수신 이력 아님";
   }
 
   async function refreshAttitudeOrbit() {
@@ -806,6 +849,7 @@
       const orbit = await api("/api/fds/orbit?target=synthetic");
       attitudeOrbitView = orbit?.schema === "fds.orbit-view.v1" &&
         orbit.norad_id === 99999 ? orbit : null;
+      historyController?.cache.setCurrentOrbit(attitudeOrbitView);
     } catch (_) {
       attitudeOrbitView = null;
     } finally {
@@ -830,10 +874,12 @@
     $("chart-source").textContent =
       `데이터 소스: ${sourceLabel} · 측정 UTC ${timing.latestUtc} · 실제 위성 TM 아님`;
     $("demo-toggle").textContent = "합성 예시 보기";
-    $("attitude-quaternion").textContent = selectedTm.attitude ?
+    if (tmSource !== "published") {
+      $("attitude-quaternion").textContent = selectedTm.attitude ?
       selectedTm.attitude.quaternion_wxyz.map((x) => x.toFixed(4)).join(", ") : "—";
-    $("attitude-frame").textContent = selectedTm.attitude?.frame || "미정";
-    $("attitude-time").textContent = selectedTm.attitude?.utc || "없음";
+      $("attitude-frame").textContent = selectedTm.attitude?.frame || "미정";
+      $("attitude-time").textContent = selectedTm.attitude?.utc || "없음";
+    }
     renderAttitude(selectedTm.attitude);
     renderSensors();
     renderCurrentAlerts();
@@ -979,6 +1025,7 @@
     } else {
       $("attitude-model-state").textContent = "3D 표시 모듈 없음";
     }
+    setupStateHistory();
     renderAttitude(null);
     const publishedButton = document.createElement("button");
     publishedButton.type = "button";
@@ -1036,6 +1083,7 @@
       }
     } catch (error) { message("sequence-message", `ROS 초안 저장소 연결 실패: ${error.message}`, true); }
     refreshAttitudeOrbit();
+    if (session) historyController?.refresh();
     await refreshPublishedTm();
     refreshBeacon();
     refreshSpacecraftEvents();
@@ -1045,6 +1093,12 @@
     setInterval(() => {
       if (document.visibilityState === "visible") refreshPublishedTm();
     }, 5000);
+    setInterval(() => {
+      if (document.visibilityState === "visible" && session) historyController?.refresh();
+    },5000);
+    setInterval(() => {
+      if (document.visibilityState === "visible") historyController?.tick();
+    },250);
     setInterval(() => {
       if (document.visibilityState === "visible" && session) {
         refreshBeacon();

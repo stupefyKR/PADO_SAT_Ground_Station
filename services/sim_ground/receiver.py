@@ -41,7 +41,7 @@ FRAME_LENGTH = struct.Struct(">I")
 MIN_PDU_BYTES = 24
 MAX_PDU_BYTES = 200
 MAX_AGE_MS = 120_000
-MAX_BACKLOG_AGE_MS = 24 * 60 * 60 * 1000
+MAX_BACKLOG_AGE_MS = 72 * 60 * 60 * 1000
 # Bound the fast replay cache; the durable archive also rejects conflicting bytes.
 MAX_BACKLOG_REPLAY_PDUS = 16 * 24 * 60 * 60 // 5
 BURST_PUBLISH_EVERY = 1024

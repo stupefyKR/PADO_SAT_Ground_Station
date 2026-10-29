@@ -5,6 +5,7 @@
 // fixed in body axes and rotate Earth/Sun vectors into that body frame.
 (function (global) {
   const FRAME = "SIM_BODY_TO_ITRF_NADIR";
+  const RECEIVED_FRAMES = new Set([FRAME, "SIM_BODY_TO_ITRF", "BODY_TO_ITRF"]);
   const MAX_SAMPLE_GAP_MS = 120_000;
   const MAX_INPUT_AGE_MS = 72 * 3_600_000;
   // A spherical display model; the trajectory and attitude remain FDS/TM data.
@@ -129,6 +130,41 @@
       earthAlignment: -earthBody[0]};
   }
 
+  function computeState({utc, position_itrf_m, sun_itrf, attitude = null,
+    positionSource = null, attitudeStatus = null} = {}) {
+    // History resolution decides whether TM covers this time. This adapter
+    // only transforms a supplied measurement; position never implies attitude.
+    if (typeof utc !== "string" || !utc.endsWith("Z") ||
+        !Number.isFinite(Date.parse(utc))) return null;
+    const positionKnown = finiteVector(position_itrf_m) &&
+      norm(position_itrf_m) > EARTH_DISPLAY_RADIUS_M && norm(position_itrf_m) <= 8e6;
+    const earthItrf = positionKnown ? unit(position_itrf_m.map(value => -value)) : null;
+    const sunItrf = finiteVector(sun_itrf) && norm(sun_itrf) >= 0.9 && norm(sun_itrf) <= 1.1 ?
+      unit(sun_itrf) : null;
+    const quaternion = attitude?.quaternion_wxyz;
+    const validQuaternion = Array.isArray(quaternion) && quaternion.length === 4 &&
+      quaternion.every(value => typeof value === "number" && Number.isFinite(value)) &&
+      Math.abs(Math.hypot(...quaternion) - 1) <= 0.02;
+    const orientationKnown = attitudeStatus !== "UNKNOWN" &&
+      RECEIVED_FRAMES.has(attitude?.frame) && validQuaternion &&
+      typeof attitude.utc === "string" && attitude.utc.endsWith("Z") &&
+      Number.isFinite(Date.parse(attitude.utc));
+    // With unknown attitude, the sky remains in ITRF. Identity here is only
+    // the Earth-texture display transform, never an assumed spacecraft pose.
+    const displayAxes = orientationKnown ? bodyAxesItrf(quaternion) :
+      [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+    const earthBody = earthItrf && (orientationKnown ? bodyVector(earthItrf, quaternion) : earthItrf);
+    const sunBody = sunItrf && (orientationKnown ? bodyVector(sunItrf, quaternion) : sunItrf);
+    return {utc, orientationKnown, positionKnown, sunKnown: !!sunItrf,
+      attitudeStatus: orientationKnown ? (attitudeStatus || "MEASURED") : "UNKNOWN",
+      positionSource, displayFrame: orientationKnown ? "BODY" : "ITRF",
+      earthBody, sunBody, earthItrf, sunItrf, bodyToItrf: displayAxes,
+      satelliteItrf: positionKnown ? position_itrf_m.slice() : null,
+      earthAngularRadiusRad: positionKnown ? earthAngularRadius(position_itrf_m) : null,
+      earthAlignment: orientationKnown && earthBody ? -earthBody[0] : null,
+      provenance: orientationKnown ? "RECEIVED_ATTITUDE" : "POSITION_WITHOUT_ATTITUDE"};
+  }
+
   function predictNadir({orbitView, utc} = {}) {
     // TEST_ONLY: this is the simulator's expected nadir mode, not received TM.
     // Reuse FDS ITRF positions and Sun vectors; no separate orbit propagation.
@@ -170,5 +206,5 @@
       provenance: "FDS_TEST_NADIR_PREDICTION"};
   }
 
-  global.rosAttitudeMath = Object.freeze({compute, predictNadir});
+  global.rosAttitudeMath = Object.freeze({compute, computeState, predictNadir});
 })(globalThis);

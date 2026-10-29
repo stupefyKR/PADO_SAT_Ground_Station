@@ -240,7 +240,7 @@ class SyntheticTmReceiverTests(unittest.TestCase):
             self.assertEqual(receiver.process_connection(_SocketBytes(stream)), 1)
         self.assertEqual(len(list(self.inbox.glob("*.manifest.json"))), 1)
 
-    def test_stored_tm_requires_active_pass_and_is_bounded_to_one_day(self):
+    def test_stored_tm_requires_active_pass_and_is_bounded_to_three_days(self):
         receiver = self._contact_receiver()
         with self.assertRaisesRegex(ReceiverError, "active.*contact"):
             receiver.ingest(self._eps(), received_ms=STAMP + 60_000,
@@ -248,7 +248,11 @@ class SyntheticTmReceiverTests(unittest.TestCase):
         with self.assertRaisesRegex(ReceiverError, "active.*contact"):
             self.receiver.ingest(self._eps(), received_ms=STAMP + 150_000,
                                  historical=True)
-        too_old = self._eps(stamp=STAMP + 150_000 - 86_401_000)
+        oldest = self._eps(stamp=STAMP + 150_000 - 72 * 3_600_000)
+        self.assertEqual(receiver.ingest(oldest, received_ms=STAMP + 150_000,
+                                        historical=True)["utc_ms"],
+                         STAMP + 150_000 - 72 * 3_600_000)
+        too_old = self._eps(1, stamp=STAMP + 150_000 - 72 * 3_600_000 - 1000)
         with self.assertRaisesRegex(ReceiverError, "timestamp"):
             receiver.ingest(too_old, received_ms=STAMP + 150_000,
                             historical=True)

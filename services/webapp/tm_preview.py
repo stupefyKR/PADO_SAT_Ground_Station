@@ -104,6 +104,8 @@ def validate_snapshot(raw: bytes) -> dict:
 def load_snapshot(path: Path | None) -> dict:
     if path is None or path.name != "test_tm_snapshot.json":
         raise PreviewError("snapshot_not_configured")
+    if path.is_symlink():
+        raise PreviewError("snapshot_file_invalid")
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
     try:
         with os.fdopen(os.open(path, flags), "rb") as source:

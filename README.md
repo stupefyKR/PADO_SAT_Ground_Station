@@ -77,6 +77,7 @@ FDS의 오프라인 Java/Orekit 계산기 입력, 두 안테나 설정, 결과 C
 계획된 운용 TC 경로는 MPS 시퀀스 승인 → `ros-core` 명령 DB 재검증 → `ros-signer` 승인 확인·HMAC → TLS → `dgs-gs` `tc-gate` → `kari-adapter`입니다. 현재 단계 5는 합성 프레임을 이용한 모듈 간 시험 경로이며 실제 송출 경로는 구현되지 않았습니다. [개발방향 12장](docs/PADO-SAT_지상국_개발방향.md), [MPS 시험 계약](interfaces/mps/test_contract.md), [TC 시험 계약](interfaces/tc/test_contract.md)을 참고하세요.
 
 가상 위성의 100 Wh 배터리·태양전지 발전·장치별 소비전력 모델과 VM 설정은 [전력 모델 안내](docs/SIM_EPS.md)에 있습니다.
+ROS의 최근 3일 GNSS 위치·수신 자세 재생과 늦게 받은 TM 반영은 [위치·자세 이력 안내](docs/ROS_STATE_HISTORY.md)에 있습니다.
 
 ## 저장소 구조
 

@@ -29,7 +29,7 @@ WORKDIR /app
 COPY services/webapp /app/services/webapp
 COPY services/sim_ground/archive.py /app/services/sim_ground/archive.py
 COPY deploy/stage9/dgs_ops_gateway.py /app/deploy/stage9/dgs_ops_gateway.py
-COPY tools/pado_packet_codec.py /app/tools/pado_packet_codec.py
+COPY tools/pado_packet_codec.py tools/orbit_history.py /app/tools/
 COPY web /app/web
 # Explicitly create searchable parents: read-only file modes must never remove
 # directory traversal for the non-root service user.

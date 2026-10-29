@@ -9,7 +9,7 @@ RUN apt-get update \
 
 WORKDIR /app
 COPY services/fds /app/services/fds
-COPY tools/build_iss_demo.py tools/build_synthetic_demo.py tools/publish_fds_view.py tools/publish_mps_schedule.py tools/stage_fds_outbox.py tools/run_fds_pipeline.py tools/receive_fds_inputs.py /app/tools/
+COPY tools/build_iss_demo.py tools/build_synthetic_demo.py tools/publish_fds_view.py tools/orbit_history.py tools/publish_mps_schedule.py tools/stage_fds_outbox.py tools/run_fds_pipeline.py tools/receive_fds_inputs.py /app/tools/
 RUN git clone --depth 1 https://gitlab.orekit.org/orekit/orekit-data.git /opt/orekit-data \
     && git -C /opt/orekit-data fetch --depth 1 origin 2422a7d06ee2cc3b5a503a47271203b0706f3e82 \
     && git -C /opt/orekit-data checkout --detach 2422a7d06ee2cc3b5a503a47271203b0706f3e82 \
