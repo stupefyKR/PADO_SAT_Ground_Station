@@ -212,9 +212,12 @@ PDU만 지운다. 미확인분은 남겨 다음 요청에서 다시 보내고 �
 규격은 별도로 연결한다. 모든 수신 원문·파싱 값은 같은 TM 볼륨의
 `received_tm.sqlite3`에 저장하며 ROS의 `수신 TM` 탭에서 조회한다.
 
-시뮬레이터는 장비별 계측 13계열과 전체 HK 분할을 생성한다. 첫 표본과 이후
+시뮬레이터는 장비별 계측 14계열과 전체 HK 분할을 생성한다. 첫 표본과 이후
 600초마다 전체 HK를 기록한다. 종합 관제의 20개 센서 한계는
-`services/sim_ground/full_test_limits.json`의 시험 설정이다.
+`config/spacecraft.json`의 `sensor_limits`에서 읽는다. ROS 종합 관제의
+센서 허용 범위 설정에서 하한·상한을 저장하면 기존 그래프와 경보에도 반영된다.
+DSP·MSP 정격과 장치 소비전력도 같은 파일에서 관리한다.
+최초 생성·보존·권한과 편집 절차는 [공통 설정 안내](../../docs/SPACECRAFT_SETTINGS.md)에 있다.
 자세한 항목·원본 자료와의 차이는 [TM 프로파일 안내](../../docs/SIM_TELEMETRY_PROFILE.md)에 있다.
 
 관제용 DGS 진입점 외에 호스트에 게시된 포트는 없다. TCP 9200은 `sim_tm` Docker 내부망에서

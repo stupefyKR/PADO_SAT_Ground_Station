@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import ipaddress
 import json
+from pathlib import Path
 import sys
 from urllib.parse import urlsplit
 
@@ -22,6 +23,10 @@ NETWORK_MEMBERS = {
     "portal_mps": {PORTAL, "mps-api"},
     "sim_tm": {"sim-ground", "sim-satellite"},
 }
+# This one operator-managed directory is shared for atomic settings updates.
+# ROS alone may write it; simulation consumers may only read it.
+LOCAL_SETTINGS_MOUNTS = {"ros-api": False, "sim-ground": True, "sim-satellite": True}
+LOCAL_SETTINGS_SOURCE = Path(__file__).resolve().parents[2] / "config"
 # A service's named volumes are part of its isolation boundary. Checking only
 # that a volume is declared would let an unrelated service mount ROS's draft DB
 # (or the shared internal token) while all network checks still pass.
@@ -205,10 +210,17 @@ def check(document: dict, bind_ip: str, port: int, bridge: str,
             require(target not in ("/var/run/docker.sock", "/run/docker.sock"),
                     f"{name}: Docker socket mount forbidden")
             if kind == "bind":
-                require(not local and target in DEV_BIND_TARGETS.get(name, set()) and
-                        mount.get("read_only") is True and source.startswith("/") and
-                        source != "/",
-                        f"{name}: unapproved or writable host bind mount")
+                if local:
+                    require(name in LOCAL_SETTINGS_MOUNTS and target == "/config" and
+                            Path(source) == LOCAL_SETTINGS_SOURCE and
+                            (mount.get("read_only") is True) == LOCAL_SETTINGS_MOUNTS[name] and
+                            mount.get("bind", {}).get("create_host_path") is False,
+                            f"{name}: unapproved settings host bind source, target or mode")
+                else:
+                    require(target in DEV_BIND_TARGETS.get(name, set()) and
+                            mount.get("read_only") is True and source.startswith("/") and
+                            source != "/",
+                            f"{name}: unapproved or writable host bind mount")
                 bind_targets.add(target)
             else:
                 require(kind == "volume" and source in volumes,
@@ -217,8 +229,18 @@ def check(document: dict, bind_ip: str, port: int, bridge: str,
         require(len(named_mounts) + len(bind_targets) == len(mounts) and
                 named_mounts == expected_volumes[name],
                 f"{name}: named volume mount differs from approved source, target or mode")
-        require(bind_targets == (set() if local else DEV_BIND_TARGETS.get(name, set())),
+        expected_bind_targets = ({"/config"} if name in LOCAL_SETTINGS_MOUNTS else set()) if local else DEV_BIND_TARGETS.get(name, set())
+        require(bind_targets == expected_bind_targets,
                 f"{name}: host bind targets differ from approved targets")
+        if local and name in LOCAL_SETTINGS_MOUNTS:
+            require(service.get("environment", {}).get("PADO_SPACECRAFT_CONFIG") ==
+                    "/config/spacecraft.json",
+                    f"{name}: shared settings path differs from approved file")
+        if local and name == "ros-api":
+            groups = service.get("group_add")
+            require(isinstance(groups, list) and len(groups) == 1 and
+                    isinstance(groups[0], str) and groups[0].isascii() and groups[0].isdigit(),
+                    "ros-api: one numeric operator group is required for settings writes")
         if local and name == "sim-volume-init":
             require(service.get("command") == SIM_VOLUME_INIT_COMMAND,
                     "sim-volume-init must chown only approved volume roots without recursion")

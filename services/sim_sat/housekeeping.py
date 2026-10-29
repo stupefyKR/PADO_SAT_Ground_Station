@@ -160,17 +160,19 @@ def _apply_power_sample(e: dict, sample: dict) -> None:
     their readings must not be added together as independent loads.
     """
     voltage = sample["battery_voltage_v"]
-    battery_mode = 1 if sample["soc"] < .1 else 2 if sample["soc"] < .25 else \
-        4 if sample["soc"] >= .98 else 3
+    battery_mode = sample["battery_mode"]
+    offsets = sample["battery_temperature_offsets_c"]
+    rails = sample["device_voltages_v"]
     p60, bpx, acu = (e[key] for key in ("P60_Dock", "BPX", "ACU_200"))
     p60.update(vbat_v=voltage, batt_v=voltage, batt_c=sample["battery_current_a"],
                batt_chrg=sample["charge_current_a"], batt_dischrg=sample["discharge_current_a"],
                batt_mode=battery_mode,
-               batt_temp=[sample["battery_temperature_c"],sample["battery_temperature_c"]+.1])
+               batt_temp=[sample["battery_temperature_c"]+offset for offset in offsets[:2]])
     bpx.update(vbatt=voltage, tcur=sample["battery_current_a"],
                chargercur=sample["charge_current_a"], dischargercur=sample["discharge_current_a"],
                battery_mode=battery_mode)
-    bpx.update({f"batt_temp{i+1}":sample["battery_temperature_c"]+i*.1 for i in range(4)})
+    bpx.update({f"batt_temp{i+1}":sample["battery_temperature_c"]+offset
+                for i,offset in enumerate(offsets)})
     loads = sample["device_loads_w"]
     # At a power deficit the model exposes unserved demand. Channel currents
     # show proportional average service rather than claiming every load has
@@ -178,27 +180,28 @@ def _apply_power_sample(e: dict, sample: dict) -> None:
     served_fraction = max(0.,1.-sample["unserved_load_w"]/sample["load_w"]) \
         if sample["load_w"] > 0 else 1.
     powered = served_fraction > 1e-9
-    p60_channels = (("s_band",12.), ("crest",12.), ("gnss_receiver",3.3),
-        ("gnss_antenna",3.3), ("uhf",3.3), ("obc",3.3), ("fine_sun_sensor",3.3),
-        ("siren",5.), ("adcs_board",voltage), ("reaction_wheel",voltage),
-        ("magnetorquer",voltage), ("magnetometer",voltage), ("eps_board",voltage))
+    p60_channels = ("s_band", "crest", "gnss_receiver", "gnss_antenna", "uhf", "obc",
+        "fine_sun_sensor", "siren", "adcs_board", "reaction_wheel", "magnetorquer",
+        "magnetometer", "eps_board")
     pdu_channels = {
-        "PDU_200_1": (("gnss_receiver",3.3), ("gnss_antenna",3.3), ("uhf",3.3),
-                      ("obc",3.3), ("fine_sun_sensor",3.3), *[(None,5.)]*4),
-        "PDU_200_2": (("s_band",12.), ("crest",12.), ("siren",5.),
-                      ("adcs_board",voltage), ("reaction_wheel",voltage),
-                      ("magnetorquer",voltage), ("magnetometer",voltage),
-                      ("eps_board",voltage), ("battery_auxiliary",voltage))}
+        "PDU_200_1": ("gnss_receiver", "gnss_antenna", "uhf", "obc", "fine_sun_sensor",
+                      *[None]*4),
+        "PDU_200_2": ("s_band", "crest", "siren", "adcs_board", "reaction_wheel",
+                      "magnetorquer", "magnetometer", "eps_board", "battery_auxiliary")}
     for name, channels in (("P60_Dock",p60_channels), *pdu_channels.items()):
         equipment = e[name]
-        equipment["out_en"] = [powered and loads.get(device,0.) > 0 for device,_ in channels]
-        equipment["v_out"] = [rail if enabled else 0. for (_,rail),enabled in
+        equipment["out_en"] = [powered and loads.get(device,0.) > 0 for device in channels]
+        equipment["v_out"] = [rails[device] if enabled else 0. for device,enabled in
                                zip(channels,equipment["out_en"])]
-        equipment["c_out"] = [loads.get(device,0.)*served_fraction/rail if enabled and rail>0 else 0.
-            for (device,rail),enabled in zip(channels,equipment["out_en"])]
+        equipment["c_out"] = [loads.get(device,0.)*served_fraction/rails[device] if enabled else 0.
+            for device,enabled in zip(channels,equipment["out_en"])]
         if name != "P60_Dock":
-            equipment.update(vbat=voltage,batt_mode=battery_mode,conv_en=powered)
-    acu.update(vbat=voltage, c_in=[0.]*6, v_in=[0.]*6, power=[0.]*6)
+            equipment.update(vbat=voltage,batt_mode=battery_mode,conv_en=powered,
+                             vcc=sample["logic_supply_voltage_v"])
+    e["CubeADCS"]["power_and_temperature_measurements"] = [
+        value if index % 2 else sample["logic_supply_voltage_v"]
+        for index,value in enumerate(e["CubeADCS"]["power_and_temperature_measurements"])]
+    acu.update(vbat=voltage, vcc=sample["logic_supply_voltage_v"], c_in=[0.]*6, v_in=[0.]*6, power=[0.]*6)
     for bank in sample["banks"]:
         channel = bank["channel"]
         if type(channel) is not int or not 0 <= channel < 6:
@@ -207,14 +210,17 @@ def _apply_power_sample(e: dict, sample: dict) -> None:
         acu["c_in"][channel] = bank["current_a"]
         acu["power"][channel] = bank["power_w"]
     acu["vboost"] = [voltage if current>0 else 0. for current in acu["c_in"]]
-    e["CREST"].update(voltage_v=12. if powered and loads["crest"]>0 else 0.,
-                      current_a=loads["crest"]*served_fraction/12. if powered else 0.,
+    e["CREST"].update(voltage_v=rails["crest"] if powered and loads["crest"]>0 else 0.,
+                      current_a=loads["crest"]*served_fraction/rails["crest"] if powered else 0.,
                       uart_link_state=int(powered and loads["crest"]>0))
     e["SIREN"]["hardware_state"] = int(powered and loads["siren"]>0)
     e["OEM719A"]["HWMONITOR"]["supply_voltage_v"] = \
-        3.3 if powered and loads["gnss_receiver"]>0 else 0.
-    e["SRS_4"]["tm"]["curr"]["vin"]["value"] = loads["s_band"]*served_fraction/12. if powered else 0.
+        rails["gnss_receiver"] if powered and loads["gnss_receiver"]>0 else 0.
+    e["SRS_4"]["tm"]["curr"]["vin"]["value"] = \
+        loads["s_band"]*served_fraction/rails["s_band"] if powered else 0.
+    e["SRS_4"]["tm"]["volt"]["vin"]["value"] = rails["s_band"] if powered else 0.
     for key in ("3v3","1v8","1v0","pa"):
+        e["SRS_4"]["tm"]["volt"][key]["value"] = sample["srs_internal_rails_v"][key] if powered else 0.
         e["SRS_4"]["tm"]["curr"][key]["value"] = 0.
 
 
@@ -233,7 +239,8 @@ def additional_packets(core_packets: tuple[bytes, ...], next_sequence: int, *,
           "latchup_bits": 0, "uptime_s": p60["uptime"]}),
         ("EPS_PDU2", {"channel_enabled_bits": sum(int(on)<<i for i,on in
           enumerate(e["PDU_200_2"]["out_en"])), "latchup_bits": 0,
-          "bus_voltage_v": (5. if power_sample["load_w"]-power_sample["unserved_load_w"] > 1e-6 else 0.)
+          "bus_voltage_v": (power_sample["regulated_bus_voltage_v"]
+              if power_sample["load_w"]-power_sample["unserved_load_w"] > 1e-6 else 0.)
               if power_sample is not None else e["PDU_200_2"]["v_out"][0],
           "temperature_c": e["PDU_200_2"]["temp"],
           "uptime_s": p60["uptime"]}),

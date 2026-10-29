@@ -17,6 +17,8 @@ import math
 from pathlib import Path
 from typing import Mapping, Sequence
 
+from services.spacecraft_config import get_power_profile, load_settings, validate_power_profile
+
 
 AU_M = 149597870700.0
 MODES = {1: "detumbling", 2: "standby", 3: "communication",
@@ -25,9 +27,19 @@ STATE_SCHEMA = "pado-sim-power-state-v1"
 
 
 def load_profile(path: str | Path | None = None) -> dict:
-    """Return a fresh profile. Physical and numerical parameters stay editable."""
-    source = Path(path) if path is not None else Path(__file__).with_name("power_profile.json")
-    return json.loads(source.read_text(encoding="utf-8"))
+    """Read shared settings, while retaining explicit legacy test profile inputs."""
+    if path is None:
+        return get_power_profile()
+    source = Path(path)
+    document = json.loads(source.read_text(encoding="utf-8-sig"))
+    if document.get("schema") == "pado.spacecraft-settings.v1":
+        return get_power_profile(load_settings(source))
+    # Explicit legacy profiles remain useful for isolated physical tests.
+    if "telemetry" not in document:
+        example = Path(__file__).resolve().parents[2] / "config/spacecraft.example.json"
+        document["telemetry"] = get_power_profile(load_settings(example))["telemetry"]
+    validate_power_profile(document)
+    return document
 
 
 def _finite(value: object, label: str) -> float:
@@ -150,68 +162,33 @@ class PowerModel:
             self._restore(state)
 
     def _validate_profile(self) -> None:
-        p = self.profile
-        if p.get("schema") != "pado-sim-power-profile-v1" or p.get("test_only") is not True:
-            raise ValueError("unsupported power profile")
-        for key, upper in (("max_step_s", 5.0), ("max_catchup_s", 86400.0)):
-            if not 0 < _finite(p[key], key) <= upper:
-                raise ValueError(f"invalid {key}")
-        b, s = p["battery"], p["solar"]
-        for key in ("capacity_wh", "nominal_voltage_v", "minimum_voltage_v", "maximum_voltage_v",
-                    "max_charge_current_a", "max_discharge_current_a", "thermal_capacity_j_k", "thermal_time_constant_s"):
-            if _finite(b[key], key) <= 0:
-                raise ValueError(f"invalid {key}")
-        if _finite(b["internal_resistance_ohm"], "resistance") < 0:
-            raise ValueError("negative battery resistance")
-        if not b["minimum_voltage_v"] < b["maximum_voltage_v"]:
-            raise ValueError("invalid voltage bounds")
-        for key in ("charge_efficiency", "discharge_efficiency"):
-            if not 0 < _finite(b[key], key) <= 1:
-                raise ValueError(f"invalid {key}")
-        if not 0 <= _finite(b["initial_soc"], "initial SOC") <= 1:
-            raise ValueError("invalid initial SOC")
-        for key in ("initial_temperature_c", "sunlit_equilibrium_c", "eclipse_equilibrium_c"):
-            _finite(b[key], key)
-        curve = b["ocv_curve"]
-        if len(curve) < 2 or curve[0][0] != 0 or curve[-1][0] != 1:
-            raise ValueError("OCV curve must span SOC zero to one")
-        for index, point in enumerate(curve):
-            soc, voltage = _vector(point, 2, "OCV point")
-            if not 0 <= soc <= 1 or not b["minimum_voltage_v"] <= voltage <= b["maximum_voltage_v"]:
-                raise ValueError("OCV point outside configured bounds")
-            if index and (soc <= curve[index-1][0] or voltage < curve[index-1][1]):
-                raise ValueError("OCV curve must be monotonic")
-        if not 0 < _finite(s["conversion_efficiency"], "solar efficiency") <= 1:
-            raise ValueError("invalid solar efficiency")
-        for key in ("earth_radius_m", "sun_radius_m"):
-            if _finite(s[key], key) <= 0:
-                raise ValueError("invalid body radius")
-        if not s["banks"] or len(s["banks"]) > 6:
-            raise ValueError("one to six solar banks required")
-        ids, channels = set(), set()
-        for bank in s["banks"]:
-            if bank["id"] in ids or bank["channel"] in channels:
-                raise ValueError("duplicate solar bank")
-            ids.add(bank["id"])
-            channels.add(bank["channel"])
-            for key in ("cell_count", "series", "parallel"):
-                if isinstance(bank[key], bool) or not isinstance(bank[key], int) or bank[key] <= 0:
-                    raise ValueError("invalid solar wiring")
-            if bank["series"] * bank["parallel"] != bank["cell_count"]:
-                raise ValueError("solar wiring must account for all cells")
-            for key in ("cell_voltage_v", "cell_current_a"):
-                if _finite(bank[key], key) <= 0:
-                    raise ValueError("invalid cell rating")
-            if abs(_norm(_vector(bank["normal_body"], 3, "panel normal")) - 1) > 1e-6:
-                raise ValueError("panel normal must be a unit vector")
-        if not p["devices"]:
-            raise ValueError("device loads required")
-        for device in p["devices"].values():
-            if device["voltage_v"] is not None and _finite(device["voltage_v"], "device voltage") <= 0:
-                raise ValueError("invalid device voltage")
-            for mode in MODES.values():
-                if _finite(device["power_w_by_mode"][mode], "device power") < 0:
-                    raise ValueError("negative device load")
+        validate_power_profile(self.profile)
+
+    @classmethod
+    def migrate_state(cls, profile: dict, state: dict, *, skip_unknown_interval: bool = False):
+        """Explicitly adopt new ratings without resetting stored battery energy.
+
+        The caller owns the application boundary. A running simulator first
+        integrates the old model up to that boundary, then changes ratings.
+        Legacy states without their old profile cannot model an unknown past
+        interval and keep their energy until the first new sample.
+        """
+        candidate = cls(profile)
+        previous = copy.deepcopy(state)
+        old_fingerprint = previous.get("profile_sha256")
+        old_energy = _finite(previous.get("energy_wh"), "stored battery energy")
+        previous["profile_sha256"] = candidate._fingerprint
+        previous["energy_wh"] = min(old_energy, profile["battery"]["capacity_wh"])
+        if skip_unknown_interval:
+            previous["previous_input"] = None
+        candidate._restore(previous)
+        candidate.configuration_change = {
+            "previous_profile_sha256": old_fingerprint,
+            "profile_sha256": candidate._fingerprint,
+            "clamped_energy_wh": old_energy - previous["energy_wh"],
+            "past_interval_available": not skip_unknown_interval,
+        }
+        return candidate
 
     def _restore(self, state: dict) -> None:
         restored = copy.deepcopy(state)
@@ -345,9 +322,21 @@ class PowerModel:
         served = load - unserved
         solar_loss = raw - available
         device_currents = {name: watts / (self.profile["devices"][name]["voltage_v"] or voltage) for name, watts in loads.items()}
+        telemetry = self.profile["telemetry"]
+        thresholds = telemetry["battery_mode_soc"]
+        battery_mode = 1 if soc < thresholds["critical"] else 2 if soc < thresholds["safe"] else \
+            4 if soc >= thresholds["full"] else 3
         return {
             "utc_s": data["utc_s"], "mode": mode, "mode_code": _mode(mode)[1],
             "profile_id": self.profile["profile_id"], "test_only": True,
+            "power_profile_sha256": self._fingerprint,
+            "regulated_bus_voltage_v": telemetry["regulated_bus_voltage_v"],
+            "logic_supply_voltage_v": telemetry["logic_supply_voltage_v"],
+            "battery_mode": battery_mode,
+            "battery_temperature_offsets_c": telemetry["battery_temperature_offsets_c"],
+            "srs_internal_rails_v": telemetry["srs_internal_rails_v"],
+            "device_voltages_v": {name: device["voltage_v"] or voltage
+                                  for name, device in self.profile["devices"].items()},
             "battery_voltage_v": voltage, "battery_ocv_v": ocv,
             "battery_current_a": current, "charge_current_a": charge_i, "discharge_current_a": discharge_i,
             "soc": soc, "soc_pct": soc*100, "stored_energy_wh": self._state["energy_wh"],

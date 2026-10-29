@@ -34,6 +34,7 @@ from tools.preview_draft_tm import (MAX_SIM_HISTORY_PDUS, build_snapshot,
                                     publish_snapshot)
 from tools.run_fds_pipeline import verified_pair
 from services.sim_sat.contact import ContactGate
+from services.spacecraft_config import get_sensor_limits, load_settings
 from .archive import PacketArchive, delivery_receipt
 
 
@@ -79,12 +80,19 @@ class _PendingTc:
 
 
 def load_limits(path: Path) -> dict[str, Any]:
-    if path.is_symlink() or not path.is_file() or not 1 <= path.stat().st_size <= 16_384:
+    if path.is_symlink() or not path.is_file() or not 1 <= path.stat().st_size <= 128 * 1024:
         raise ReceiverError("regular, bounded test limits file required")
     try:
-        limits = json.loads(path.read_text(encoding="utf-8"))
+        limits = json.loads(path.read_text(encoding="utf-8-sig"))
     except (UnicodeError, json.JSONDecodeError) as error:
         raise ReceiverError("invalid test limits JSON") from error
+    if isinstance(limits, dict) and limits.get("schema") == "pado.spacecraft-settings.v1":
+        try:
+            return get_sensor_limits(load_settings(path))
+        except (OSError, ValueError) as error:
+            raise ReceiverError("invalid spacecraft sensor settings") from error
+    if path.stat().st_size > 16_384:
+        raise ReceiverError("regular, bounded test limits file required")
     if not isinstance(limits, dict) or set(limits) != {"sensors"} or \
             not isinstance(limits["sensors"], dict) or not limits["sensors"]:
         raise ReceiverError("explicit sensor limits required")
@@ -172,7 +180,7 @@ class TmReceiver:
     """Single-writer, bounded decoder and ROS/FDS test publication point."""
 
     def __init__(self, snapshot: Path, n11_inbox: Path, limits: dict[str, Any],
-                 contact_view: Path | None = None):
+                 contact_view: Path | None = None, *, limits_path: Path | None = None):
         if snapshot.name != "test_tm_snapshot.json":
             raise ReceiverError("ROS snapshot must be test_tm_snapshot.json")
         if snapshot.parent.is_symlink() or not snapshot.parent.is_dir():
@@ -182,6 +190,8 @@ class TmReceiver:
         self.snapshot = snapshot
         self.n11_inbox = n11_inbox
         self.limits = limits
+        self.limits_path = limits_path
+        self._limits_signature = self._limit_signature()
         self.packet_catalog = load_catalog()
         self.archive = PacketArchive(snapshot.with_name("received_tm.sqlite3"))
         self.contact_gate = ContactGate(contact_view) if contact_view is not None else None
@@ -204,6 +214,33 @@ class TmReceiver:
         self._tc_lock = Lock()
         self._tc_pending: _PendingTc | None = None
         self._satellite_connected = False
+
+    def _limit_signature(self):
+        if self.limits_path is None:
+            return None
+        try:
+            info = self.limits_path.stat()
+            return (info.st_mtime_ns, info.st_size, info.st_ino)
+        except OSError:
+            return ("unavailable",)
+
+    def _reload_limits(self) -> None:
+        """Retain graph history and the last valid ranges during a bad edit."""
+        signature = self._limit_signature()
+        if self.limits_path is None or signature == self._limits_signature:
+            return
+        self._limits_signature = signature
+        try:
+            updated = load_limits(self.limits_path)
+            sources = {key.split(".", 1)[0] for key in updated["sensors"]}
+        except (OSError, ValueError) as error:
+            print(f"Sensor settings reload rejected; retaining previous ranges: {error}",
+                  file=sys.stderr, flush=True)
+            return
+        self.limits = updated
+        self.sensor_sources = sources
+        self.sensor_history = {name: self.sensor_history.get(name,
+            deque(maxlen=MAX_HISTORY_PER_SOURCE)) for name in sources}
 
     def _ingest_beacon(self, decoded: dict[str, Any], *, received_ms: int) -> None:
         """Publish live beacon health without advancing stored-TM history.
@@ -332,6 +369,7 @@ class TmReceiver:
     def ingest(self, packet: bytes, *, received_ms: int | None = None,
                historical: bool = False, publish: bool = True) -> dict[str, Any] | None:
         """Validate draft TM; only the gated stream may request old burst samples."""
+        self._reload_limits()
         if type(received_ms) is not int and received_ms is not None:
             raise ReceiverError("integer receive UTC milliseconds required")
         if type(historical) is not bool or type(publish) is not bool or \
@@ -460,6 +498,7 @@ class TmReceiver:
 
     def _publish_burst_preview(self, received_ms: int) -> None:
         """Publish the bounded ROS history once per chunk or socket idle/close."""
+        self._reload_limits()
         if not self._burst_unpublished:
             return
         if not all(self.sensor_history.values()):
@@ -643,7 +682,8 @@ def main() -> None:
     args = parser.parse_args()
     try:
         receiver = TmReceiver(args.snapshot, args.n11_inbox,
-                              load_limits(args.limits), args.contact_view)
+                              load_limits(args.limits), args.contact_view,
+                              limits_path=args.limits)
         stop = Event()
         bridge_thread = None
         if args.tc_socket is not None:

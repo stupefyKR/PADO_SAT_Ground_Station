@@ -133,7 +133,8 @@ def main() -> int:
     if not sys.platform.startswith("linux"):
         raise RuntimeError("live DGS boundary test requires Linux Docker")
     bind = host_ip()
-    env = dict(os.environ, PADO_LOCAL_BIND_IP=bind)
+    env = dict(os.environ, PADO_LOCAL_BIND_IP=bind,
+               PADO_CONFIG_GID=str(os.getgid()))
     namespace, host_veth, peer_veth, link_host, operator_ip, denied_ip = operator_link()
     namespace_created = False
     veth_created = False

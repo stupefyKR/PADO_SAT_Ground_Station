@@ -52,7 +52,7 @@ class MeasurementTimeTests(unittest.TestCase):
 
             target = folder / "test_tm_snapshot.json"
             receiver = TmReceiver(target, inbox, load_limits(
-                ROOT / "services/sim_ground/full_test_limits.json"))
+                ROOT / "config/spacecraft.example.json"))
             receiver.contact_gate = Gate()
             reception = START + timedelta(minutes=15)
             wire = StoredDownlink()

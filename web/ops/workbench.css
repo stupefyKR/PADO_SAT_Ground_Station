@@ -103,3 +103,13 @@
 #telemetry-chart:focus-visible{outline:2px solid #87d1da;outline-offset:-2px}.sample-crosshair{stroke:#b3e4ed;stroke-width:1;stroke-dasharray:3 3;vector-effect:non-scaling-stroke}.sample-hover-dot{fill:#effcfd;stroke:#183d52;stroke-width:1.5;vector-effect:non-scaling-stroke}.sample-tooltip-box{fill:#071723;stroke:#709da9;stroke-width:1}.sample-tooltip-time,.sample-tooltip-value{fill:#e4f5f7;font-family:Consolas,"Malgun Gothic",monospace}.sample-tooltip-value{fill:#9ee0df}.trend-measured-time strong{overflow-wrap:anywhere}
 
 .trend-meta>.trend-measured-time{grid-column:1/-1}.trend-meta>.trend-measured-time strong{white-space:normal;overflow:visible;text-overflow:clip;font-family:Consolas,monospace}
+
+.sensor-settings-panel {margin:18px 0;}
+.sensor-settings-panel > summary {padding:16px 18px;cursor:pointer;font-weight:600;}
+.sensor-settings-panel .workbench-note {padding:0 18px;}
+.sensor-settings-panel td:first-child {min-width:200px;}
+.sensor-settings-panel td small {display:block;color:var(--muted,#8ba9b7);font-size:11px;margin-top:4px;}
+.sensor-settings-panel input[type="number"] {width:112px;min-height:34px;padding:6px 8px;background:#091923;color:inherit;border:1px solid #355361;border-radius:2px;}
+.sensor-settings-panel td:last-child {white-space:nowrap;font:12px ui-monospace,monospace;}
+.sensor-settings-actions {display:flex;align-items:center;gap:12px;padding:14px 18px;flex-wrap:wrap;}
+.sensor-settings-actions .workbench-message {margin:0;flex:1;min-width:240px;}

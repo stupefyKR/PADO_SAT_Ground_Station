@@ -16,7 +16,7 @@ COMPOSE = ROOT / "deploy" / "stage9"
 
 
 def approved_volume_fixture(document, service_mounts):
-    """Add normalized named volumes to a minimal Compose policy fixture."""
+    """Add approved named volumes and the local shared settings directory."""
     document["volumes"] = {source: {} for mounts in service_mounts.values()
                            for source, _, _ in mounts}
     for name, mounts in service_mounts.items():
@@ -24,6 +24,14 @@ def approved_volume_fixture(document, service_mounts):
             {"type": "volume", "source": source, "target": target,
              "read_only": read_only}
             for source, target, read_only in sorted(mounts)]
+    if service_mounts is check_compose_policy.LOCAL_VOLUMES:
+        for name, read_only in check_compose_policy.LOCAL_SETTINGS_MOUNTS.items():
+            service = document["services"][name]
+            service["volumes"].append({
+                "type": "bind", "source": str(ROOT / "config"), "target": "/config",
+                "read_only": read_only, "bind": {"create_host_path": False}})
+            service.setdefault("environment", {})["PADO_SPACECRAFT_CONFIG"] = "/config/spacecraft.json"
+        document["services"]["ros-api"]["group_add"] = ["1000"]
 
 
 def check_private_probe(config):
@@ -262,6 +270,30 @@ class DgsBoundaryInvariantTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     check_compose_policy.check(broken, "192.168.45.128", 8080,
                                                "br-pado-local")
+
+    def test_shared_settings_bind_is_exact_and_only_ros_can_write(self):
+        for name, change in (
+                ("ros-api", {"source": str(ROOT)}),
+                ("ros-api", {"source": str(ROOT / "config" / "spacecraft.json")}),
+                ("ros-api", {"target": "/alternate"}),
+                ("ros-api", {"read_only": True}),
+                ("sim-ground", {"read_only": False}),
+                ("sim-satellite", {"bind": {"create_host_path": True}})):
+            with self.subTest(service=name, change=change):
+                broken = copy.deepcopy(self.good)
+                mount = next(m for m in broken["services"][name]["volumes"]
+                             if m["type"] == "bind")
+                mount.update(change)
+                with self.assertRaisesRegex(ValueError, "unapproved settings host bind"):
+                    check_compose_policy.check(broken, "192.168.45.128", 8080,
+                                               "br-pado-local")
+        for groups in ([], ["root"], ["1000", "0"]):
+            with self.subTest(groups=groups):
+                broken = copy.deepcopy(self.good)
+                broken["services"]["ros-api"]["group_add"] = groups
+                with self.assertRaisesRegex(ValueError, "numeric operator group"):
+                    check_compose_policy.check(broken, "192.168.45.128", 8080,
+                                               "br-pado-local")
         for volume in ({"external": True},
                        {"driver": "local", "driver_opts": {
                            "type": "none", "device": "/etc", "o": "bind"}}):
@@ -389,6 +421,7 @@ class DgsBoundaryInvariantTests(unittest.TestCase):
             with self.subTest(file=file):
                 project = "pado-stage9-local" if file == "compose.local.yaml" else None
                 env = dict(os.environ, PADO_LOCAL_BIND_IP="192.168.45.128",
+                           PADO_CONFIG_GID=str(os.getgid()) if hasattr(os, "getgid") else "1000",
                            PADO_STAGE9_CERT_DIR="/tmp",
                            PADO_OPERATOR_CIDR="192.168.45.1/32")
                 result = subprocess.run(

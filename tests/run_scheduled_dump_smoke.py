@@ -98,7 +98,7 @@ def run_smoke(base: Path) -> dict:
                     "max_elevation_deg": 42, "clipped_start": False, "clipped_end": False}]}
     snapshot_path = base / "test_tm_snapshot.json"
     receiver = TmReceiver(snapshot_path, base / "n11-inbox",
-                          load_limits(ROOT / "services/sim_ground/full_test_limits.json"), truth_path)
+                          load_limits(ROOT / "config/spacecraft.example.json"), truth_path)
     gate = ContactGate(truth_path)
     stop = threading.Event()
     bridge_ready = threading.Event()

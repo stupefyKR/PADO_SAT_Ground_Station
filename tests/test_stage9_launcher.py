@@ -9,7 +9,8 @@ import sys
 import tempfile
 import unittest
 
-from deploy.stage9.check_compose_policy import LOCAL_VOLUMES, SIM_VOLUME_INIT_COMMAND
+from deploy.stage9.check_compose_policy import (
+    LOCAL_SETTINGS_MOUNTS, LOCAL_VOLUMES, SIM_VOLUME_INIT_COMMAND)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -273,6 +274,19 @@ class LauncherLifecycleTests(unittest.TestCase):
         self.fixture_root = base / "checkout"
         (self.fixture_root / "deploy" / "stage9").mkdir(parents=True)
         (self.fixture_root / "out").mkdir()
+        (self.fixture_root / "config").mkdir()
+        shutil.copyfile(ROOT / "config" / "spacecraft.example.json",
+                        self.fixture_root / "config" / "spacecraft.example.json")
+        self.config_path = self.fixture_root / "config" / "spacecraft.json"
+        for name, read_only in LOCAL_SETTINGS_MOUNTS.items():
+            service = self.compose_policy["services"][name]
+            service["volumes"].append({
+                "type": "bind", "source": str(self.fixture_root / "config"),
+                "target": "/config", "read_only": read_only,
+                "bind": {"create_host_path": False}})
+            service.setdefault("environment", {})["PADO_SPACECRAFT_CONFIG"] = "/config/spacecraft.json"
+        self.compose_policy["services"]["ros-api"]["group_add"] = [str(os.getgid())]
+        self.compose_json_path.write_text(json.dumps(self.compose_policy), encoding="utf-8")
         shutil.copyfile(LAUNCHER, self.fixture_root / "pado-gs.sh")
         shutil.copyfile(ROOT / "deploy" / "stage9" / "compose.local.yaml",
                         self.fixture_root / "deploy" / "stage9" / "compose.local.yaml")
@@ -361,6 +375,7 @@ class LauncherLifecycleTests(unittest.TestCase):
 
     def test_cleanup_removes_only_project_containers_images_and_volumes(self):
         self.run_launcher("start")
+        self.config_path.write_text('{"operator_setting": 42}\n', encoding="utf-8")
         before_cleanup = len(self.calls())
         self.run_launcher("cleanup", "--yes")
         docker_calls = [call[1:] for call in self.calls()[before_cleanup:]
@@ -373,6 +388,76 @@ class LauncherLifecycleTests(unittest.TestCase):
         self.assertNotIn("--remove-orphans", down_calls[0])
         self.assertNotIn("PADO_GS_LOCAL", self.rules())
         self.assertEqual(self.sentinel.read_text(encoding="utf-8"), "keep repo output")
+        self.assertEqual(json.loads(self.config_path.read_text()), {"operator_setting": 42})
+
+    def test_config_is_seeded_once_and_shared_group_permissions_survive_restart(self):
+        self.run_launcher("start")
+        self.assertEqual(self.config_path.read_bytes(),
+                         (self.fixture_root / "config" / "spacecraft.example.json").read_bytes())
+        self.assertEqual(self.config_path.stat().st_mode & 0o7777, 0o664)
+        self.assertEqual(self.config_path.parent.stat().st_mode & 0o7777, 0o2775)
+        self.assertEqual(self.config_path.stat().st_gid, os.getgid())
+        self.config_path.write_text('{"operator_setting": 42}\n', encoding="utf-8")
+        self.run_launcher("start")
+        self.run_launcher("stop")
+        self.assertEqual(json.loads(self.config_path.read_text()), {"operator_setting": 42})
+
+    def test_config_symlinks_and_hardlinks_are_rejected_without_touching_targets(self):
+        outside = self.fixture_root / "unrelated-settings.json"
+        outside.write_text("untouched", encoding="utf-8")
+        self.config_path.symlink_to(outside)
+        result = self.invoke("start")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("non-symlink", result.stderr)
+        self.assertEqual(outside.read_text(), "untouched")
+        self.config_path.unlink()
+        os.link(outside, self.config_path)
+        result = self.invoke("start")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("hard-linked", result.stderr)
+        self.assertEqual(outside.read_text(), "untouched")
+
+    def test_settings_directory_symlink_is_rejected_without_chmod_of_target(self):
+        directory = self.config_path.parent
+        outside = self.fixture_root / "unrelated-config"
+        directory.rename(outside)
+        outside.chmod(0o700)
+        directory.symlink_to(outside, target_is_directory=True)
+        result = self.invoke("start")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("non-symlink directory", result.stderr)
+        self.assertEqual(outside.stat().st_mode & 0o7777, 0o700)
+        self.assertFalse((outside / "spacecraft.json").exists())
+
+    @unittest.skipUnless(getattr(os, "geteuid", lambda: -1)() == 0,
+                         "root is required to test distinct host and container UIDs")
+    def test_operator_restart_preserves_file_replaced_by_ros_uid(self):
+        # Only this temporary fixture is reassigned to a synthetic host user.
+        base = self.fixture_root.parent
+        for path in [base, *base.rglob("*")]:
+            os.chown(path, 1000, 1000)
+        base.chmod(0o755)
+        def host_start():
+            return subprocess.run(
+                ["bash", str(self.fixture_root / "pado-gs.sh"), "start"],
+                cwd=self.fixture_root, env=self.env, text=True, capture_output=True,
+                timeout=30, check=False, user=1000, group=1000, extra_groups=[])
+        first = host_start()
+        self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+        writer = subprocess.run(
+            [sys.executable, "-c", "from pathlib import Path; import os,tempfile; "
+             "p=Path(__import__('sys').argv[1]); "
+             "fd,t=tempfile.mkstemp(dir=p.parent); "
+             "os.write(fd,b'operator settings after ROS update'); os.close(fd); "
+             "os.chmod(t,0o664); os.replace(t,p)", str(self.config_path)],
+            user=10001, group=10001, extra_groups=[1000],
+            text=True, capture_output=True, check=False)
+        self.assertEqual(writer.returncode, 0, writer.stderr)
+        self.assertEqual((self.config_path.stat().st_uid, self.config_path.stat().st_gid),
+                         (10001, 1000))
+        restarted = host_start()
+        self.assertEqual(restarted.returncode, 0, restarted.stdout + restarted.stderr)
+        self.assertEqual(self.config_path.read_text(), "operator settings after ROS update")
 
     def test_missing_docker_user_chain_fails_before_publishing_port(self):
         self.rules_path.write_text("{}", encoding="utf-8")

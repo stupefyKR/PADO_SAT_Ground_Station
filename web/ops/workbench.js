@@ -53,6 +53,7 @@
   let historyController = null;
   let historyCoverageKey = "";
   let packetBrowser = null;
+  let sensorSettings = null;
   let spacecraftEventsPending = false;
   const CURRENT_SAMPLE_AGE_MS = 120_000;
 
@@ -577,6 +578,7 @@
   }
   function renderSensors() {
     renderPowerSummary();
+    sensorSettings?.updateMeasurements(selectedTm, tmSource);
     if (!selectedTm) return;
     const list = $("sensor-list");
     list.replaceChildren();
@@ -1070,6 +1072,17 @@
     $("reservation-form").addEventListener("submit", reserve);
     try {
       session = await api("/api/session");
+      if (window.rosSensorSettings) sensorSettings = window.rosSensorSettings.create({api, session,
+        onSaved: (view) => {
+          if (tmSource !== "published" || !selectedTm) return;
+          const rules = new Map(view.sensors.map(rule => [rule.id, rule]));
+          for (const sensor of selectedTm.sensors) {
+            const rule = rules.get(sensor.id);
+            if (rule) Object.assign(sensor, {lower:rule.lower, upper:rule.upper});
+          }
+          lastPublishedRaw = "";
+          renderSensors(); renderCurrentAlerts();
+        }});
       if (window.rosPacketBrowser) packetBrowser = window.rosPacketBrowser.create({api});
       try { await refreshDrafts(); }
       catch (error) { message("sequence-message", `ROS 초안 저장소 연결 실패: ${error.message}`, true); }

@@ -51,6 +51,9 @@ services:
       context: ../..
       dockerfile: docker/stage9/Dockerfile
     command: ["python3", "-m", "services.webapp.main", "ros", "--transport", "http", "--internal-token-file", "/internal/token", "--bind", "0.0.0.0", "--port", "8081", "--core-socket", "/run/core/core.sock", "--draft-db", "/state/ros-drafts.db", "--tm-preview", "/tm-preview/test_tm_snapshot.json", "--sim-tc-socket", "/run/sim-tc/bridge.sock"]
+    environment:
+      PADO_SPACECRAFT_CONFIG: /config/spacecraft.json
+    group_add: ["${PADO_CONFIG_GID:?Run ./pado-gs.sh start to set the operator group}"]
     depends_on:
       init-token: {condition: service_completed_successfully}
       ros-core-read: {condition: service_healthy}
@@ -60,6 +63,10 @@ services:
       - ros_drafts:/state
       - ros_tm_preview:/tm-preview:ro
       - sim_tc_socket:/run/sim-tc:ro
+      - type: bind
+        source: ../../config
+        target: /config
+        bind: {create_host_path: false}
     networks: [portal_ros]
     read_only: true
     cap_drop: [ALL]
@@ -178,7 +185,9 @@ services:
     build:
       context: ../..
       dockerfile: docker/stage9/SimTm.Dockerfile
-    command: ["python3", "-m", "services.sim_ground.receiver", "--test-only", "--bind", "0.0.0.0", "--port", "9200", "--snapshot", "/tm-preview/test_tm_snapshot.json", "--n11-inbox", "/n11-inbox/scenario-ltan12-v1", "--limits", "/app/services/sim_ground/full_test_limits.json", "--tc-socket", "/run/sim-tc/bridge.sock", "--contact-view", "/fds-view/orbit_view.json"]
+    command: ["python3", "-m", "services.sim_ground.receiver", "--test-only", "--bind", "0.0.0.0", "--port", "9200", "--snapshot", "/tm-preview/test_tm_snapshot.json", "--n11-inbox", "/n11-inbox/scenario-ltan12-v1", "--limits", "/config/spacecraft.json", "--tc-socket", "/run/sim-tc/bridge.sock", "--contact-view", "/fds-view/orbit_view.json"]
+    environment:
+      PADO_SPACECRAFT_CONFIG: /config/spacecraft.json
     depends_on:
       sim-volume-init: {condition: service_completed_successfully}
     volumes:
@@ -186,6 +195,11 @@ services:
       - sim_n11_inbox:/n11-inbox
       - sim_tc_socket:/run/sim-tc
       - fds_truth:/fds-view:ro
+      - type: bind
+        source: ../../config
+        target: /config
+        read_only: true
+        bind: {create_host_path: false}
     networks: [sim_tm]
     read_only: true
     cap_drop: [ALL]
@@ -197,12 +211,19 @@ services:
       context: ../..
       dockerfile: docker/stage9/SimTm.Dockerfile
     command: ["python3", "-m", "services.sim_sat.emulator", "--test-only", "--orbit-view", "/fds-view/orbit_view.json", "--host", "sim-ground", "--port", "9200", "--interval-seconds", "5", "--seed", "1", "--spool", "/state/test_tm_spool-ltan12-v1.sqlite3", "--scenario-id", "ltan12-v1", "--power-mode", "${PADO_SIM_POWER_MODE:-standby}"]
+    environment:
+      PADO_SPACECRAFT_CONFIG: /config/spacecraft.json
     depends_on:
       sim-ground: {condition: service_started}
       fds-synthetic-demo: {condition: service_started}
     volumes:
       - fds_truth:/fds-view:ro
       - sim_tm_spool:/state
+      - type: bind
+        source: ../../config
+        target: /config
+        read_only: true
+        bind: {create_host_path: false}
     networks: [sim_tm]
     read_only: true
     cap_drop: [ALL]

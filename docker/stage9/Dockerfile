@@ -27,6 +27,8 @@ RUN apt-get update \
 COPY --from=core-builder /build/gs_stage9_core_probe /usr/local/bin/gs_stage9_core_probe
 WORKDIR /app
 COPY services/webapp /app/services/webapp
+COPY services/spacecraft_config.py /app/services/spacecraft_config.py
+COPY config/spacecraft.example.json /app/config/spacecraft.example.json
 COPY services/sim_ground/archive.py /app/services/sim_ground/archive.py
 COPY deploy/stage9/dgs_ops_gateway.py /app/deploy/stage9/dgs_ops_gateway.py
 COPY tools/pado_packet_codec.py tools/orbit_history.py /app/tools/
@@ -36,6 +38,6 @@ COPY web /app/web
 RUN mkdir -p /app/interfaces/command_db /app/interfaces/pado_packets
 COPY interfaces/command_db/commands.json /app/interfaces/command_db/commands.json
 COPY interfaces/pado_packets/draft_v0.json /app/interfaces/pado_packets/draft_v0.json
-RUN chmod 0755 /app /app/interfaces /app/interfaces/command_db /app/interfaces/pado_packets \
-    && chmod 0444 /app/interfaces/command_db/commands.json /app/interfaces/pado_packets/draft_v0.json
+RUN chmod 0755 /app /app/config /app/interfaces /app/interfaces/command_db /app/interfaces/pado_packets \
+    && chmod 0444 /app/config/spacecraft.example.json /app/interfaces/command_db/commands.json /app/interfaces/pado_packets/draft_v0.json
 USER 10001:10001

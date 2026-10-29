@@ -38,3 +38,8 @@ Testing/
 *.dylib
 __pycache__/
 *.pyc
+
+# Operator-managed physical settings and ROS sensor limits
+/config/spacecraft.json
+/config/.spacecraft-settings.lock
+/config/.spacecraft-*.tmp

@@ -24,7 +24,7 @@ class FullTmSnapshotTests(unittest.TestCase):
                 view, START + timedelta(seconds=offset), (offset // 5 * 256) & 0xffff)
             packets.extend(batch)
         limits = load_limits(Path(__file__).resolve().parents[1] /
-                             "services/sim_ground/full_test_limits.json")
+                             "config/spacecraft.example.json")
         snapshot = build_snapshot(packets, limits,
             received_ms=int((START + timedelta(hours=1)).timestamp()) * 1000,
             max_packets=MAX_SIM_HISTORY_PDUS)

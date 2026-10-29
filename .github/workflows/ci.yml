@@ -95,7 +95,7 @@ jobs:
       - name: Validate Windows-to-VM HTTP Compose
         env:
           PADO_LOCAL_BIND_IP: 127.0.0.1
-        run: docker compose -f deploy/stage9/compose.local.yaml config --quiet
+        run: PADO_CONFIG_GID="$(id -g)" docker compose -f deploy/stage9/compose.local.yaml config --quiet
 
   fds-orbit-tests:
     runs-on: ubuntu-24.04
@@ -165,12 +165,20 @@ jobs:
       - name: Build offline synthetic demo, TM, and ROS containers
         env:
           PADO_LOCAL_BIND_IP: 127.0.0.1
-        run: docker compose -f deploy/stage9/compose.local.yaml build fds-synthetic-demo sim-ground sim-satellite ros-api
+        run: PADO_CONFIG_GID="$(id -g)" docker compose -f deploy/stage9/compose.local.yaml build fds-synthetic-demo sim-ground sim-satellite ros-api
       - name: Verify beacon, commanded TM dump, private TC bridge, and ROS ACK
         env:
           PADO_LOCAL_BIND_IP: 127.0.0.1
         run: |
           set -euo pipefail
+          export PADO_CONFIG_GID="$(id -g)"
+          # This job starts Compose directly; mirror the launcher's one-time
+          # settings seed and shared-group permissions in the fresh checkout.
+          if [[ ! -e config/spacecraft.json ]]; then
+            cp config/spacecraft.example.json config/spacecraft.json
+          fi
+          chmod 2775 config
+          chmod 0664 config/spacecraft.json
           compose=(docker compose -f deploy/stage9/compose.local.yaml)
           cleanup() {
             result=$?

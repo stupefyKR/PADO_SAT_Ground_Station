@@ -101,7 +101,7 @@ def validate_snapshot(raw: bytes) -> dict:
     return value
 
 
-def load_snapshot(path: Path | None) -> dict:
+def load_snapshot(path: Path | None, *, limits: dict | None = None) -> dict:
     if path is None or path.name != "test_tm_snapshot.json":
         raise PreviewError("snapshot_not_configured")
     if path.is_symlink():
@@ -115,7 +115,14 @@ def load_snapshot(path: Path | None) -> dict:
             raw = source.read(MAX_SNAPSHOT_BYTES + 1)
     except OSError as error:
         raise PreviewError("snapshot_unavailable") from error
-    return validate_snapshot(raw)
+    snapshot = validate_snapshot(raw)
+    if limits is not None:
+        by_id = {rule["id"]: rule for rule in limits["sensors"].values()}
+        for sensor in snapshot["sensors"]:
+            configured = by_id.get(sensor["id"])
+            if configured is not None:
+                sensor.update({key: configured[key] for key in ("name", "group", "unit", "lower", "upper")})
+    return snapshot
 
 
 def load_beacon(snapshot_path: Path | None) -> dict:

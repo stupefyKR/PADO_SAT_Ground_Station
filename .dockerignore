@@ -19,3 +19,6 @@ __pycache__/
 *.sqlite-*
 secrets/
 keys/
+config/spacecraft.json
+config/.spacecraft-settings.lock
+config/.spacecraft-*.tmp

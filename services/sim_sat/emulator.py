@@ -302,7 +302,8 @@ def generate_packet_batch(view: OrbitView, now: datetime, seq: int, *,
     # episode in every five-minute ROS history window (test limit: 5.5 V).
     voltage = 5.15 + 0.42 * math.sin(stamp / 35 + phase) + 0.03 * math.sin(stamp / 31)
     if power_sample is not None:
-        voltage = 5.0 if power_sample["load_w"]-power_sample["unserved_load_w"] > 1e-6 else 0.0
+        voltage = power_sample["regulated_bus_voltage_v"] \
+            if power_sample["load_w"]-power_sample["unserved_load_w"] > 1e-6 else 0.0
     temperature = 22.0 + 4.0 * math.sin(stamp / 570 + phase / 2)
     # TLE refreshes every 15 minutes; spacecraft boot time must not reset
     # with each FDS view. This fixed epoch is synthetic, not flight TM.
@@ -387,6 +388,10 @@ class TmSpool:
         self.interval_s = interval_s
         self.max_ticks = max_ticks
         self.full_housekeeping = full_housekeeping
+        self._shared_power_settings = power_profile is None
+        self._settings_error: str | None = None
+        self._settings_load_failed = False
+        self._pending_configuration_change: dict | None = None
         self.power_profile = load_profile() if power_profile is None else power_profile
         self.power_mode = power_mode
         self.power_sample: dict | None = None
@@ -436,7 +441,22 @@ class TmSpool:
                     if len(saved[0]) > 128*1024:
                         raise ValueError("bounded simulator battery state required")
                     document = json.loads(saved[0])
-                    self.power_model = PowerModel(self.power_profile, state=document["state"])
+                    state = document["state"]
+                    if document.get("power_profile") is not None:
+                        # Preserve the previous physical model until the first
+                        # new sample defines an explicit change boundary.
+                        self.power_model = PowerModel(document["power_profile"], state=state)
+                    else:
+                        expected = PowerModel(self.power_profile)
+                        if state.get("profile_sha256") == expected.snapshot()["profile_sha256"]:
+                            self.power_model = PowerModel(self.power_profile, state=state)
+                        else:
+                            # Old releases did not persist the profile itself.
+                            # Preserve energy and counters, without applying
+                            # today's settings to the unknown previous interval.
+                            self.power_model = PowerModel.migrate_state(
+                                self.power_profile, state, skip_unknown_interval=True)
+                            self._pending_configuration_change = self.power_model.configuration_change
                     self.power_sample = document["sample"]
                     if (not isinstance(self.power_sample, dict) or
                             self.power_sample.get("utc_s") != self.last_generated_s):
@@ -449,6 +469,25 @@ class TmSpool:
 
     def close(self) -> None:
         self.connection.close()
+
+    def _power_settings_for_tick(self) -> dict:
+        self._settings_load_failed = False
+        if not self._shared_power_settings:
+            return self.power_profile
+        try:
+            profile = load_profile()
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            self._report_invalid_settings(error)
+            return self.power_model.profile
+        return profile
+
+    def _report_invalid_settings(self, error: Exception) -> None:
+        message = str(error)
+        if message != self._settings_error:
+            print(f"TEST_ONLY spacecraft settings invalid; using last valid power settings: {message}",
+                  file=sys.stderr, flush=True)
+        self._settings_error = message
+        self._settings_load_failed = True
 
     def pending_count(self) -> int:
         return self.connection.execute("SELECT COUNT(*) FROM tm_spool").fetchone()[0]
@@ -551,15 +590,44 @@ class TmSpool:
         if self.full_housekeeping:
             # Work on a copy. Failed packet encoding or a failed SQLite commit
             # must leave both the battery and the generation cursor unchanged.
-            candidate_model = PowerModel(self.power_profile, state=self.power_model.snapshot())
+            target_profile = self._power_settings_for_tick()
+            candidate_model = PowerModel(self.power_model.profile, state=self.power_model.snapshot())
             if (self.last_generated_s is not None and stamp > self.last_generated_s+self.interval_s
                     and view.start_s > self.last_generated_s+self.interval_s):
                 candidate_model.reanchor(stamp)
             power_sample = _evaluate_power(candidate_model, view, stamp, self.power_mode)
-            packets, _ = generate_housekeeping_batch(view, now, sequence, seed=seed,
-                                                     include_full=include_full,
-                                                     mode=power_sample["mode_code"],
-                                                     power_sample=power_sample)
+            target_model = PowerModel(target_profile)
+            configuration_change = self._pending_configuration_change
+            changed = target_model.snapshot()["profile_sha256"] != candidate_model.snapshot()["profile_sha256"]
+            old_model, old_sample = candidate_model, power_sample
+            if changed:
+                # Account for the past interval using the old settings. New
+                # ratings apply to this sample and later samples only.
+                try:
+                    candidate_model = PowerModel.migrate_state(target_profile, candidate_model.snapshot())
+                    power_sample = _evaluate_power(candidate_model, view, stamp, self.power_mode)
+                    configuration_change = candidate_model.configuration_change
+                except (ValueError, KeyError, TypeError) as error:
+                    self._report_invalid_settings(error)
+                    candidate_model, power_sample = old_model, old_sample
+                    configuration_change = self._pending_configuration_change
+            if configuration_change is not None:
+                power_sample["configuration_change"] = {**configuration_change, "applied_utc_s": stamp}
+            try:
+                packets, _ = generate_housekeeping_batch(view, now, sequence, seed=seed,
+                    include_full=include_full, mode=power_sample["mode_code"], power_sample=power_sample)
+            except (ValueError, KeyError, TypeError) as error:
+                if not changed or candidate_model is old_model:
+                    raise
+                # A structurally valid manual edit can still exceed a packet
+                # scalar range or invalidate current orbit geometry. Continue
+                # sampling with the last working model instead of losing TM.
+                self._report_invalid_settings(error)
+                candidate_model, power_sample = old_model, old_sample
+                packets, _ = generate_housekeeping_batch(view, now, sequence, seed=seed,
+                    include_full=include_full, mode=power_sample["mode_code"], power_sample=power_sample)
+            if not self._settings_load_failed:
+                self._settings_error = None
         else:
             packets, _ = generate_packet_batch(view, now, sequence, seed=seed)
         dropped = 0
@@ -575,7 +643,8 @@ class TmSpool:
                     "ON CONFLICT(key) DO UPDATE SET value=excluded.value", ("last_full_hk_s",stamp))
             if self.full_housekeeping:
                 state_json = json.dumps({"state": candidate_model.snapshot(),
-                                         "sample": power_sample}, separators=(",",":"),
+                                         "sample": power_sample,
+                                         "power_profile": candidate_model.profile}, separators=(",",":"),
                                         allow_nan=False)
                 if len(state_json) > 128*1024:
                     raise ValueError("bounded simulator battery state required")
@@ -596,6 +665,8 @@ class TmSpool:
         if self.full_housekeeping:
             self.power_model = candidate_model
             self.power_sample = power_sample
+            self.power_profile = candidate_model.profile
+            self._pending_configuration_change = None
         if include_full:
             self.last_full_hk_s = stamp
         if dropped:
@@ -960,7 +1031,8 @@ def main() -> None:
         run_forever(args.orbit_view, args.host, args.port, args.interval_seconds,
                     args.seed, args.spool, scenario_id=args.scenario_id,
                     beacon_period_s=args.beacon_period_seconds,
-                    power_profile=load_profile(args.power_profile), power_mode=args.power_mode)
+                    power_profile=load_profile(args.power_profile) if args.power_profile else None,
+                    power_mode=args.power_mode)
     except KeyboardInterrupt:
         pass
 

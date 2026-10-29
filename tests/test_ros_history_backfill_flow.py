@@ -78,7 +78,7 @@ class HistoryBackfillFlowTests(unittest.TestCase):
         inbox = self.folder / "n11"
         inbox.mkdir()
         self.receiver = TmReceiver(self.snapshot, inbox,
-            load_limits(ROOT / "services/sim_ground/full_test_limits.json"))
+            load_limits(ROOT / "config/spacecraft.example.json"))
         self.addCleanup(self.receiver.archive.close)
 
         class Contact:

@@ -29,6 +29,7 @@ Usage: ./pado-gs.sh start|stop|status|cleanup [--yes]
 Optional environment: PADO_LOCAL_BIND_IP (default 192.168.45.128),
 PADO_OPERATOR_CIDR (default 192.168.45.1/32).
 Start requires Docker Engine 28.0.0 or newer and Docker Compose v2.
+Operator settings in config/spacecraft.json are seeded once and retained.
 EOF
 }
 
@@ -45,6 +46,9 @@ fw() {
 
 require_tools() {
   [[ "$(uname -s)" == Linux ]] || die 'Run this script on the Linux VM.'
+  PADO_CONFIG_GID="$(id -g)"
+  [[ "$PADO_CONFIG_GID" =~ ^[0-9]+$ ]] || die 'Cannot determine the operator group ID.'
+  export PADO_CONFIG_GID
   local command_name
   for command_name in docker iptables ip python3; do
     command -v "$command_name" >/dev/null || die "Missing required command: $command_name"
@@ -54,6 +58,66 @@ require_tools() {
   fi
   docker info --format '{{.ServerVersion}}' >/dev/null || die 'Docker daemon is unavailable.'
   docker compose version >/dev/null || die 'Docker Compose v2 is required.'
+}
+
+prepare_spacecraft_config() {
+  # Bind the directory so ROS atomic replacements remain visible to readers.
+  # Touch only this dedicated directory and its runtime file, never the repo.
+  python3 - "$ROOT_DIR/config" "$PADO_CONFIG_GID" <<'PY' || die 'Cannot prepare config/spacecraft.json; check its ownership, group and permissions.'
+import os
+from pathlib import Path
+import stat
+import sys
+
+directory = Path(sys.argv[1])
+gid = int(sys.argv[2])
+actual = directory / "spacecraft.json"
+template = directory / "spacecraft.example.json"
+
+def metadata(path, directory=False):
+    info = path.lstat()
+    valid = stat.S_ISDIR(info.st_mode) if directory else stat.S_ISREG(info.st_mode)
+    if not valid or stat.S_ISLNK(info.st_mode):
+        raise ValueError(f"{path}: expected a non-symlink {'directory' if directory else 'regular file'}")
+    if not directory and info.st_nlink != 1:
+        raise ValueError(f"{path}: hard-linked settings files are not allowed")
+    return info
+
+def permissions(path, wanted, directory=False):
+    info = metadata(path, directory)
+    mode = stat.S_IMODE(info.st_mode)
+    if info.st_gid == gid and mode == wanted:
+        return
+    # After an ROS update, UID 10001 owns the replacement. The operator can
+    # still edit it through the shared group, but cannot chmod it; leave it.
+    if os.geteuid() not in (0, info.st_uid):
+        required = 0o2070 if directory else 0o060
+        if info.st_gid == gid and mode & required == required and not mode & 0o002:
+            return
+        raise PermissionError(f"{path}: owner must set group {gid} and mode {wanted:04o}")
+    if info.st_gid != gid:
+        os.chown(path, -1, gid, follow_symlinks=False)
+    os.chmod(path, wanted, follow_symlinks=False)
+
+try:
+    directory.mkdir(mode=0o775, exist_ok=True)
+    metadata(directory, directory=True)
+    metadata(template)
+    permissions(directory, 0o2775, directory=True)
+    try:
+        metadata(actual)
+    except FileNotFoundError:
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+        with os.fdopen(os.open(actual, flags, 0o664), "wb") as target:
+            target.write(template.read_bytes())
+            target.flush()
+            os.fsync(target.fileno())
+        print("pado-gs: Created config/spacecraft.json from the example settings.")
+    permissions(actual, 0o664)
+except (OSError, ValueError) as exc:
+    print(exc, file=sys.stderr)
+    raise SystemExit(1)
+PY
 }
 
 require_patched_engine() {
@@ -434,6 +498,7 @@ validate_compose_config() {
 start_stack() {
   require_tools
   require_patched_engine
+  prepare_spacecraft_config
   # An earlier run may still have its port published even if Docker's firewall
   # was reset. Quiesce it before checking or changing access rules.
   compose stop

@@ -78,6 +78,7 @@ FDS의 오프라인 Java/Orekit 계산기 입력, 두 안테나 설정, 결과 C
 
 가상 위성의 100 Wh 배터리·태양전지 발전·장치별 소비전력 모델과 VM 설정은 [전력 모델 안내](docs/SIM_EPS.md)에 있습니다.
 ROS의 최근 3일 GNSS 위치·수신 자세 재생과 늦게 받은 TM 반영은 [위치·자세 이력 안내](docs/ROS_STATE_HISTORY.md)에 있습니다.
+DSP·MSP 정격과 장치 소비전력은 공통 설정 파일에서, 센서 하한·상한은 같은 파일 또는 ROS 화면에서 변경합니다([설정 안내](docs/SPACECRAFT_SETTINGS.md)).
 
 ## 저장소 구조
 

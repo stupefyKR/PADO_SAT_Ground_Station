@@ -83,7 +83,8 @@ def build() -> list[Path]:
                        packet_browser + "\n" + workbench)
             html = html.replace('<script src="/assets/ros-workbench.js" defer></script>', '')
             for script in ("ros-packet-browser.js", "ros-attitude-math.js",
-                           "ros-attitude-gl.js", "ros-attitude-viewer.js", "ros-state-history.js"):
+                           "ros-attitude-gl.js", "ros-attitude-viewer.js", "ros-state-history.js",
+                           "ros-sensor-settings.js"):
                 html = html.replace(f'<script src="/assets/{script}" defer></script>', '')
         else:
             html = html.replace('<script src="/assets/mps-live.js" defer></script>', '')

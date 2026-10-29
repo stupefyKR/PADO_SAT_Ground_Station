@@ -31,6 +31,7 @@ from .ros_workbench import DraftError, RosDraftStore, normalize_sim_handoff
 from .sim_tc_dispatch import SimTcDispatcher
 from .tm_preview import MAX_SNAPSHOT_BYTES, PreviewError, load_beacon, load_snapshot
 from .state_history import StateHistoryError, history_query, state_history
+from .settings import SettingsError, SettingsStore
 from services.sim_ground.archive import ArchiveError, list_events, list_packets, packet_detail
 from tools.orbit_history import HISTORY_NAME, OrbitHistoryError, read_history as read_orbit_history
 
@@ -66,6 +67,7 @@ ASSETS = {
     BRAND_ASSET: ("assets/pado-sat-badge-ec9020cb.png", "image/png"),
     "/assets/app.js": ("common/app.js", "text/javascript; charset=utf-8"),
     "/assets/ros-workbench.js": ("ops/workbench.js", "text/javascript; charset=utf-8"),
+    "/assets/ros-sensor-settings.js": ("ops/sensor_settings.js", "text/javascript; charset=utf-8"),
     "/assets/ros-packet-browser.js": ("ops/packet_browser.js", "text/javascript; charset=utf-8"),
     "/assets/ros-attitude-math.js": ("ops/attitude_math.js", "text/javascript; charset=utf-8"),
     "/assets/ros-state-history.js": ("ops/state_history.js", "text/javascript; charset=utf-8"),
@@ -88,6 +90,7 @@ PROXY_ROUTES = {
     "/api/ros/overview": ("ros", "/overview"),
     "/api/ros/test-tm-snapshot": ("ros", "/test-tm-snapshot"),
     "/api/ros/test-beacon": ("ros", "/test-beacon"),
+    "/api/ros/settings": ("ros", "/settings"),
     "/api/ros/test-sequences": ("ros", "/test-sequences"),
     "/api/ros/test-reservations": ("ros", "/test-reservations"),
     "/api/ros/test-sim-sequences": ("ros", "/test-sim-sequences"),
@@ -141,14 +144,14 @@ def archive_route(path: str, *, portal: bool = False) -> str | None:
 
 
 def test_n10_feedback(drafts: RosDraftStore, tm_preview: Path | None,
-                      now_s: int | None = None) -> dict:
+                      now_s: int | None = None, *, limits: dict | None = None) -> dict:
     """Bounded ACK/SOH projection; it is not an operational N10 exchange."""
     now_s = int(time.time()) if now_s is None else now_s
     result = {"schema": "pado.sim-n10-feedback.v1", "source": "ROS_SIM_ONLY",
               "non_operational": True, "ack_items": drafts.n10_test_ack_items(),
               "bus_soh_state": "UNAVAILABLE", "bus_soh": None}
     try:
-        snapshot = load_snapshot(tm_preview)
+        snapshot = load_snapshot(tm_preview, limits=limits)
     except PreviewError as exc:
         if str(exc) not in ("snapshot_unavailable", "snapshot_not_configured"):
             result["bus_soh_state"] = "INVALID"
@@ -232,6 +235,7 @@ class AppServer(ThreadingHTTPServer):
                  tm_preview: Path | None = None,
                  draft_db: Path | None = None,
                  candidate_db: Path | None = None,
+                 settings_file: Path | None = None,
                  sim_tc_socket: Path | None = None,
                  transport: str = "tls", internal_token_file: Path | None = None) -> None:
         if transport not in ("tls", "http"):
@@ -264,6 +268,7 @@ class AppServer(ThreadingHTTPServer):
         self.iss_orbit_view = iss_orbit_view
         self.operational_orbit_view = operational_orbit_view
         self.tm_preview = tm_preview
+        self.settings = SettingsStore(settings_file) if mode == "ros" else None
         self.drafts = RosDraftStore(draft_db) if mode == "ros" and draft_db else None
         self.candidates = MpsCandidateStore(candidate_db) if mode == "mps" and candidate_db else None
         self.sim_tc_socket = sim_tc_socket if mode == "ros" else None
@@ -392,6 +397,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._portal_sim_handoff()
             elif path == "/api/ros/test-sim-reservations":
                 self._portal_sim_reserve()
+            elif path == "/api/ros/settings":
+                self._portal_draft_post(path)
             elif path in ("/api/ros/test-sequences", "/api/ros/test-reservations",
                           "/api/ros/test-reservations/cancel", "/api/mps/test-candidates",
                           "/api/mps/test-sequences",
@@ -769,6 +776,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._error(HTTPStatus.BAD_REQUEST if str(error)=="invalid_query" else
                             HTTPStatus.SERVICE_UNAVAILABLE,str(error))
             return
+        if self.server.mode == "ros" and path == "/settings":
+            try:
+                self._json(HTTPStatus.OK, self.server.settings.view())
+            except SettingsError as error:
+                self._error(HTTPStatus.SERVICE_UNAVAILABLE, str(error))
+            return
         kind = archive_route(path) if self.server.mode == "ros" else None
         if kind:
             try:
@@ -800,16 +813,16 @@ class Handler(BaseHTTPRequestHandler):
                 return
             try:
                 feedback = test_n10_feedback(self.server.drafts,
-                                             self.server.tm_preview)
-            except DraftError:
+                                             self.server.tm_preview, limits=self.server.settings.limits())
+            except (DraftError, SettingsError):
                 self._error(HTTPStatus.SERVICE_UNAVAILABLE, "test_feedback_invalid")
                 return
             self._json(HTTPStatus.OK, feedback)
             return
         if self.server.mode == "ros" and path == "/test-tm-snapshot":
             try:
-                snapshot = load_snapshot(self.server.tm_preview)
-            except PreviewError:
+                snapshot = load_snapshot(self.server.tm_preview, limits=self.server.settings.limits())
+            except (PreviewError, SettingsError):
                 self._error(HTTPStatus.SERVICE_UNAVAILABLE, "test_tm_unavailable")
                 return
             if len(json.dumps(snapshot, separators=(",", ":"),
@@ -935,7 +948,7 @@ class Handler(BaseHTTPRequestHandler):
         self._json(HTTPStatus.OK, result)
 
     def _backend_draft_post(self, path: str) -> None:
-        if not self._backend_identity() or self.server.drafts is None:
+        if not self._backend_identity() or (path != "/settings" and self.server.drafts is None):
             self._error(HTTPStatus.FORBIDDEN, "client_identity")
             return
         actor = self.headers.get("X-Pado-Actor", "")
@@ -948,7 +961,9 @@ class Handler(BaseHTTPRequestHandler):
             self._error(HTTPStatus.BAD_REQUEST, "invalid_request")
             return
         try:
-            if path == "/test-sequences" and set(body) == {"sequence_text", "manifest_text"}:
+            if path == "/settings" and set(body) == {"expected_sha256", "limits"}:
+                result = self.server.settings.save_limits(body["expected_sha256"], body["limits"])
+            elif path == "/test-sequences" and set(body) == {"sequence_text", "manifest_text"}:
                 result = self.server.drafts.import_pair(
                     body["sequence_text"], body["manifest_text"], actor)
             elif path == "/test-reservations" and set(body) == {"sha256", "step_id", "target_utc_s"}:
@@ -975,8 +990,11 @@ class Handler(BaseHTTPRequestHandler):
                 result = self.server.drafts.request_sim_tm(actor)
             else:
                 raise DraftError("invalid_request")
-        except DraftError as exc:
-            self._error(HTTPStatus.BAD_REQUEST, str(exc))
+        except (DraftError, SettingsError) as exc:
+            code = str(exc)
+            self._error(HTTPStatus.CONFLICT if code == "settings_conflict" else
+                        HTTPStatus.SERVICE_UNAVAILABLE if code == "settings_unavailable" else
+                        HTTPStatus.BAD_REQUEST, code)
             return
         self._json(HTTPStatus.OK, {**result, "operational": False})
 
@@ -1015,6 +1033,7 @@ def parser() -> argparse.ArgumentParser:
         if mode in ("ros", "mps"):
             service.add_argument("--core-socket", type=Path, default=CORE_SOCKET)
         if mode == "ros":
+            service.add_argument("--settings-file", type=Path)
             service.add_argument("--draft-db", type=Path)
             service.add_argument("--tm-preview", type=Path)
             service.add_argument("--sim-tc-socket", type=Path)
@@ -1068,6 +1087,7 @@ def main() -> None:
                        iss_orbit_view=getattr(args, "iss_orbit_view", None),
                        operational_orbit_view=getattr(args, "operational_orbit_view", None),
                        tm_preview=getattr(args, "tm_preview", None),
+                       settings_file=getattr(args, "settings_file", None),
                        draft_db=getattr(args, "draft_db", None),
                        candidate_db=getattr(args, "candidate_db", None),
                        sim_tc_socket=getattr(args, "sim_tc_socket", None),
