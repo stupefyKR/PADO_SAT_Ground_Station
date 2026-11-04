@@ -94,10 +94,10 @@ def main() -> None:
     parser.add_argument("--listen-port", type=int, required=True)
     parser.add_argument("--upstream-port", type=int, required=True)
     args = parser.parse_args()
-    if args.listen_port not in (8080, 8443) or args.upstream_port != args.listen_port:
-        parser.error("only the fixed 8080 or 8443 portal endpoint is supported")
+    if (args.listen_port,args.upstream_port) not in ((8080,8080),(8082,8080),(8443,8443)):
+        parser.error("only the fixed validation, operations or TLS portal endpoint is supported")
     cidr_text = os.environ.get("PADO_GATEWAY_OPERATOR_CIDR")
-    if args.listen_port == 8080:
+    if args.listen_port in (8080,8082):
         if not cidr_text:
             parser.error("local gateway requires PADO_GATEWAY_OPERATOR_CIDR")
         try:

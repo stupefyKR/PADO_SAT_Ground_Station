@@ -66,6 +66,13 @@ class GatewayOperatorAclTests(unittest.TestCase):
             ("0.0.0.0", 8080), 8080, ipaddress.IPv4Network("192.168.45.1/32"))
         gateway_type.return_value.__enter__.return_value.serve_forever.assert_called_once()
 
+    def test_operations_listener_keeps_fixed_internal_port_and_cidr(self):
+        with mock.patch.dict(os.environ,{'PADO_GATEWAY_OPERATOR_CIDR':'192.168.45.1/32'},clear=True), \
+             mock.patch.object(sys,'argv',['gateway','--listen-port','8082','--upstream-port','8080']), \
+             mock.patch.object(dgs_ops_gateway,'Gateway') as gateway:
+            dgs_ops_gateway.main()
+        gateway.assert_called_once_with(('0.0.0.0',8082),8080,ipaddress.IPv4Network('192.168.45.1/32'))
+
 
 if __name__ == "__main__":
     unittest.main()

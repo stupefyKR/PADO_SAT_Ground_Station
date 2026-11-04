@@ -1086,6 +1086,7 @@
     $("reservation-form").addEventListener("submit", reserve);
     try {
       session = await api("/api/session");
+      if (historyController) historyController.orbitTarget = session.environment === 'operations' ? 'operational' : 'synthetic';
       if (window.rosSensorSettings) sensorSettings = window.rosSensorSettings.create({api, session,
         onSaved: (view) => {
           if (tmSource !== "published" || !selectedTm) return;

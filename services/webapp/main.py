@@ -13,6 +13,7 @@ import json
 import os
 import re
 import secrets
+import sqlite3
 import ssl
 import stat
 import threading
@@ -32,6 +33,9 @@ from .sim_tc_dispatch import SimTcDispatcher
 from .tm_preview import MAX_SNAPSHOT_BYTES, PreviewError, load_beacon, load_snapshot
 from .state_history import StateHistoryError, history_query, state_history
 from .settings import SettingsError, SettingsStore
+from services.validation.runtime import environment, control_directory
+from services.validation.scheduler import RunStore
+from services.validation import recorder as validation_recorder
 from services.sim_ground.archive import ArchiveError, list_events, list_packets, packet_detail
 from tools.orbit_history import (HISTORY_NAME, RECONSTRUCTION_NAME, OrbitHistoryError,
     read_history as read_orbit_history, read_reconstruction)
@@ -60,6 +64,8 @@ CAD_ASSETS = {
     "/assets/pado-sat-surface-end.png": 4 * 1024 * 1024,
 }
 ASSETS = {
+    '/assets/validation-console.js': ('validation/console.js', 'text/javascript; charset=utf-8'),
+    '/assets/validation-console.css': ('validation/console.css', 'text/css; charset=utf-8'),
     "/login": ("login/index.html", "text/html; charset=utf-8"),
     "/ops": ("ops/index.html", "text/html; charset=utf-8"),
     "/mps": ("mps/index.html", "text/html; charset=utf-8"),
@@ -254,6 +260,8 @@ class AppServer(ThreadingHTTPServer):
         else:
             token = ""
         self.mode = mode
+        self.environment = environment()
+        self.cookie_name = 'pado_session' if self.environment=='legacy' else f'pado_{self.environment}_session'
         self.transport = transport
         self.internal_token = token
         self.auth = auth
@@ -273,6 +281,9 @@ class AppServer(ThreadingHTTPServer):
         self.drafts = RosDraftStore(draft_db) if mode == "ros" and draft_db else None
         self.candidates = MpsCandidateStore(candidate_db) if mode == "mps" and candidate_db else None
         self.sim_tc_socket = sim_tc_socket if mode == "ros" else None
+        self.validation_runs = (RunStore(draft_db.with_name('validation-runs.sqlite3'),control_directory(),
+            tm_preview.with_name('validation.sqlite3')) if self.environment=='validation' and
+            mode=='ros' and draft_db and tm_preview else None)
         self.login_attempts: dict[str, list[float]] = {}
         self.login_lock = threading.Lock()
         super().__init__(address, Handler)
@@ -356,7 +367,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             cookie = SimpleCookie()
             cookie.load(self.headers.get("Cookie", ""))
-            return cookie["pado_session"].value if "pado_session" in cookie else ""
+            return cookie[self.server.cookie_name].value if self.server.cookie_name in cookie else ""
         except Exception:
             return ""
 
@@ -390,6 +401,10 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         path = self._path()
         if self.server.mode == "portal":
+            if path.startswith('/api/ros/validation/'):
+                if self.server.environment!='validation':self._error(HTTPStatus.NOT_FOUND,'not_found');return
+                self._portal_draft_post(path)
+                return
             if path == "/api/login":
                 self._login()
             elif path == "/api/logout":
@@ -563,10 +578,17 @@ class Handler(BaseHTTPRequestHandler):
         except AuthError:
             self._error(HTTPStatus.UNAUTHORIZED, "invalid_credentials")
             return
+        if self.server.environment=='validation':
+            activation=self._proxy(('ros','/validation/activate'),session.username,session.role,
+                'POST',{},deliver=False)
+            if activation is None or activation[0]!=200:
+                self.server.auth.logout(session.token)
+                if activation is not None:self._error(HTTPStatus.SERVICE_UNAVAILABLE,'validation_activation_unavailable')
+                return
         self._json(HTTPStatus.OK,
                    {"username": session.username, "role": session.role,
-                    "csrf": session.csrf, "operational": False},
-                   {"Set-Cookie": "pado_session=" + session.token +
+                    "csrf": session.csrf, "operational": False,"environment":self.server.environment},
+                   {"Set-Cookie": self.server.cookie_name+"=" + session.token +
                    "; Path=/; HttpOnly; " +
                    ("Secure; " if self.server.transport == "tls" else "") +
                    "SameSite=Strict"})
@@ -580,11 +602,21 @@ class Handler(BaseHTTPRequestHandler):
             return
         self.server.auth.logout(token)
         self._json(HTTPStatus.OK, {"logged_out": True},
-                   {"Set-Cookie": "pado_session=; Path=/; Max-Age=0; HttpOnly; " +
+                   {"Set-Cookie": self.server.cookie_name+"=; Path=/; Max-Age=0; HttpOnly; " +
                     ("Secure; " if self.server.transport == "tls" else "") +
                     "SameSite=Strict"})
 
     def _portal_get(self, path: str) -> None:
+        if path=='/api/environment':
+            self._json(HTTPStatus.OK,{'environment':self.server.environment,
+                'label':{'legacy':'개발 환경','validation':'지상국 검증','operations':'운용 지상국'}[self.server.environment]})
+            return
+        if path.startswith('/api/ros/validation/'):
+            session=self._session()
+            if not session:self._error(HTTPStatus.UNAUTHORIZED,'login_required');return
+            if self.server.environment!='validation':self._error(HTTPStatus.NOT_FOUND,'not_found');return
+            self._proxy(('ros',path.removeprefix('/api/ros')),session.username,session.role)
+            return
         if path == "/":
             self._send(HTTPStatus.FOUND, extra={"Location": "/ops"})
             return
@@ -595,7 +627,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self._json(HTTPStatus.OK,
                            {"username": session.username, "role": session.role,
-                            "csrf": session.csrf, "operational": False})
+                            "csrf": session.csrf, "operational": False,"environment":self.server.environment})
             return
         if path == "/api/ros/state-history":
             session = self._session()
@@ -612,6 +644,8 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 query = history_query(urlsplit(self.path).query,orbit=True)
                 target = query.pop("target")
+                if self.server.environment in ('validation','operations') and target != ('synthetic' if self.server.environment=='validation' else 'operational'):
+                    self._error(HTTPStatus.NOT_FOUND,'orbit_target_disabled');return
                 source = {"synthetic":self.server.synthetic_orbit_view or self.server.orbit_view,
                     "iss":self.server.iss_orbit_view,"operational":self.server.operational_orbit_view}[target]
                 if source is not None and (source.name!="orbit_view.json" or source.is_symlink()):
@@ -640,6 +674,8 @@ class Handler(BaseHTTPRequestHandler):
                 return
             query = urlsplit(self.path).query
             target = query.removeprefix("target=") if query else None
+            if target is not None and self.server.environment in ('validation','operations') and target != ('synthetic' if self.server.environment=='validation' else 'operational'):
+                self._error(HTTPStatus.NOT_FOUND,'orbit_target_disabled');return
             source = (self.server.orbit_view if target is None else {
                 "synthetic": self.server.synthetic_orbit_view,
                 "iss": self.server.iss_orbit_view,
@@ -746,14 +782,15 @@ class Handler(BaseHTTPRequestHandler):
             connection.request(method, path, body=payload, headers=headers)
             response = connection.getresponse()
             base_path = urlsplit(path).path
-            maximum = (MAX_TM_ARCHIVE_RESPONSE if archive_route(base_path) or base_path=="/state-history" else
+            maximum = (2*1024*1024 if base_path.startswith('/validation/') else
+                       MAX_TM_ARCHIVE_RESPONSE if archive_route(base_path) or base_path=="/state-history" else
                        MAX_SNAPSHOT_BYTES if path == "/test-tm-snapshot" else
                        2 * 1024 * 1024 if path == "/test-sim-sequences" else
                        1024 * 1024 if path == "/test-sequences" and service == "mps"
                        else MAX_UPSTREAM)
             data = response.read(maximum + 1)
             captured = None
-            if len(data) > maximum or (method == "GET" and not archive_route(base_path) and base_path!="/state-history" and path not in
+            if len(data) > maximum or (method == "GET" and not base_path.startswith('/validation/') and not archive_route(base_path) and base_path!="/state-history" and path not in
                                             ("/test-sequences", "/test-reservations",
                                              "/test-candidates",
                                              "/test-tm-snapshot", "/test-beacon") and
@@ -776,6 +813,25 @@ class Handler(BaseHTTPRequestHandler):
         role = self.headers.get("X-Pado-Role", "")
         if role not in ROLES or len(actor) > 64 or not actor:
             self._error(HTTPStatus.FORBIDDEN, "portal_identity")
+            return
+        if self.server.mode=='ros' and path.startswith('/validation/'):
+            if self.server.environment!='validation' or self.server.validation_runs is None:
+                self._error(HTTPStatus.NOT_FOUND,'not_found');return
+            try:
+                store=self.server.validation_runs
+                if path=='/validation/coverage':
+                    from services.validation.corpus import tc_matrix
+                    result=tc_matrix(int(time.time()*1000))
+                elif path=='/validation/runs':result=store.list()
+                elif (match:=re.fullmatch(r'/validation/runs/([1-9][0-9]{0,8})',path)):
+                    result=store.get(int(match[1]))
+                elif (match:=re.fullmatch(r'/validation/(packets|events)/([1-9][0-9]{0,8})(?:/([0-9]{1,10}))?',path)):
+                    run=store.get(int(match[2]))
+                    result=(validation_recorder.events(store.received,run['run_key']) if match[1]=='events' else
+                        validation_recorder.packets(store.received,run['run_key'],before=int(match[3]) if match[3] else 2147483647))
+                else:self._error(HTTPStatus.NOT_FOUND,'not_found');return
+                self._json(HTTPStatus.OK,result)
+            except (OSError,ValueError,sqlite3.Error) as error:self._error(HTTPStatus.BAD_REQUEST,str(error)[:200])
             return
         if self.server.mode=="ros" and path=="/state-history":
             try:
@@ -958,6 +1014,29 @@ class Handler(BaseHTTPRequestHandler):
         self._json(HTTPStatus.OK, result)
 
     def _backend_draft_post(self, path: str) -> None:
+        if path.startswith('/validation/'):
+            if not self._backend_identity():self._error(HTTPStatus.FORBIDDEN,'client_identity');return
+            actor=self.headers.get('X-Pado-Actor','')
+            role=self.headers.get('X-Pado-Role','')
+            if not actor or len(actor)>64 or role not in ROLES:self._error(HTTPStatus.FORBIDDEN,'portal_identity');return
+            if self.server.environment!='validation' or self.server.validation_runs is None:
+                self._error(HTTPStatus.NOT_FOUND,'not_found');return
+            body=self._read_json()
+            if body is None:self._error(HTTPStatus.BAD_REQUEST,'invalid_request');return
+            try:
+                store=self.server.validation_runs
+                if path=='/validation/activate' and body=={}:
+                    store.activate();result={'active':True,'satellite':'PADO-SAT simulation'}
+                elif role not in ('operator','planner','lead'):
+                    self._error(HTTPStatus.FORBIDDEN,'role_denied');return
+                elif path=='/validation/runs' and set(body)=={'target_utc_s','seed'}:
+                    result=store.schedule(actor,body['target_utc_s'],body['seed'])
+                elif path=='/validation/cancel' and set(body)=={'id'} and type(body['id']) is int:
+                    store.cancel(body['id']);result={'cancelled':True}
+                else:self._error(HTTPStatus.BAD_REQUEST,'invalid_request');return
+                self._json(HTTPStatus.OK,result)
+            except (OSError,ValueError,sqlite3.Error) as error:self._error(HTTPStatus.BAD_REQUEST,str(error)[:200])
+            return
         if not self._backend_identity() or (path != "/settings" and self.server.drafts is None):
             self._error(HTTPStatus.FORBIDDEN, "client_identity")
             return
@@ -1103,7 +1182,7 @@ def main() -> None:
                        sim_tc_socket=getattr(args, "sim_tc_socket", None),
                        transport=args.transport,
                        internal_token_file=args.internal_token_file)
-    dispatcher = (SimTcDispatcher(server.drafts, args.sim_tc_socket)
+    dispatcher = (SimTcDispatcher(server.drafts, args.sim_tc_socket,validation_store=server.validation_runs)
                   if args.mode == "ros" and server.drafts and args.sim_tc_socket else None)
     if dispatcher:
         dispatcher.start()
@@ -1117,6 +1196,8 @@ def main() -> None:
             server.drafts.close()
         if server.candidates:
             server.candidates.close()
+        if server.validation_runs:
+            server.validation_runs.close()
         if auth:
             auth.close()
 

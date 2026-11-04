@@ -71,12 +71,14 @@ if name == "docker":
     elif "--services" in args:
         services = ["dgs-ops-gateway", "portal", "ros-api", "mps-api", "ros-core-read",
                     "mps-core-read", "fds-synthetic-demo", "fds-iss-display",
-                    "sim-ground", "sim-satellite"]
+                    "sim-ground", "sim-satellite", "fds-worker"]
         if os.environ.get("PADO_LAUNCHER_TEST_SERVICES_INCOMPLETE") == "1":
             services.remove("mps-core-read")
         print("\n".join(services))
     elif "config" in args and "--format" in args:
-        print(Path(os.environ["PADO_LAUNCHER_TEST_COMPOSE_JSON"]).read_text(encoding="utf-8"))
+        path = Path(args[args.index('-f')+1]) if '-f' in args else None
+        if path and path.suffix=='.json': print(path.read_text(encoding='utf-8'))
+        else: print(Path(os.environ["PADO_LAUNCHER_TEST_COMPOSE_JSON"]).read_text(encoding="utf-8"))
     elif "ps" in args:
         print("dgs-ops-gateway running 192.168.45.128:8080->8080/tcp")
         print("portal running")
@@ -232,7 +234,7 @@ class LauncherLifecycleTests(unittest.TestCase):
                     "network_mode": "none", "user": "0:0", "read_only": True,
                     "cap_add": ["CHOWN"], "command": SIM_VOLUME_INIT_COMMAND.copy(),
                 },
-                "sim-ground": {"networks": {"sim_tm": None}},
+                "sim-ground": {"networks": {"sim_tm": None},'command':['python3','receiver','--n11-inbox','/n11-inbox/scenario-ltan12-v1']},
                 "sim-satellite": {"networks": {"sim_tm": None}},
             },
         }
@@ -292,6 +294,7 @@ class LauncherLifecycleTests(unittest.TestCase):
                         self.fixture_root / "deploy" / "stage9" / "compose.local.yaml")
         shutil.copyfile(ROOT / "deploy" / "stage9" / "check_compose_policy.py",
                         self.fixture_root / "deploy" / "stage9" / "check_compose_policy.py")
+        shutil.copyfile(ROOT / 'deploy/stage9/environment_profile.py',self.fixture_root/'deploy/stage9/environment_profile.py')
         self.sentinel = self.fixture_root / "out" / "existing-output.txt"
         self.sentinel.write_text("keep repo output", encoding="utf-8")
         self.env = dict(os.environ,
@@ -389,6 +392,26 @@ class LauncherLifecycleTests(unittest.TestCase):
         self.assertNotIn("PADO_GS_LOCAL", self.rules())
         self.assertEqual(self.sentinel.read_text(encoding="utf-8"), "keep repo output")
         self.assertEqual(json.loads(self.config_path.read_text()), {"operator_setting": 42})
+
+    def test_validation_and_operations_launchers_preserve_each_others_firewall(self):
+        self.env['PADO_ENVIRONMENT']='validation'
+        self.run_launcher('start')
+        previous_id=(self.fixture_root/'out/deploy/validation/deployment-id').read_text()
+        self.run_launcher('status')
+        self.assertEqual((self.fixture_root/'out/deploy/validation/deployment-id').read_text(),previous_id)
+        self.env['PADO_ENVIRONMENT']='operations'
+        for network in self.networks:
+            network['Name']=network['Name'].replace('pado-stage9-local_','pado-operations_')
+            for member in network['Containers'].values():member['Name']=member['Name'].replace('pado-stage9-local-','pado-operations-')
+            if network['Name'].endswith('_entry'):network['Options']['com.docker.network.bridge.name']='br-pado-ops'
+            if network['Name'].endswith('_sim_tm'):
+                network['Containers']={k:v for k,v in network['Containers'].items() if 'sim-satellite' not in v['Name']}
+        self.network_json_path.write_text(json.dumps(self.networks))
+        self.run_launcher('start');self.run_launcher('status')
+        self.assertIn('PADO_GS_LOCAL',self.rules());self.assertIn('PADO_GS_OPS',self.rules())
+        self.assertTrue((self.fixture_root/'config/operations/spacecraft.json').exists())
+        self.run_launcher('stop')
+        self.assertIn('PADO_GS_LOCAL',self.rules());self.assertNotIn('PADO_GS_OPS',self.rules())
 
     def test_config_is_seeded_once_and_shared_group_permissions_survive_restart(self):
         self.run_launcher("start")

@@ -46,6 +46,7 @@ jobs:
       - name: Check interface and secret rules
         run: |
           bash -n pado-gs.sh
+          bash -n pado-validation.sh pado-operations.sh
           python3 -m unittest discover -s tests -p 'test_*.py' -v
           python3 tools/check_secrets.py --staged
       - name: Require patched Docker for isolated bridges
@@ -60,6 +61,8 @@ jobs:
               raise SystemExit(f'Docker Engine 28.0.0+ required: {version}')
           print(f'Docker Engine {version}: isolated bridge support available')
           PY
+      - name: Verify validation and operations Compose profiles
+        run: python3 tests/container/check_environment_profiles.py
       - name: Test isolated container network
         run: |
           python3 tools/check_flows.py check

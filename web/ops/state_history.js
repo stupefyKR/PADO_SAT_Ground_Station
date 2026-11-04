@@ -236,8 +236,9 @@
   }
 
   class Controller {
-    constructor({api, onChange = () => {}, onStatus = () => {}, now = () => Date.now(), cache = new Cache()} = {}) {
+    constructor({api, onChange = () => {}, onStatus = () => {}, now = () => Date.now(), cache = new Cache(), orbitTarget = 'synthetic'} = {}) {
       this.api = api; this.onChange = onChange; this.onStatus = onStatus; this.clock = now; this.cache = cache;
+      this.orbitTarget = orbitTarget;
       this.offset = 0; this.live = true; this.playing = false; this.speed = 60; this.cursor = this.now();
       this.lastTick = this.now(); this.pending = null; this.lastFds = -Infinity; this.lastPrune = -Infinity;
       this.loading = false; this.morePending = false; this.error = null; this.backfilled = 0; this.lastRefresh = null;
@@ -290,7 +291,7 @@
         const fds=async()=>{
           if (this.now()-this.lastFds<60000) return;
           try {
-            this.cache.setOrbit(await this.api(`/api/fds/orbit-history?target=synthetic&start_utc_s=${start}&end_utc_s=${end}`));
+            this.cache.setOrbit(await this.api(`/api/fds/orbit-history?target=${this.orbitTarget}&start_utc_s=${start}&end_utc_s=${end}`));
             this.lastFds=this.now();
           } catch (_) {errors.push("FDS 위치 이력 연결 대기");}
         };

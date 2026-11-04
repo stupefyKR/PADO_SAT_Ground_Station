@@ -216,6 +216,8 @@ def main() -> None:
                         help="atomic N05 ingress root from receive_fds_inputs")
     parser.add_argument("--gnss-current-root", type=Path,
                         help="atomic N11 ingress root from receive_fds_inputs")
+    parser.add_argument('--tle-inbox',type=Path,help='local DGS-staged committed N05 pairs; requires tle-current-root')
+    parser.add_argument('--gnss-inbox',type=Path,help='local ROS-staged committed N11 pairs; requires gnss-current-root')
     parser.add_argument("--output-root", type=Path, default=ROOT / "out/fds-runs")
     parser.add_argument("--outbox-dir", type=Path, default=ROOT / "out/fds-outbox",
                         help="unique N13/N15 file pairs staged after each successful FDS run")
@@ -231,6 +233,8 @@ def main() -> None:
     parser.add_argument("--poll-seconds", type=int, default=60)
     parser.add_argument("--refresh-seconds", type=int, default=900)
     args = parser.parse_args()
+    if (args.tle_inbox and not args.tle_current_root) or (args.gnss_inbox and not args.gnss_current_root):
+        parser.error('inbox staging requires its current-root')
     if (args.tle_current_root and (args.tle_body or args.tle_manifest)) or \
             (args.gnss_current_root and (args.gnss_body or args.gnss_manifest)):
         parser.error("use either a route's current root or explicit pair paths")
@@ -243,6 +247,13 @@ def main() -> None:
     last_success = 0.0
     while True:
         try:
+            if args.tle_inbox or args.gnss_inbox:
+                if __package__:from .receive_fds_inputs import ingest_inbox
+                else:from receive_fds_inputs import ingest_inbox
+                for route in ('tle','gnss'):
+                    inbox=getattr(args,route+'_inbox')
+                    if inbox is not None and inbox.is_dir():
+                        ingest_inbox(route,inbox,getattr(args,route+'_current_root'))
             current = signature(args)
             if current == (None, None):
                 raise ValueError("waiting for a complete N05 or N11 file pair")

@@ -4,6 +4,8 @@ PDR의 CS·CDHS 자료를 바탕으로 만든 **비운용 검토 초안**입니�
 
 현재 구현에서 운용 승인까지 필요한 입력은 [검토·인계표](REVIEW_GATES.md)에 정리했습니다.
 
+지상국 자체의 TC 송신·TM 파싱은 [TC·TM 통합 검증](VALIDATION.md)의 별도 검증 환경에서 확인합니다. 예약·원문 조회·10,000개 정상/손상/급변 TM 시험 절차를 포함합니다.
+
 `preview_limits.example.json`의 한계값은 ROS 화면 시험용 예시이며 실제 센서 허용범위가 아닙니다.
 
 `tools/render_packet_diagrams.py`로 생성한 흑백·검은 글자 검토용 이미지입니다.

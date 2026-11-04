@@ -1,0 +1,11 @@
+.validation-panel { margin-bottom:20px; }
+.validation-content { padding:18px; }
+.validation-content p { line-height:1.65; }
+.validation-form-grid,.validation-actions { display:flex;flex-wrap:wrap;gap:14px;align-items:end;margin:14px 0; }
+.validation-content label { display:flex;flex-direction:column;gap:7px; }
+.validation-summary { display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:12px;margin:15px 0; }
+.validation-summary strong { border:1px solid #345260;padding:14px;font-size:13px; }
+.validation-content details { margin:12px 0; }
+.validation-content summary { cursor:pointer;padding:8px 0; }
+.validation-content pre { white-space:pre-wrap;overflow-wrap:anywhere;max-height:300px;overflow:auto; }
+.validation-content td { vertical-align:top;white-space:pre-line; }

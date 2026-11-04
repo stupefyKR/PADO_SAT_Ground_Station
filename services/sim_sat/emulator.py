@@ -533,15 +533,19 @@ class TmSpool:
         return counter
 
     def load_replay(self) -> TcReplayState:
+        from services.validation.runtime import environment
+        limit = 2048 if environment()=='validation' else MAX_TC_REPLAY_ENTRIES
         rows = list(self.connection.execute(
             "SELECT issued_ms,sequence,received_ms FROM tc_replay LIMIT ?",
-            (MAX_TC_REPLAY_ENTRIES + 1,)))
-        if len(rows) > MAX_TC_REPLAY_ENTRIES:
+            (limit + 1,)))
+        if len(rows) > limit:
             raise ValueError("simulator TC replay table exceeds limit")
         return TcReplayState({(issued, sequence): received for issued, sequence, received in rows})
 
     def save_replay(self, replay: TcReplayState) -> None:
-        if len(replay.seen) > MAX_TC_REPLAY_ENTRIES:
+        from services.validation.runtime import environment
+        limit = 2048 if environment()=='validation' else MAX_TC_REPLAY_ENTRIES
+        if len(replay.seen) > limit:
             raise ValueError("bounded simulator TC replay state required")
         with self.connection:
             self.connection.execute("DELETE FROM tc_replay")
@@ -768,7 +772,8 @@ class SatelliteSession:
     """
 
     def __init__(self, spool: TmSpool, *, require_receipts: bool = True,
-                 beacon_period_s: int | None = None):
+                 beacon_period_s: int | None = None, validation: bool = False,
+                 validation_control: Path | None = None):
         if type(require_receipts) is not bool:
             raise ValueError("explicit receipt policy required")
         self.spool = spool
@@ -777,7 +782,11 @@ class SatelliteSession:
                                 ) if beacon_period_s is None else beacon_period_s
         if type(self.beacon_period_s) is not int or not 1 <= self.beacon_period_s <= 3600:
             raise ValueError("bounded beacon period required")
-        self.dispatcher = TcDispatcher(spool.load_replay())
+        self.dispatcher = TcDispatcher(spool.load_replay(),validation=validation)
+        self.validation_control = validation_control
+        self.validation_queue = []
+        self.validation_inflight = {}
+        self.validation_key = None
         self.dump_window: tuple[int, int] | None = None
         self.inflight: dict[bytes, int] = {}
         self.latest_core_packets: tuple[bytes, ...] | None = None
@@ -785,6 +794,8 @@ class SatelliteSession:
     def disconnect(self) -> None:
         self.dump_window = None
         self.inflight.clear()
+        self.validation_queue.extend(reversed(list(self.validation_inflight.values())))
+        self.validation_inflight.clear()
 
     def send_beacon(self, connection: socket.socket, gate: ContactGate,
                     *, now_ms: int, view: OrbitView | None = None,
@@ -828,6 +839,10 @@ class SatelliteSession:
     def handle_uplink(self, packet: bytes, connection: socket.socket,
                       gate: ContactGate, *, now_ms: int) -> bool:
         """Private stream control: durable receipt or a real draft TC PDU."""
+        if self.validation_control is not None and packet.startswith(b'PVR1'):
+            if len(packet)!=36:raise ValueError('invalid validation receipt')
+            self.validation_inflight.pop(packet[4:],None)
+            return True
         if packet.startswith(RECEIPT_MAGIC):
             if len(packet) != 36:
                 raise ValueError("invalid stored TM receipt")
@@ -855,12 +870,30 @@ class SatelliteSession:
             return False
         first, last = self.spool.pending_window()
         sequence = self.spool.next_control_sequence() & 0xffff
+        structural_only=False
+        if self.validation_control is not None:
+            intent=self.validation_control/'tc_intent.json'
+            try:
+                if not intent.is_symlink() and intent.stat().st_size<=1024:
+                    structural_only=json.loads(intent.read_text()).get('sha256')==hashlib.sha256(packet).hexdigest()
+            except (OSError,ValueError):pass
         result = self.dispatcher.dispatch(packet, sequence,
-                                          CommandContext(now_ms, first, last))
+                                          CommandContext(now_ms, first, last,structural_only))
         # Save before acknowledging, so an ACK loss/restart cannot turn a replay
         # into another execution. No handler itself writes to the wire.
         self.spool.save_replay(self.dispatcher.replay)
         send_packet_batch(connection, (result.ack,))
+        if result.action is not None and result.action.validation_dump is not None:
+            from services.validation.corpus import generate
+            from services.validation.scheduler import frozen_limits
+            args=result.action.validation_dump
+            if self.validation_control is None:raise ValueError('validation source disabled')
+            limits=frozen_limits(self.validation_control,args['seed'],args['base_utc_ms'],args['count'])
+            cases=generate(args['seed'],args['base_utc_ms'],args['count'],limits=limits)
+            from services.validation.recorder import run_key
+            self.validation_key=run_key(args['seed'],args['base_utc_ms'])
+            self.validation_queue=[case.packet for case in reversed(cases)]
+            self.validation_inflight.clear()
         if result.action is not None and result.action.dump_requested:
             # A second valid dump replaces the remaining selection explicitly.
             self.dump_window = result.action.dump_window
@@ -876,6 +909,20 @@ class SatelliteSession:
         if not gate.active(clock_ms()):
             self.disconnect()
             return 0
+        if self.validation_queue or self.validation_inflight:
+            if self.validation_control is not None:
+                abort=self.validation_control/'abort.json'
+                try:
+                    if not abort.is_symlink() and abort.stat().st_size<=1024 and json.loads(abort.read_text()).get('run_key')==self.validation_key:
+                        self.validation_queue.clear();self.validation_inflight.clear();return 0
+                except (OSError,ValueError):pass
+            sent=0
+            while self.validation_queue and len(self.validation_inflight)<64 and sent<max_pdus:
+                packet=self.validation_queue.pop()
+                connection.sendall(struct.pack('>I',len(packet))+packet)
+                self.validation_inflight[hashlib.sha256(packet).digest()]=packet
+                sent+=1
+            return sent
         if self.dump_window is None:
             return 0
         if type(max_pdus) is not int or not 1 <= max_pdus <= FLUSH_CHUNK_PDUS:
@@ -917,16 +964,23 @@ def run_forever(orbit_view: Path, host: str, port: int, interval_s: int,
         raise ValueError("bounded beacon period required")
     clock = clock or (lambda: datetime.now(timezone.utc))
     connection: socket.socket | None = None
-    gate = ContactGate(orbit_view)
+    from services.validation.runtime import environment, contact_gate, control_directory
+    validation = environment()=='validation'
+    gate = contact_gate(orbit_view) if validation else ContactGate(orbit_view)
     spool = TmSpool(spool_path, interval_s=interval_s, full_housekeeping=True,
                     power_profile=power_profile, power_mode=power_mode)
-    session = SatelliteSession(spool, beacon_period_s=beacon_period_s)
+    session = SatelliteSession(spool, beacon_period_s=beacon_period_s,validation=validation,
+        validation_control=control_directory() if validation else None)
     previous_contact: bool | None = None
     last_beacon_ms: int | None = None
     try:
         while True:
             tick_started = time.monotonic()
             try:
+                from services.validation.runtime import activated
+                if validation and not activated():
+                    sleeper(1)
+                    continue
                 view = load_orbit_view(orbit_view)
                 require_scenario(view, scenario_id)
                 moment = clock()
@@ -966,7 +1020,8 @@ def run_forever(orbit_view: Path, host: str, port: int, interval_s: int,
                     if connection is None:
                         connection = socket.create_connection((host, port), timeout=3)
                         connection.settimeout(3)
-                    if last_beacon_ms is None or now_ms-last_beacon_ms >= beacon_period_s*1000:
+                    if not (session.validation_queue or session.validation_inflight) and (
+                            last_beacon_ms is None or now_ms-last_beacon_ms >= beacon_period_s*1000):
                         session.send_beacon(connection, gate, now_ms=now_ms, view=view, seed=seed)
                         last_beacon_ms = now_ms
                     # Poll TC independently of backlog size. ACK first, then
@@ -975,7 +1030,7 @@ def run_forever(orbit_view: Path, host: str, port: int, interval_s: int,
                     sent_this_tick = 0
                     while (time.monotonic() - tick_started < interval_s - 0.2 and
                            gate.active(int(clock().timestamp() * 1000))):
-                        wait_s = 0.01 if session.dump_window is not None else min(
+                        wait_s = 0.001 if session.validation_queue or session.validation_inflight else 0.01 if session.dump_window is not None else min(
                             0.25, max(0.0, interval_s - 0.2 -
                                       (time.monotonic() - tick_started)))
                         if select.select([connection], [], [], wait_s)[0]:

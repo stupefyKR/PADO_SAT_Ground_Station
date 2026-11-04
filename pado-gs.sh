@@ -13,6 +13,21 @@ PORT=8080
 PADO_LOCAL_BIND_IP="${PADO_LOCAL_BIND_IP:-192.168.45.128}"
 PADO_OPERATOR_CIDR="${PADO_OPERATOR_CIDR:-192.168.45.1/32}"
 export PADO_LOCAL_BIND_IP PADO_OPERATOR_CIDR
+PADO_ENVIRONMENT="${PADO_ENVIRONMENT:-legacy}"
+export PADO_ENVIRONMENT
+BASE_COMPOSE_FILE="$COMPOSE_FILE"
+CONFIG_DIR="$ROOT_DIR/config"
+PROFILE_ARGS=()
+case "$PADO_ENVIRONMENT" in
+  legacy) ;;
+  validation) ;;
+  operations)
+    PROJECT=pado-operations; PORT=8082; ENTRY_BRIDGE=br-pado-ops
+    FIREWALL_CHAIN=PADO_GS_OPS; FIREWALL_MARK=pado-gs-ops-http; HOST_FIREWALL_MARK=pado-gs-ops-host
+    CONFIG_DIR="$ROOT_DIR/config/operations"
+    ;;
+  *) printf 'Invalid PADO_ENVIRONMENT\n' >&2; exit 2 ;;
+esac
 
 usage() {
   cat <<'EOF'
@@ -58,12 +73,33 @@ require_tools() {
   fi
   docker info --format '{{.ServerVersion}}' >/dev/null || die 'Docker daemon is unavailable.'
   docker compose version >/dev/null || die 'Docker Compose v2 is required.'
+  if [[ "$PADO_ENVIRONMENT" != legacy ]]; then
+    prepare_profile
+  fi
+}
+
+prepare_profile() {
+  mkdir -p "$ROOT_DIR/out/deploy/$PADO_ENVIRONMENT"
+  local profile_dir="$ROOT_DIR/out/deploy/$PADO_ENVIRONMENT"
+  # A deployment nonce makes an earlier login's activation inapplicable after
+  # restart. No Docker socket or container-management privilege enters the web.
+  if [[ "${1:-${PADO_ACTION:-}}" == start || ! -f "$profile_dir/deployment-id" ]]; then
+    python3 -c 'import secrets; print(secrets.token_hex(16))' > "$profile_dir/deployment-id"
+  fi
+  PADO_VALIDATION_DEPLOYMENT="$(cat "$profile_dir/deployment-id")"
+  export PADO_VALIDATION_DEPLOYMENT
+  docker compose -p pado-stage9-local -f "$BASE_COMPOSE_FILE" config --format json > "$profile_dir/base.json"
+  PROFILE_ARGS=(--base "$profile_dir/base.json" --environment "$PADO_ENVIRONMENT"
+    --deployment-id "$PADO_VALIDATION_DEPLOYMENT" --config-dir "$CONFIG_DIR"
+    --bind-ip "$PADO_LOCAL_BIND_IP" --operator-cidr "$PADO_OPERATOR_CIDR")
+  (cd "$ROOT_DIR" && python3 -m deploy.stage9.environment_profile render "${PROFILE_ARGS[@]}") > "$profile_dir/compose.json"
+  COMPOSE_FILE="$profile_dir/compose.json"
 }
 
 prepare_spacecraft_config() {
   # Bind the directory so ROS atomic replacements remain visible to readers.
   # Touch only this dedicated directory and its runtime file, never the repo.
-  python3 - "$ROOT_DIR/config" "$PADO_CONFIG_GID" <<'PY' || die 'Cannot prepare config/spacecraft.json; check its ownership, group and permissions.'
+  python3 - "$CONFIG_DIR" "$PADO_CONFIG_GID" "$ROOT_DIR/config/spacecraft.example.json" <<'PY' || die 'Cannot prepare spacecraft.json; check its ownership, group and permissions.'
 import os
 from pathlib import Path
 import stat
@@ -72,7 +108,7 @@ import sys
 directory = Path(sys.argv[1])
 gid = int(sys.argv[2])
 actual = directory / "spacecraft.json"
-template = directory / "spacecraft.example.json"
+template = Path(sys.argv[3])
 
 def metadata(path, directory=False):
     info = path.lstat()
@@ -161,7 +197,7 @@ raise SystemExit(0 if wanted in assigned else 1)
 }
 
 firewall_available() {
-  fw -S DOCKER-USER >/dev/null 2>&1 || die 'Docker DOCKER-USER chain is unavailable; refusing to publish port 8080 without its access rule.'
+  fw -S DOCKER-USER >/dev/null 2>&1 || die "Docker DOCKER-USER chain is unavailable; refusing to publish port $PORT without its access rule."
 }
 
 firewall_jump_exists() {
@@ -211,6 +247,15 @@ def canonical(rule):
 docker = rules("PADO_DOCKER_RULES", "DOCKER-USER")
 host = rules("PADO_INPUT_RULES", "INPUT")
 owned = rules("PADO_OWNED_RULES", chain)
+if os.environ.get('PADO_ENVIRONMENT') in ('validation','operations'):
+    other_chain,other_mark,other_host,other_bridge = (
+        ('PADO_GS_OPS','pado-gs-ops-http','pado-gs-ops-host','br-pado-ops') if chain=='PADO_GS_LOCAL'
+        else ('PADO_GS_LOCAL','pado-gs-local-http','pado-gs-local-host','br-pado-local'))
+    other_jump=['-A','DOCKER-USER','-m','comment','--comment',other_mark,'-j',other_chain]
+    other_input=['-A','INPUT','-i',other_bridge,'-m','conntrack','!','--ctstate','ESTABLISHED,RELATED',
+                 '-m','comment','--comment',other_host,'-j','DROP']
+    docker=[r for r in docker if canonical(r)!=canonical(other_jump)]
+    host=[r for r in host if canonical(r)!=canonical(other_input)]
 if not docker or canonical(docker[0]) != canonical(
         ["-A", "DOCKER-USER", "-m", "comment", "--comment", mark,
          "-j", chain]):
@@ -370,13 +415,23 @@ wait_for_portal() {
   return 1
 }
 
+runtime_services() {
+  local services='dgs-ops-gateway portal ros-api mps-api ros-core-read mps-core-read sim-ground'
+  [[ "$PADO_ENVIRONMENT" != operations ]] || services+=' fds-worker'
+  [[ "$PADO_ENVIRONMENT" == operations ]] || services+=' fds-synthetic-demo sim-satellite'
+  [[ "$PADO_ENVIRONMENT" != legacy ]] || services+=' fds-iss-display'
+  printf '%s\n' "$services"
+}
+
 wait_for_services() {
   local attempt running service ready
   for attempt in {1..30}; do
     running="$(compose ps --status running --services)" || return 1
     running=$'\n'"$running"$'\n'
     ready=true
-    for service in dgs-ops-gateway portal ros-api mps-api ros-core-read mps-core-read fds-synthetic-demo fds-iss-display sim-ground sim-satellite; do
+    local expected_services
+    expected_services="$(runtime_services)"
+    for service in $expected_services; do
       if [[ "$running" != *$'\n'"$service"$'\n'* ]]; then
         ready=false
         break
@@ -433,8 +488,7 @@ startup_diagnostics() {
     docker compose -p "$PROJECT" -f "$COMPOSE_FILE" ps --all
   startup_diagnostic_command 'Recent application/core logs (last 40 lines per service):' \
     docker compose -p "$PROJECT" -f "$COMPOSE_FILE" logs --no-color --tail 40 \
-      dgs-ops-gateway portal ros-api mps-api ros-core-read mps-core-read \
-      fds-synthetic-demo fds-iss-display sim-volume-init sim-ground sim-satellite
+      $(runtime_services) sim-volume-init
   # Query only this Compose project's containers. No user-supplied ID or
   # unrestricted Docker inspect output is accepted here.
   while IFS= read -r container_id; do
@@ -479,6 +533,11 @@ rollback_start() {
 
 verify_runtime_networks() {
   local require_gateway="${1:-}"
+  if [[ "$PADO_ENVIRONMENT" != legacy ]]; then
+    docker network inspect "${PROJECT}_entry" "${PROJECT}_dgs_portal" "${PROJECT}_portal_ros" "${PROJECT}_portal_mps" "${PROJECT}_sim_tm" |
+      (cd "$ROOT_DIR" && python3 -m deploy.stage9.environment_profile networks "${PROFILE_ARGS[@]}" ${require_gateway:+--require-gateway})
+    return
+  fi
   docker network inspect \
     "${PROJECT}_entry" "${PROJECT}_dgs_portal" \
     "${PROJECT}_portal_ros" "${PROJECT}_portal_mps" \
@@ -490,6 +549,10 @@ verify_runtime_networks() {
 }
 
 validate_compose_config() {
+  if [[ "$PADO_ENVIRONMENT" != legacy ]]; then
+    compose config --format json | (cd "$ROOT_DIR" && python3 -m deploy.stage9.environment_profile verify "${PROFILE_ARGS[@]}")
+    return
+  fi
   compose config --format json | python3 "$ROOT_DIR/deploy/stage9/check_compose_policy.py" \
     --bind-ip "$PADO_LOCAL_BIND_IP" --port "$PORT" --bridge "$ENTRY_BRIDGE" \
     --operator-cidr "$PADO_OPERATOR_CIDR" --project "$PROJECT"
@@ -504,13 +567,16 @@ start_stack() {
   compose stop
   # Recreate the bridge rather than trusting an older network with the same
   # Compose name and different gateway settings. Named data volumes remain.
-  compose down
+  compose down --remove-orphans
   validate_lan
   firewall_available
   validate_compose_config || \
     die 'Compose topology violates the DGS-only external communication policy.'
   note 'Building local services...'
-  compose build
+  if [[ "$PADO_ENVIRONMENT" == legacy ]]; then compose build
+  elif [[ "$PADO_ENVIRONMENT" == validation ]]; then compose build portal sim-ground fds-synthetic-demo
+  else compose build portal sim-ground fds-worker
+  fi
   ensure_account
   install_firewall
   if ! compose create --no-build; then
@@ -561,6 +627,7 @@ cleanup_stack() {
   note 'Removed this Compose project and its Docker data. Repository files remain.'
 }
 
+PADO_ACTION="${1:-}"
 case "${1:-}" in
   start) [[ "$#" -eq 1 ]] || { usage; exit 2; }; start_stack ;;
   stop) [[ "$#" -eq 1 ]] || { usage; exit 2; }; stop_stack ;;

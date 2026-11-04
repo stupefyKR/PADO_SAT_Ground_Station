@@ -33,6 +33,7 @@ class CommandContext:
     received_ms: int
     pending_first_s: int | None = None
     pending_last_s: int | None = None
+    structural_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -41,6 +42,7 @@ class CommandAction:
     # retained for the next request, even when they arrive during this dump.
     dump_window: tuple[int, int] | None = None
     dump_requested: bool = False
+    validation_dump: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -76,6 +78,13 @@ def dump_handler(command: dict, context: CommandContext) -> CommandAction:
     return CommandAction((first, last) if first <= last else None, dump_requested=True)
 
 
+def validation_handler(command: dict, context: CommandContext) -> CommandAction:
+    fields=command['fields']
+    if not 100<=fields['count']<=10000 or not 0<fields['base_utc_ms']<=context.received_ms or fields['base_utc_ms']%1000:
+        raise ValueError('invalid validation corpus bounds')
+    return CommandAction(validation_dump=fields)
+
+
 class TcDispatcher:
     """Validate once, reject replays, then dispatch by catalog command name.
 
@@ -83,12 +92,23 @@ class TcDispatcher:
     return a CommandAction and should describe work rather than perform I/O.
     """
 
-    def __init__(self, replay: TcReplayState | None = None):
+    def __init__(self, replay: TcReplayState | None = None, *, validation: bool = False):
         self.replay = replay if replay is not None else TcReplayState()
+        self.catalog = None
+        self.max_replays = 2048 if validation else MAX_TC_REPLAY_ENTRIES
         self.handlers: dict[str, CommandHandler] = {
             name: query_handler for name in SIM_READ_ONLY_COMMANDS
         }
         self.handlers["hk_dump"] = dump_handler
+        if validation:
+            from services.validation.corpus import catalog, TRIGGER
+            self.catalog = catalog()
+            # Structural FSW stand-in: acknowledge each defined command without
+            # pretending to implement a vendor subsystem's behaviour.
+            self.handlers.update({entry['name']:query_handler for entry in self.catalog['commands']
+                                  if entry['fields'] is not None})
+            self.handlers['hk_dump'] = dump_handler
+            self.handlers[TRIGGER] = validation_handler
 
     def register(self, name: str, handler: CommandHandler) -> None:
         if not isinstance(name, str) or not name or not callable(handler):
@@ -103,7 +123,7 @@ class TcDispatcher:
         if type(tm_sequence) is not int or not 0 <= tm_sequence <= 65535 or \
                 type(received_ms) is not int or received_ms <= 0:
             raise ValueError("invalid simulator command context")
-        decoded = decode(packet)
+        decoded = decode(packet, **({"catalog":self.catalog} if self.catalog else {}))
         if decoded["kind"] != "TC" or decoded["operational"] is not False:
             raise PacketError("draft TC required on simulator uplink")
         issue_ms, sequence = decoded["utc_ms"], decoded["sequence"]
@@ -113,7 +133,7 @@ class TcDispatcher:
         action = None
         if not 0 <= received_ms - issue_ms <= MAX_TC_AGE_MS:
             reason = REASON_STALE
-        elif key in self.replay.seen or len(self.replay.seen) >= MAX_TC_REPLAY_ENTRIES:
+        elif key in self.replay.seen or len(self.replay.seen) >= self.max_replays:
             reason = REASON_REPLAY
         else:
             self.replay.seen[key] = received_ms
@@ -123,7 +143,10 @@ class TcDispatcher:
                 reason = REASON_UNSUPPORTED
             else:
                 try:
-                    action = self.handlers[decoded["name"]](decoded, context)
+                    handler=self.handlers[decoded['name']]
+                    if self.catalog is not None and context.structural_only and decoded['name']!='validation_tm_dump':
+                        handler=query_handler
+                    action = handler(decoded, context)
                     if not isinstance(action, CommandAction):
                         raise TypeError("command handler must return CommandAction")
                     reason = REASON_OK

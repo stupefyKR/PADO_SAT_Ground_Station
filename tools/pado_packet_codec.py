@@ -311,8 +311,8 @@ def gnss_to_fds_properties(decoded: dict[str, Any]) -> str:
     if fields["solution_status"] != 1 or fields["receiver_age_ms"] > 1000 or \
             decoded["utc_ms"] % 1000:
         raise PacketError("GNSS fix, age or whole-second UTC invalid")
-    position = math.sqrt(sum(fields[k] ** 2 for k in ("x_m", "y_m", "z_m")))
-    speed = math.sqrt(sum(fields[k] ** 2 for k in ("vx_mps", "vy_mps", "vz_mps")))
+    position = math.hypot(*(fields[k] for k in ("x_m", "y_m", "z_m")))
+    speed = math.hypot(*(fields[k] for k in ("vx_mps", "vy_mps", "vz_mps")))
     if not 6_300_000 <= position <= 100_000_000 or \
             not 100 <= speed <= 15_000 or \
             not 1 <= fields["norad_id"] <= 999999:

@@ -18,6 +18,8 @@ def build() -> list[Path]:
     for source, name in (("ops", "ros-preview.html"),
                          ("mps", "mps-preview.html")):
         html = (ROOT / f"web/{source}/index.html").read_text(encoding="utf-8")
+        html = html.replace('<script src="/assets/validation-console.js" defer></script>', '')
+        html = html.replace('<link rel="stylesheet" href="/assets/validation-console.css">', '')
         html = html.replace('<link rel="stylesheet" href="/assets/style.css">',
                             f"<style>{common_css}</style>")
         extra = (ROOT / ("web/ops/workbench.css" if source == "ops" else

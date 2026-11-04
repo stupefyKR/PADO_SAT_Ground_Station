@@ -312,7 +312,7 @@ def check(document: dict, bind_ip: str, port: int, bridge: str,
 
 
 def check_actual_networks(document: list, project: str, bridge: str,
-                          require_gateway: bool = False) -> None:
+                          require_gateway: bool = False, *, satellite: bool = True) -> None:
     require(isinstance(document, list), "Docker network inspect must return a list")
     require(all(isinstance(network, dict) for network in document),
             "Docker network inspect returned an invalid entry")
@@ -325,6 +325,7 @@ def check_actual_networks(document: list, project: str, bridge: str,
         "portal_mps": {PORTAL, "mps-api"},
         "sim_tm": {"sim-ground", "sim-satellite"},
     }
+    if not satellite:expected_members['sim_tm']={'sim-ground'}
     require({network.get("Name") for network in document} == expected,
             "actual Docker network set differs from approved Compose networks")
     for network in document:

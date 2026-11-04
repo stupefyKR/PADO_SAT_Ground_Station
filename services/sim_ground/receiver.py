@@ -11,12 +11,14 @@ neither socket is an operational command link.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
 import re
 import select
 import socket
+import sqlite3
 import stat
 import struct
 import sys
@@ -99,13 +101,13 @@ def load_limits(path: Path) -> dict[str, Any]:
     return limits
 
 
-def read_framed_pdu(connection: socket.socket) -> bytes | None:
+def read_framed_pdu(connection: socket.socket, *, validation: bool = False) -> bytes | None:
     """Read one complete simulator frame; clean EOF is distinct from truncation."""
     prefix = _read_exact(connection, FRAME_LENGTH.size, allow_clean_eof=True)
     if prefix is None:
         return None
     (length,) = FRAME_LENGTH.unpack(prefix)
-    if not MIN_PDU_BYTES <= length <= MAX_PDU_BYTES:
+    if not (1 <= length <= 512 if validation else MIN_PDU_BYTES <= length <= MAX_PDU_BYTES):
         raise ReceiverError("TM PDU frame length outside 24..200 bytes")
     packet = _read_exact(connection, length)
     if packet is None:  # Defensive: non-empty reads cannot return clean EOF.
@@ -214,6 +216,15 @@ class TmReceiver:
         self._tc_lock = Lock()
         self._tc_pending: _PendingTc | None = None
         self._satellite_connected = False
+        self.validation = None
+        self.validation_control = None
+
+    def enable_validation(self,control:Path):
+        from services.validation.corpus import catalog
+        from services.validation.recorder import Recorder
+        self.packet_catalog=catalog()
+        self.validation=Recorder(self.snapshot.with_name('validation.sqlite3'),limits=self.limits)
+        self.validation_control=control
 
     def _limit_signature(self):
         if self.limits_path is None:
@@ -303,6 +314,11 @@ class TmReceiver:
             raise ReceiverError("test TC issue timestamp is not fresh")
         if self.contact_gate is not None and not self.contact_gate.active(instant):
             raise ReceiverError("simulated TC outside Yonsei UHF contact")
+        if self.validation is not None and decoded['name']=='validation_tm_dump':
+            from services.validation.scheduler import frozen_limits
+            fields=decoded['fields']
+            limits=frozen_limits(self.validation_control,fields['seed'],fields['base_utc_ms'],fields['count'])
+            self.validation.begin(fields['seed'],fields['base_utc_ms'],fields['count'],limits=limits)
         request = _PendingTc(packet, decoded["id"], decoded["sequence"])
         with self._tc_lock:
             if not self._satellite_connected:
@@ -408,14 +424,8 @@ class TmReceiver:
             step = (decoded["sequence"] - self.last_sequence) & 0xffff
             if not 1 <= step <= 32767:
                 raise ReceiverError("duplicate or backwards TM sequence")
-        if decoded["name"] == "GNSS_PVT":
-            if decoded["fields"]["norad_id"] != SATELLITE_NORAD_ID:
-                raise ReceiverError("GNSS satellite identity mismatch")
-            gnss_to_fds_properties(decoded)  # Fix, age, state envelope and frame contract.
-        elif decoded["name"] == "AOCS_STATE":
-            q = [decoded["fields"][f"q_{axis}"] for axis in "wxyz"]
-            if abs(math.hypot(*q) - 1.0) > 0.02:
-                raise ReceiverError("non-unit synthetic attitude quaternion")
+        from .measurement import validate_measurement
+        validate_measurement(decoded,SATELLITE_NORAD_ID,error_type=ReceiverError)
 
         # Commit exact bytes before the link can acknowledge receipt. The graph
         # is a rolling projection, not the sole record of the received packet.
@@ -554,20 +564,41 @@ class TmReceiver:
                 if to_send is not None:
                     # Exactly one writer owns this socket on the ground side.
                     # A failed send closes the stream and wakes the submitter.
-                    send_framed_pdu(connection, to_send)
+                    from services.sim_ground.tc_journal import record
+                    journal=self.snapshot.with_name('transmitted_tc.sqlite3')
+                    record(journal,to_send,'PREPARED',catalog=self.packet_catalog)
+                    try:send_framed_pdu(connection, to_send)
+                    except OSError:
+                        record(journal,to_send,'UNKNOWN',catalog=self.packet_catalog)
+                        raise
+                    record(journal,to_send,'SENT',catalog=self.packet_catalog)
                 # Socket doubles used by unit tests have no descriptor. Live
                 # sockets are polled so queued TC is sent within 250 ms.
                 if real_socket and not data_ready:
                     self._publish_burst_preview(int(time.time() * 1000))
                     continue
-                packet = read_framed_pdu(connection)
+                packet = read_framed_pdu(connection,validation=self.validation is not None)
                 if packet is None:
                     return accepted
                 received_ms = int(time.time() * 1000)
                 if self.contact_gate is not None and not \
                         self.contact_gate.active(received_ms):
                     continue
-                decoded = decode(packet, catalog=self.packet_catalog)
+                if self.validation is not None and self.validation.recognizes(packet):
+                    parsed=self.validation.receive(packet,received_ms)
+                    if parsed is not None:self.archive.append(packet,parsed,received_ms)
+                    # This receipt means durable handling, including rejection.
+                    # It does not label a malformed application PDU as accepted.
+                    connection.sendall(FRAME_LENGTH.pack(36)+b'PVR1'+hashlib.sha256(packet).digest())
+                    if self.validation.active_count==self.validation.active_total:
+                        self.validation.project(self.snapshot,received_ms)
+                    continue
+                try:
+                    decoded = decode(packet, catalog=self.packet_catalog)
+                except (PacketError,ValueError) as error:
+                    if self.validation is None or not self.validation.active:raise
+                    self.validation.unexpected(packet,received_ms,error)
+                    continue
                 if decoded["name"] == RESULT_TELEMETRY:
                     self._ingest_command_result(packet, decoded,
                                                 received_ms=received_ms)
@@ -622,7 +653,7 @@ class TmReceiver:
                         accepted = self.process_connection(connection)
                         print(f"TM stream {address[0]} closed after {accepted} PDUs",
                               flush=True)
-                    except (OSError, ValueError, PacketError, OverflowError) as error:
+                    except (OSError, ValueError, PacketError, OverflowError, sqlite3.Error) as error:
                         print(f"TM stream {address[0]} rejected: {error}",
                               file=sys.stderr, flush=True)
 
@@ -659,7 +690,7 @@ class TmReceiver:
                                 raise ReceiverError("empty simulator TC request")
                             result = self.submit_tc(packet)
                             send_framed_pdu(connection, result)
-                        except (OSError, ValueError, PacketError) as error:
+                        except (OSError, ValueError, PacketError, sqlite3.Error) as error:
                             print(f"TEST_ONLY TC bridge rejected request: {error}",
                                   file=sys.stderr, flush=True)
         finally:
@@ -684,6 +715,10 @@ def main() -> None:
         receiver = TmReceiver(args.snapshot, args.n11_inbox,
                               load_limits(args.limits), args.contact_view,
                               limits_path=args.limits)
+        from services.validation.runtime import environment, control_directory, contact_gate
+        if environment()=='validation':
+            receiver.enable_validation(control_directory())
+            receiver.contact_gate=contact_gate(args.contact_view)
         stop = Event()
         bridge_thread = None
         if args.tc_socket is not None:
@@ -701,6 +736,7 @@ def main() -> None:
             stop.set()
             if bridge_thread is not None:
                 bridge_thread.join(timeout=2)
+            if receiver.validation is not None:receiver.validation.close()
     except (OSError, ValueError, PacketError) as error:
         parser.exit(2, f"synthetic TM receiver failed: {error}\n")
 

@@ -9,6 +9,7 @@ retried automatically.
 from __future__ import annotations
 
 import socket
+import sqlite3
 import stat
 import struct
 import threading
@@ -39,7 +40,7 @@ def _exact(connection: socket.socket, length: int) -> bytes:
 
 
 def send_sim_tc(socket_path: Path, reservation: dict, *, now_ms: int | None = None,
-                timeout_s: float = 15.0) -> dict:
+                timeout_s: float = 15.0, validation: bool = False, on_packet=None) -> dict:
     """Send one draft TC and return a strictly correlated COMMAND_RESULT body."""
     if socket_path.is_symlink() or not socket_path.is_socket() or not stat.S_ISSOCK(
             socket_path.stat().st_mode):
@@ -47,12 +48,19 @@ def send_sim_tc(socket_path: Path, reservation: dict, *, now_ms: int | None = No
     issued_ms = int(time.time() * 1000) if now_ms is None else now_ms
     if type(issued_ms) is not int or issued_ms <= 0:
         raise SimDispatchError("invalid simulation issue time")
-    if reservation.get("command_name") not in SIM_ALLOWED_COMMANDS:
+    packet_catalog = None
+    allowed = SIM_ALLOWED_COMMANDS
+    if validation:
+        from services.validation.corpus import catalog
+        packet_catalog = catalog()
+        allowed = {entry['name'] for entry in packet_catalog['commands'] if entry['fields'] is not None}
+    if reservation.get("command_name") not in allowed:
         raise SimDispatchError("only enabled simulator commands can be sent")
     sequence = reservation["command_sequence"]
     packet = encode_tc(reservation["command_name"], sequence, issued_ms,
-                       reservation["parameters"])
-    command = decode(packet)
+                       reservation["parameters"], **({"catalog":packet_catalog} if packet_catalog else {}))
+    command = decode(packet, **({"catalog":packet_catalog} if packet_catalog else {}))
+    if on_packet:on_packet(packet,'ENCODED')
     if command["kind"] != "TC" or command["operational"] is not False or \
             command["execute_at_utc_ms"] != 0:
         raise SimDispatchError("not an immediate draft TC")
@@ -60,6 +68,7 @@ def send_sim_tc(socket_path: Path, reservation: dict, *, now_ms: int | None = No
         connection.settimeout(timeout_s)
         connection.connect(str(socket_path))
         connection.sendall(_LENGTH.pack(len(packet)) + packet)
+        if on_packet:on_packet(packet,'SENT')
         (size,) = _LENGTH.unpack(_exact(connection, _LENGTH.size))
         if not 24 <= size <= _MAX_PDU:
             raise SimDispatchError("invalid simulation ACK length")
@@ -85,10 +94,11 @@ def send_sim_tc(socket_path: Path, reservation: dict, *, now_ms: int | None = No
 class SimTcDispatcher(threading.Thread):
     """Claim SIM_ONLY reservations and immediate dump requests once."""
 
-    def __init__(self, store, socket_path: Path) -> None:
+    def __init__(self, store, socket_path: Path, *, validation_store=None) -> None:
         super().__init__(name="sim-tc-dispatch", daemon=True)
         self.store = store
         self.socket_path = socket_path
+        self.validation_store = validation_store
         self.stop_event = threading.Event()
 
     def stop(self) -> None:
@@ -98,6 +108,8 @@ class SimTcDispatcher(threading.Thread):
     def run(self) -> None:
         while not self.stop_event.is_set():
             try:
+                if self.validation_store is not None and self.validation_store.step(self.socket_path):
+                    continue
                 now_s = int(time.time())
                 reservation = self.store.claim_due(now_s) or self.store.claim_sim_tm_request(now_s)
                 if reservation is None:
@@ -114,6 +126,6 @@ class SimTcDispatcher(threading.Thread):
                     finish(reservation["id"], "TIMEOUT")
                 except (OSError, PacketError, ValueError, KeyError, TypeError):
                     finish(reservation["id"], "SEND_FAILED")
-            except (OSError, ValueError):
+            except (OSError, ValueError, sqlite3.Error):
                 # A broken draft store must not become an automatic retry loop.
                 self.stop_event.wait(1.0)

@@ -27,11 +27,14 @@ RUN apt-get update \
 COPY --from=core-builder /build/gs_stage9_core_probe /usr/local/bin/gs_stage9_core_probe
 WORKDIR /app
 COPY services/webapp /app/services/webapp
+COPY services/validation /app/services/validation
 COPY services/spacecraft_config.py /app/services/spacecraft_config.py
 COPY config/spacecraft.example.json /app/config/spacecraft.example.json
 COPY services/sim_ground/archive.py /app/services/sim_ground/archive.py
+COPY services/sim_ground/tc_journal.py /app/services/sim_ground/tc_journal.py
+COPY services/sim_ground/measurement.py /app/services/sim_ground/measurement.py
 COPY deploy/stage9/dgs_ops_gateway.py /app/deploy/stage9/dgs_ops_gateway.py
-COPY tools/pado_packet_codec.py tools/orbit_history.py /app/tools/
+COPY tools/pado_packet_codec.py tools/orbit_history.py tools/preview_draft_tm.py /app/tools/
 COPY web /app/web
 # Explicitly create searchable parents: read-only file modes must never remove
 # directory traversal for the non-root service user.

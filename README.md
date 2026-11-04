@@ -10,6 +10,15 @@ GitHub 원격 저장소는 비공개로 설정되어 있습니다(2026-10-21 확
 
 ## VMware 시험 웹 실행
 
+TC·TM 통합 시험은 **`bash pado-validation.sh start`**로 실행한다. 검증용 로그인은
+`http://192.168.45.128:8080/login`이며, MPS/ROS의 **Validation Packets**에서
+TC 전종 시험과 10,000개 TM 수신·파싱을 예약할 수 있다. 가상 위성이 없는 별도
+운용 환경은 **`bash pado-operations.sh start`**, `http://192.168.45.128:8082/login`이다.
+공통 이미지를 사용하고 계정·API·저장소·망은 분리한다. 실제 외부 입력은 별도 연결이
+필요하다. [검증 절차와 범위](docs/TC_TM/VALIDATION.md)를 먼저 참고한다.
+
+아래는 기존 개발 스택(`pado-gs.sh`)의 실행 방법이다.
+
 Windows 관제 PC(`192.168.45.1`)와 VMware Linux VM(`192.168.45.128`)의
 사설망 시험 환경에서는 저장소를 clone한 뒤 다음처럼 시작한다. Docker Engine
 stable 28.0.0 이상, Compose v2 플러그인, `curl`이 필요하며, 첫 실행 때 웹
