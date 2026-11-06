@@ -45,6 +45,7 @@ jobs:
           python3 tests/run_stage8_fuzz.py --build build-linux-fuzz
       - name: Check interface and secret rules
         run: |
+          docker compose version
           bash -n pado-gs.sh
           bash -n pado-validation.sh pado-operations.sh
           python3 -m unittest discover -s tests -p 'test_*.py' -v
@@ -112,6 +113,7 @@ jobs:
           java -version
           javac -version
           mvn -version
+          docker compose version
           command -v unzip
           test -f /usr/include/openssl/sha.h
       - name: Fetch pinned offline physical data

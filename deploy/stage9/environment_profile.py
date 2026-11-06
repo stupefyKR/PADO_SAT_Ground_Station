@@ -88,7 +88,7 @@ def security_projection(document):
     """Compare all configuration after harmless Compose normalization."""
     def normalize(value,key=''):
         if isinstance(value,dict):
-            return {k:normalize(v,k) for k,v in value.items() if not (k=='volume' and v=={}) and not (k=='read_only' and v is False)}
+            return {k:normalize(v,k) for k,v in value.items() if not (k=='volume' and v=={}) and not (k in ('read_only','create_host_path') and v is False)}
         if isinstance(value,list):
             values=[normalize(v) for v in value]
             return sorted(values,key=lambda v:json.dumps(v,sort_keys=True)) if key in ('volumes','cap_drop','cap_add','security_opt','group_add') else values

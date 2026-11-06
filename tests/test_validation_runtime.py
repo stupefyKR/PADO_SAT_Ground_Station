@@ -33,6 +33,15 @@ class EnvironmentProfileTests(unittest.TestCase):
             directory=ROOT/'config' if kind=='validation' else ROOT/'config/operations'
             result=render(base,kind,'deployment',directory)
             verify(base,result,kind,'deployment',directory,'192.168.45.128','192.168.45.1/32')
+            omitted=copy.deepcopy(result)
+            for service in omitted['services'].values():
+                for mount in service.get('volumes',[]):
+                    if mount.get('bind',{}).get('create_host_path') is False:
+                        del mount['bind']['create_host_path']
+            verify(base,omitted,kind,'deployment',directory,'192.168.45.128','192.168.45.1/32')
+            bad_bind=copy.deepcopy(result)
+            next(m for m in bad_bind['services']['ros-api']['volumes'] if m['type']=='bind')['bind']['create_host_path']=True
+            with self.assertRaises(ValueError):verify(base,bad_bind,kind,'deployment',directory,'192.168.45.128','192.168.45.1/32')
             self.assertNotIn('fds-iss-display',result['services'])
             self.assertEqual('sim-satellite' in result['services'],kind=='validation')
             self.assertEqual('fds-synthetic-demo' in result['services'],kind=='validation')

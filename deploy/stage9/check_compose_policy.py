@@ -214,7 +214,10 @@ def check(document: dict, bind_ip: str, port: int, bridge: str,
                     require(name in LOCAL_SETTINGS_MOUNTS and target == "/config" and
                             Path(source) == LOCAL_SETTINGS_SOURCE and
                             (mount.get("read_only") is True) == LOCAL_SETTINGS_MOUNTS[name] and
-                            mount.get("bind", {}).get("create_host_path") is False,
+                            # Compose 2 omits false defaults from normalized
+                            # JSON; true remains explicit (including short
+                            # bind syntax). Reject every explicit non-false value.
+                            mount.get("bind", {}).get("create_host_path", False) is False,
                             f"{name}: unapproved settings host bind source, target or mode")
                 else:
                     require(target in DEV_BIND_TARGETS.get(name, set()) and

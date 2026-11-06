@@ -287,6 +287,23 @@ class DgsBoundaryInvariantTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "unapproved settings host bind"):
                     check_compose_policy.check(broken, "192.168.45.128", 8080,
                                                "br-pado-local")
+
+    def test_settings_bind_accepts_compose_normalized_false_defaults(self):
+        for options in (None, {}, {'create_host_path':False}):
+            with self.subTest(bind=options):
+                document=copy.deepcopy(self.good)
+                for name in check_compose_policy.LOCAL_SETTINGS_MOUNTS:
+                    mount=next(m for m in document['services'][name]['volumes'] if m['type']=='bind')
+                    if options is None:mount.pop('bind')
+                    else:mount['bind']=options.copy()
+                check_compose_policy.check(document,'192.168.45.128',8080,'br-pado-local')
+        for value in (True,None,0,1,'false',[]):
+            with self.subTest(create_host_path=value):
+                document=copy.deepcopy(self.good)
+                mount=next(m for m in document['services']['ros-api']['volumes'] if m['type']=='bind')
+                mount['bind']={'create_host_path':value}
+                with self.assertRaisesRegex(ValueError,'unapproved settings host bind'):
+                    check_compose_policy.check(document,'192.168.45.128',8080,'br-pado-local')
         for groups in ([], ["root"], ["1000", "0"]):
             with self.subTest(groups=groups):
                 broken = copy.deepcopy(self.good)
