@@ -1,11 +1,13 @@
 # Development only. The sole published port is bound to the VM loopback.
 # All certificates and the private CA are supplied outside Git.
+# Preserve existing developer volumes after moving this file up one directory.
+name: stage9
 services:
   dgs-ops-gateway:
     build:
-      context: ../..
-      dockerfile: docker/stage9/Dockerfile
-    command: ["python3", "/app/deploy/stage9/dgs_ops_gateway.py", "--listen-port", "8443", "--upstream-port", "8443"]
+      context: ..
+      dockerfile: docker/Dockerfile
+    command: ["python3", "/app/deploy/dgs_ops_gateway.py", "--listen-port", "8443", "--upstream-port", "8443"]
     depends_on:
       portal: {condition: service_started}
     ports: ["127.0.0.1:8443:8443"]
@@ -17,8 +19,8 @@ services:
     logging: {driver: journald}
   portal:
     build:
-      context: ../..
-      dockerfile: docker/stage9/Dockerfile
+      context: ..
+      dockerfile: docker/Dockerfile
     command:
       - python3
       - -m
@@ -53,7 +55,7 @@ services:
         read_only: true
       - portal_state:/state
       - type: bind
-        source: ${PADO_STAGE9_FDS_VIEW_DIR:-../../out/fds-view}
+        source: ${PADO_STAGE9_FDS_VIEW_DIR:-../out/fds-view}
         target: /fds-view
         read_only: true
     networks: [dgs_portal, portal_ros, portal_mps]
@@ -64,8 +66,8 @@ services:
     logging: {driver: journald}
   ros-api:
     build:
-      context: ../..
-      dockerfile: docker/stage9/Dockerfile
+      context: ..
+      dockerfile: docker/Dockerfile
     command: ["python3", "-m", "services.webapp.main", "ros", "--bind", "0.0.0.0", "--port", "8443", "--cert", "/certs/ros-api.crt", "--key", "/certs/ros-api.key", "--ca", "/certs/ca.crt", "--draft-db", "/state/ros-drafts.db", "--tm-preview", "/tm-preview/test_tm_snapshot.json"]
     depends_on:
       ros-core-read: {condition: service_healthy}
@@ -80,7 +82,7 @@ services:
         read_only: true
       - ros_drafts:/state
       - type: bind
-        source: ${PADO_STAGE9_ROS_TM_PREVIEW_DIR:-../../out/ros-tm-preview}
+        source: ${PADO_STAGE9_ROS_TM_PREVIEW_DIR:-../out/ros-tm-preview}
         target: /tm-preview
         read_only: true
     networks: [portal_ros]
@@ -91,8 +93,8 @@ services:
     logging: {driver: journald}
   mps-api:
     build:
-      context: ../..
-      dockerfile: docker/stage9/Dockerfile
+      context: ..
+      dockerfile: docker/Dockerfile
     command: ["python3", "-m", "services.webapp.main", "mps", "--bind", "0.0.0.0", "--port", "8443", "--cert", "/certs/mps-api.crt", "--key", "/certs/mps-api.key", "--ca", "/certs/ca.crt", "--candidate-db", "/state/mps-candidates.db"]
     depends_on:
       mps-core-read: {condition: service_healthy}
@@ -114,8 +116,8 @@ services:
     logging: {driver: journald}
   ros-core-read:
     build:
-      context: ../..
-      dockerfile: docker/stage9/Dockerfile
+      context: ..
+      dockerfile: docker/Dockerfile
     command: ["/usr/local/bin/gs_stage9_core_probe", "serve", "ros", "/run/core/core.sock", "/state/ros-tm.record"]
     volumes:
       - ros_core_socket:/run/core
@@ -135,13 +137,13 @@ services:
     logging: {driver: journald}
   mps-core-read:
     build:
-      context: ../..
-      dockerfile: docker/stage9/Dockerfile
+      context: ..
+      dockerfile: docker/Dockerfile
     command: ["/usr/local/bin/gs_stage9_core_probe", "serve", "mps", "/run/core/core.sock", "/app/interfaces/command_db/commands.json", "/mps-schedules"]
     volumes:
       - mps_core_socket:/run/core
       - type: bind
-        source: ${PADO_STAGE9_MPS_SCHEDULE_DIR:-../../out/mps-schedules}
+        source: ${PADO_STAGE9_MPS_SCHEDULE_DIR:-../out/mps-schedules}
         target: /mps-schedules
         read_only: true
     network_mode: none

@@ -26,7 +26,7 @@ NETWORK_MEMBERS = {
 # This one operator-managed directory is shared for atomic settings updates.
 # ROS alone may write it; simulation consumers may only read it.
 LOCAL_SETTINGS_MOUNTS = {"ros-api": False, "sim-ground": True, "sim-satellite": True}
-LOCAL_SETTINGS_SOURCE = Path(__file__).resolve().parents[2] / "config"
+LOCAL_SETTINGS_SOURCE = Path(__file__).resolve().parents[1] / "config"
 # A service's named volumes are part of its isolation boundary. Checking only
 # that a volume is declared would let an unrelated service mount ROS's draft DB
 # (or the shared internal token) while all network checks still pass.
@@ -270,7 +270,7 @@ def check(document: dict, bind_ip: str, port: int, bridge: str,
                     "no-new-privileges:true" in (service.get("security_opt") or []),
                     "DGS gateway must run read-only without capabilities or new privileges")
             require(service.get("command") == [
-                "python3", "/app/deploy/stage9/dgs_ops_gateway.py",
+                "python3", "/app/deploy/dgs_ops_gateway.py",
                 "--listen-port", str(port), "--upstream-port", str(port)],
                 "DGS gateway must relay only to the fixed portal endpoint")
             environment = service.get("environment") or {}

@@ -65,14 +65,14 @@ class SimScenarioTests(unittest.TestCase):
             self.assertEqual(marked.pop("simulation_scenario_id"), SIMULATION_SCENARIO_ID)
             self.assertEqual(marked, document)
 
-        dockerfile = (ROOT / "docker/stage9/FdsDemo.Dockerfile").read_text(encoding="utf-8")
+        dockerfile = (ROOT / "docker/FdsDemo.Dockerfile").read_text(encoding="utf-8")
         command = json.loads(next(line[4:] for line in dockerfile.splitlines()
                                   if line.startswith("CMD ")))
         self.assertEqual(command[command.index("--output-root") + 1],
                          "/app/out/scenario-ltan12-v1")
         self.assertEqual(command[command.index("--n11-inbox") + 1],
                          "/n11-inbox/scenario-ltan12-v1")
-        compose = (ROOT / "deploy/stage9/compose.local.yaml").read_text(encoding="utf-8")
+        compose = (ROOT / "deploy/compose.local.yaml").read_text(encoding="utf-8")
         self.assertIn('"--n11-inbox", "/n11-inbox/scenario-ltan12-v1"', compose)
         self.assertIn('"--spool", "/state/test_tm_spool-ltan12-v1.sqlite3"', compose)
         self.assertIn('"--scenario-id", "ltan12-v1"', compose)

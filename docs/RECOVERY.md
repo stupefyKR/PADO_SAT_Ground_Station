@@ -1,9 +1,9 @@
-# 단계 8: 백업·복구 및 입력 보안 시험
+# 백업·복구 및 입력 보안 시험
 
 **개발 기준선 완료:** [Ubuntu CI #40](https://github.com/stupefyKR/PADO_SAT_Ground_Station/actions/runs/39897193087)에서 로컬 복구·퍼징·핵심 보안 회귀 시험이 통과했다(결정 #18).
 
 실제 서버 적용과 FlatSat 시험은 모든 개발 뒤 배포 수락 단계에서 수행한다.
-NAS 연동은 [결정 #19](../../docs/DECISIONS.md)에 따라 현 개발·배포 수락 범위에서
+NAS 연동은 [결정 #19](DECISIONS.md)에 따라 현 개발·배포 수락 범위에서
 제외하며, 장비가 정해진 뒤 별도 과제로 다룬다.
 여기서는 **비운용 데이터로 재현 가능한 개발 기준선**을 검증한다. 현재 서비스의
 운용 DB, 실 TC/TM, HMAC 키는 이 절차에 포함되지 않는다.
@@ -40,7 +40,7 @@ python3 tools/stage8_snapshot.py restore --snapshot /path/to/new-snapshot \
 암호화·접근 권한·키 분리 보관과 복원 시험을 완료해야 한다. 저장 장비의
 종류는 이 도구의 계약에 포함되지 않는다.
 HMAC 키는 이 스냅샷에 넣지 않고 보안 계획서 8.4절의 별도 오프라인 절차를
-따른다. 자세한 현장 수락 항목은 [서버 매뉴얼](../stage7/SERVER_SETUP.md)에
+따른다. 자세한 현장 수락 항목은 [서버 매뉴얼](../deploy/stage7/SERVER_SETUP.md)에
 남겨둔다.
 
 ## 복구 시나리오 시험

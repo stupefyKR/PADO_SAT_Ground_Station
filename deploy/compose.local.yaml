@@ -1,10 +1,12 @@
 # Windows operator PC -> VMware Linux server, development only.
 # HTTP is bound to the VM's host-only address; subsystem APIs have no host ports.
+# Preserve the former directory-derived name; launchers override it with -p.
+name: stage9
 services:
   init-token:
     build:
-      context: ../..
-      dockerfile: docker/stage9/Dockerfile
+      context: ..
+      dockerfile: docker/Dockerfile
     command: ["python3", "-m", "services.webapp.main", "init-internal-token", "--path", "/internal/token"]
     volumes: [internal_token:/internal]
     network_mode: none
@@ -14,9 +16,9 @@ services:
     restart: "no"
   dgs-ops-gateway:
     build:
-      context: ../..
-      dockerfile: docker/stage9/Dockerfile
-    command: ["python3", "/app/deploy/stage9/dgs_ops_gateway.py", "--listen-port", "8080", "--upstream-port", "8080"]
+      context: ..
+      dockerfile: docker/Dockerfile
+    command: ["python3", "/app/deploy/dgs_ops_gateway.py", "--listen-port", "8080", "--upstream-port", "8080"]
     environment:
       PADO_GATEWAY_OPERATOR_CIDR: ${PADO_OPERATOR_CIDR:-192.168.45.1/32}
     depends_on:
@@ -30,8 +32,8 @@ services:
     logging: {driver: journald}
   portal:
     build:
-      context: ../..
-      dockerfile: docker/stage9/Dockerfile
+      context: ..
+      dockerfile: docker/Dockerfile
     command: ["python3", "-m", "services.webapp.main", "portal", "--transport", "http", "--internal-token-file", "/internal/token", "--bind", "0.0.0.0", "--port", "8080", "--db", "/state/accounts.db", "--ros-url", "http://ros-api:8081", "--mps-url", "http://mps-api:8081", "--orbit-view", "/fds-view/orbit_view.json", "--synthetic-orbit-view", "/fds-view/orbit_view.json", "--iss-orbit-view", "/fds-iss-view/orbit_view.json"]
     depends_on:
       init-token: {condition: service_completed_successfully}
@@ -48,8 +50,8 @@ services:
     logging: {driver: journald}
   ros-api:
     build:
-      context: ../..
-      dockerfile: docker/stage9/Dockerfile
+      context: ..
+      dockerfile: docker/Dockerfile
     command: ["python3", "-m", "services.webapp.main", "ros", "--transport", "http", "--internal-token-file", "/internal/token", "--bind", "0.0.0.0", "--port", "8081", "--core-socket", "/run/core/core.sock", "--draft-db", "/state/ros-drafts.db", "--tm-preview", "/tm-preview/test_tm_snapshot.json", "--sim-tc-socket", "/run/sim-tc/bridge.sock"]
     environment:
       PADO_SPACECRAFT_CONFIG: /config/spacecraft.json
@@ -64,7 +66,7 @@ services:
       - ros_tm_preview:/tm-preview:ro
       - sim_tc_socket:/run/sim-tc:ro
       - type: bind
-        source: ../../config
+        source: ../config
         target: /config
         bind: {create_host_path: false}
     networks: [portal_ros]
@@ -75,8 +77,8 @@ services:
     logging: {driver: journald}
   mps-api:
     build:
-      context: ../..
-      dockerfile: docker/stage9/Dockerfile
+      context: ..
+      dockerfile: docker/Dockerfile
     command: ["python3", "-m", "services.webapp.main", "mps", "--transport", "http", "--internal-token-file", "/internal/token", "--bind", "0.0.0.0", "--port", "8081", "--core-socket", "/run/core/core.sock", "--candidate-db", "/state/mps-candidates.db"]
     depends_on:
       init-token: {condition: service_completed_successfully}
@@ -93,8 +95,8 @@ services:
     logging: {driver: journald}
   ros-core-read:
     build:
-      context: ../..
-      dockerfile: docker/stage9/Dockerfile
+      context: ..
+      dockerfile: docker/Dockerfile
     command: ["/usr/local/bin/gs_stage9_core_probe", "serve", "ros", "/run/core/core.sock", "/state/ros-tm.record"]
     volumes:
       - ros_core_socket:/run/core
@@ -111,8 +113,8 @@ services:
     logging: {driver: journald}
   mps-core-read:
     build:
-      context: ../..
-      dockerfile: docker/stage9/Dockerfile
+      context: ..
+      dockerfile: docker/Dockerfile
     command: ["/usr/local/bin/gs_stage9_core_probe", "serve", "mps", "/run/core/core.sock", "/app/interfaces/command_db/commands.json", "/mps-schedules"]
     volumes:
       - mps_core_socket:/run/core
@@ -129,8 +131,8 @@ services:
     logging: {driver: journald}
   fds-synthetic-demo:
     build:
-      context: ../..
-      dockerfile: docker/stage9/FdsDemo.Dockerfile
+      context: ..
+      dockerfile: docker/FdsDemo.Dockerfile
     depends_on:
       sim-volume-init: {condition: service_completed_successfully}
     volumes:
@@ -145,8 +147,8 @@ services:
     logging: {driver: journald}
   fds-iss-display:
     build:
-      context: ../..
-      dockerfile: docker/stage9/FdsDemo.Dockerfile
+      context: ..
+      dockerfile: docker/FdsDemo.Dockerfile
     command: ["python3", "tools/build_iss_demo.py", "--test-only", "--orekit-data", "/opt/orekit-data", "--mvn", "/usr/local/bin/mvn-offline", "--maven-repo", "/app/m2", "--output-root", "/app/out/iss-display", "--view-dir", "/app/out/fds-iss-view", "--watch", "--refresh-seconds", "1800"]
     depends_on:
       sim-volume-init: {condition: service_completed_successfully}
@@ -159,8 +161,8 @@ services:
     logging: {driver: journald}
   sim-volume-init:
     build:
-      context: ../..
-      dockerfile: docker/stage9/SimTm.Dockerfile
+      context: ..
+      dockerfile: docker/SimTm.Dockerfile
     user: "0:0"
     # Existing FDS runs may be private (0700); only volume roots need write ownership.
     command: ["chown", "10001:10001", "/tm-preview", "/n11-inbox", "/fds-runs", "/fds-view", "/fds-truth", "/mps-schedules", "/sim-tc", "/sim-spool", "/iss-runs", "/iss-view"]
@@ -183,8 +185,8 @@ services:
     restart: "no"
   sim-ground:
     build:
-      context: ../..
-      dockerfile: docker/stage9/SimTm.Dockerfile
+      context: ..
+      dockerfile: docker/SimTm.Dockerfile
     command: ["python3", "-m", "services.sim_ground.receiver", "--test-only", "--bind", "0.0.0.0", "--port", "9200", "--snapshot", "/tm-preview/test_tm_snapshot.json", "--n11-inbox", "/n11-inbox/scenario-ltan12-v1", "--limits", "/config/spacecraft.json", "--tc-socket", "/run/sim-tc/bridge.sock", "--contact-view", "/fds-view/orbit_view.json"]
     environment:
       PADO_SPACECRAFT_CONFIG: /config/spacecraft.json
@@ -196,7 +198,7 @@ services:
       - sim_tc_socket:/run/sim-tc
       - fds_truth:/fds-view:ro
       - type: bind
-        source: ../../config
+        source: ../config
         target: /config
         read_only: true
         bind: {create_host_path: false}
@@ -208,8 +210,8 @@ services:
     logging: {driver: journald}
   sim-satellite:
     build:
-      context: ../..
-      dockerfile: docker/stage9/SimTm.Dockerfile
+      context: ..
+      dockerfile: docker/SimTm.Dockerfile
     command: ["python3", "-m", "services.sim_sat.emulator", "--test-only", "--orbit-view", "/fds-view/orbit_view.json", "--host", "sim-ground", "--port", "9200", "--interval-seconds", "5", "--seed", "1", "--spool", "/state/test_tm_spool-ltan12-v1.sqlite3", "--scenario-id", "ltan12-v1", "--power-mode", "${PADO_SIM_POWER_MODE:-standby}"]
     environment:
       PADO_SPACECRAFT_CONFIG: /config/spacecraft.json
@@ -220,7 +222,7 @@ services:
       - fds_truth:/fds-view:ro
       - sim_tm_spool:/state
       - type: bind
-        source: ../../config
+        source: ../config
         target: /config
         read_only: true
         bind: {create_host_path: false}

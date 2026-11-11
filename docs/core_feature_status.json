@@ -10,7 +10,7 @@
         {"status": "시험 구현", "lines": ["시험 TM 프레임 검증", "ROS 전달"]},
         {"status": "운용 미완", "lines": ["실제 안테나·TLE·SDC", "외부 연동"]}
       ],
-      "evidence": ["deploy/stage9/README.md", "tests/test_stage9_network_policy.py", "tests/run_stage3.py"]
+      "evidence": ["deploy/README.md", "tests/test_stage9_network_policy.py", "tests/run_stage3.py"]
     },
     {
       "id": "ROS",

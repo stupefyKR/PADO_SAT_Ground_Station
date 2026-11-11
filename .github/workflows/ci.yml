@@ -81,25 +81,25 @@ jobs:
           cleanup() {
             chmod "$command_db_mode" interfaces/command_db/commands.json
             chmod "$draft_catalog_mode" interfaces/pado_packets/draft_v0.json
-            docker compose -f deploy/stage9/compose.dev.yaml down --volumes --remove-orphans
+            docker compose -f deploy/compose.dev.yaml down --volumes --remove-orphans
           }
           trap cleanup EXIT
-          docker compose -f deploy/stage9/compose.dev.yaml config --quiet
+          docker compose -f deploy/compose.dev.yaml config --quiet
           # Reproduce VM checkouts created with umask 0002. Image catalogs must
           # stay read-only and readable by the C validator after COPY.
           chmod 0664 interfaces/command_db/commands.json interfaces/pado_packets/draft_v0.json
-          docker compose -f deploy/stage9/compose.dev.yaml build
-          docker compose -f deploy/stage9/compose.dev.yaml run --rm --no-deps mps-core-read \
+          docker compose -f deploy/compose.dev.yaml build
+          docker compose -f deploy/compose.dev.yaml run --rm --no-deps mps-core-read \
             python3 -c 'import json,os,stat,subprocess; from pathlib import Path; assert os.geteuid()==10001; directories=[Path("/app"),Path("/app/interfaces"),Path("/app/interfaces/command_db"),Path("/app/interfaces/pado_packets")]; assert all(p.is_dir() and os.access(p,os.R_OK|os.X_OK) for p in directories); assert all(stat.S_IMODE(p.stat().st_mode)==0o755 for p in directories); paths=[Path("/app/interfaces/command_db/commands.json"),Path("/app/interfaces/pado_packets/draft_v0.json")]; assert all(stat.S_IMODE(p.stat().st_mode)==0o444 for p in paths); result=json.loads(subprocess.check_output(["/usr/local/bin/gs_stage9_core_probe","mps-catalog",str(paths[0])])); assert result=={"version":1,"command_count":0,"operational":False}; print("Non-root catalog traversal, file permissions and C read verified")'
-          docker compose -f deploy/stage9/compose.dev.yaml up -d --wait --no-deps ros-core-read mps-core-read
-          docker compose -f deploy/stage9/compose.dev.yaml run --rm --no-deps ros-api \
+          docker compose -f deploy/compose.dev.yaml up -d --wait --no-deps ros-core-read mps-core-read
+          docker compose -f deploy/compose.dev.yaml run --rm --no-deps ros-api \
             python3 -c 'from pathlib import Path; from services.webapp.core import ros_summary; assert ros_summary(Path("/run/core/core.sock"))["record_state"] == "absent"'
-          docker compose -f deploy/stage9/compose.dev.yaml run --rm --no-deps mps-api \
+          docker compose -f deploy/compose.dev.yaml run --rm --no-deps mps-api \
             python3 -c 'from pathlib import Path; from services.webapp.core import mps_catalog,mps_passes; s=Path("/run/core/core.sock"); assert mps_catalog(s)["version"] == 1; assert mps_passes(s)["schedule_state"] == "absent"'
       - name: Validate Windows-to-VM HTTP Compose
         env:
           PADO_LOCAL_BIND_IP: 127.0.0.1
-        run: PADO_CONFIG_GID="$(id -g)" docker compose -f deploy/stage9/compose.local.yaml config --quiet
+        run: PADO_CONFIG_GID="$(id -g)" docker compose -f deploy/compose.local.yaml config --quiet
 
   fds-orbit-tests:
     runs-on: ubuntu-24.04
@@ -174,7 +174,7 @@ jobs:
       - name: Build offline synthetic demo, TM, and ROS containers
         env:
           PADO_LOCAL_BIND_IP: 127.0.0.1
-        run: PADO_CONFIG_GID="$(id -g)" docker compose -f deploy/stage9/compose.local.yaml build fds-synthetic-demo sim-ground sim-satellite ros-api
+        run: PADO_CONFIG_GID="$(id -g)" docker compose -f deploy/compose.local.yaml build fds-synthetic-demo sim-ground sim-satellite ros-api
       - name: Verify beacon, commanded TM dump, private TC bridge, and ROS ACK
         env:
           PADO_LOCAL_BIND_IP: 127.0.0.1
@@ -188,7 +188,7 @@ jobs:
           fi
           chmod 2775 config
           chmod 0664 config/spacecraft.json
-          compose=(docker compose -f deploy/stage9/compose.local.yaml)
+          compose=(docker compose -f deploy/compose.local.yaml)
           cleanup() {
             result=$?
             if (( result != 0 )); then

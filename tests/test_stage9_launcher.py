@@ -9,7 +9,7 @@ import sys
 import tempfile
 import unittest
 
-from deploy.stage9.check_compose_policy import (
+from deploy.check_compose_policy import (
     LOCAL_SETTINGS_MOUNTS, LOCAL_VOLUMES, SIM_VOLUME_INIT_COMMAND)
 
 
@@ -215,7 +215,7 @@ class LauncherLifecycleTests(unittest.TestCase):
                     "security_opt": ["no-new-privileges:true"],
                     "environment": {"PADO_GATEWAY_OPERATOR_CIDR":
                                     "192.168.45.1/32"},
-                    "command": ["python3", "/app/deploy/stage9/dgs_ops_gateway.py",
+                    "command": ["python3", "/app/deploy/dgs_ops_gateway.py",
                                 "--listen-port", "8080", "--upstream-port", "8080"],
                 },
                 "portal": {"networks": {"dgs_portal": None,
@@ -274,7 +274,7 @@ class LauncherLifecycleTests(unittest.TestCase):
             })
         self.network_json_path.write_text(json.dumps(self.networks), encoding="utf-8")
         self.fixture_root = base / "checkout"
-        (self.fixture_root / "deploy" / "stage9").mkdir(parents=True)
+        (self.fixture_root / "deploy").mkdir(parents=True)
         (self.fixture_root / "out").mkdir()
         (self.fixture_root / "config").mkdir()
         shutil.copyfile(ROOT / "config" / "spacecraft.example.json",
@@ -290,11 +290,11 @@ class LauncherLifecycleTests(unittest.TestCase):
         self.compose_policy["services"]["ros-api"]["group_add"] = [str(os.getgid())]
         self.compose_json_path.write_text(json.dumps(self.compose_policy), encoding="utf-8")
         shutil.copyfile(LAUNCHER, self.fixture_root / "pado-gs.sh")
-        shutil.copyfile(ROOT / "deploy" / "stage9" / "compose.local.yaml",
-                        self.fixture_root / "deploy" / "stage9" / "compose.local.yaml")
-        shutil.copyfile(ROOT / "deploy" / "stage9" / "check_compose_policy.py",
-                        self.fixture_root / "deploy" / "stage9" / "check_compose_policy.py")
-        shutil.copyfile(ROOT / 'deploy/stage9/environment_profile.py',self.fixture_root/'deploy/stage9/environment_profile.py')
+        shutil.copyfile(ROOT / "deploy" / "compose.local.yaml",
+                        self.fixture_root / "deploy" / "compose.local.yaml")
+        shutil.copyfile(ROOT / "deploy" / "check_compose_policy.py",
+                        self.fixture_root / "deploy" / "check_compose_policy.py")
+        shutil.copyfile(ROOT / 'deploy/environment_profile.py',self.fixture_root/'deploy/environment_profile.py')
         self.sentinel = self.fixture_root / "out" / "existing-output.txt"
         self.sentinel.write_text("keep repo output", encoding="utf-8")
         self.env = dict(os.environ,

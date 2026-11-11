@@ -171,7 +171,7 @@ N13 PASS 파일은 `out/mps-schedules`에 게시한다. 포털 `/api/fds/orbit`�
 오프라인 연결 시험은 Orekit 자료와 Maven을 갖춘 Linux 환경에서 다음처럼
 실행할 수 있다. 이 시험은 TLE truth→가상 PDU→ROS 스냅샷·N11→FDS GNSS 선택과
 MPS 일정 게시를 확인한다. 실제 VM의 Compose, Docker 볼륨·권한, 브라우저 경로는
-`deploy/stage9/README.md`의 별도 통합 확인 절차를 따른다.
+`deploy/README.md`의 별도 통합 확인 절차를 따른다.
 
 ```sh
 python3 tests/run_synthetic_demo_smoke.py /path/to/orekit-data

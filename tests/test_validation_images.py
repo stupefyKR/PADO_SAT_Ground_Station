@@ -18,7 +18,7 @@ class ValidationImageImports(unittest.TestCase):
                              ('SimTm.Dockerfile',['services.sim_sat.emulator','services.sim_ground.receiver'])]:
             with self.subTest(image=name),tempfile.TemporaryDirectory(dir=ROOT/'out') as folder:
                 app=Path(folder)
-                for line in (ROOT/'docker/stage9'/name).read_text().splitlines():
+                for line in (ROOT/'docker'/name).read_text().splitlines():
                     if not line.startswith('COPY ') or line.startswith('COPY --from='):continue
                     parts=shlex.split(line)[1:];target=parts[-1]
                     if not target.startswith('/app/'):continue

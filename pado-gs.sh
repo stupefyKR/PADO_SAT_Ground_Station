@@ -3,7 +3,7 @@
 set -Eeuo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-COMPOSE_FILE="$ROOT_DIR/deploy/stage9/compose.local.yaml"
+COMPOSE_FILE="$ROOT_DIR/deploy/compose.local.yaml"
 PROJECT="pado-stage9-local"
 FIREWALL_CHAIN="PADO_GS_LOCAL"
 FIREWALL_MARK="pado-gs-local-http"
@@ -92,7 +92,7 @@ prepare_profile() {
   PROFILE_ARGS=(--base "$profile_dir/base.json" --environment "$PADO_ENVIRONMENT"
     --deployment-id "$PADO_VALIDATION_DEPLOYMENT" --config-dir "$CONFIG_DIR"
     --bind-ip "$PADO_LOCAL_BIND_IP" --operator-cidr "$PADO_OPERATOR_CIDR")
-  (cd "$ROOT_DIR" && python3 -m deploy.stage9.environment_profile render "${PROFILE_ARGS[@]}") > "$profile_dir/compose.json"
+  (cd "$ROOT_DIR" && python3 -m deploy.environment_profile render "${PROFILE_ARGS[@]}") > "$profile_dir/compose.json"
   COMPOSE_FILE="$profile_dir/compose.json"
 }
 
@@ -535,14 +535,14 @@ verify_runtime_networks() {
   local require_gateway="${1:-}"
   if [[ "$PADO_ENVIRONMENT" != legacy ]]; then
     docker network inspect "${PROJECT}_entry" "${PROJECT}_dgs_portal" "${PROJECT}_portal_ros" "${PROJECT}_portal_mps" "${PROJECT}_sim_tm" |
-      (cd "$ROOT_DIR" && python3 -m deploy.stage9.environment_profile networks "${PROFILE_ARGS[@]}" ${require_gateway:+--require-gateway})
+      (cd "$ROOT_DIR" && python3 -m deploy.environment_profile networks "${PROFILE_ARGS[@]}" ${require_gateway:+--require-gateway})
     return
   fi
   docker network inspect \
     "${PROJECT}_entry" "${PROJECT}_dgs_portal" \
     "${PROJECT}_portal_ros" "${PROJECT}_portal_mps" \
     "${PROJECT}_sim_tm" | \
-    python3 "$ROOT_DIR/deploy/stage9/check_compose_policy.py" \
+    python3 "$ROOT_DIR/deploy/check_compose_policy.py" \
       --actual-networks --project "$PROJECT" --bridge "$ENTRY_BRIDGE" \
       --bind-ip "$PADO_LOCAL_BIND_IP" --port "$PORT" \
       ${require_gateway:+--require-gateway}
@@ -550,10 +550,10 @@ verify_runtime_networks() {
 
 validate_compose_config() {
   if [[ "$PADO_ENVIRONMENT" != legacy ]]; then
-    compose config --format json | (cd "$ROOT_DIR" && python3 -m deploy.stage9.environment_profile verify "${PROFILE_ARGS[@]}")
+    compose config --format json | (cd "$ROOT_DIR" && python3 -m deploy.environment_profile verify "${PROFILE_ARGS[@]}")
     return
   fi
-  compose config --format json | python3 "$ROOT_DIR/deploy/stage9/check_compose_policy.py" \
+  compose config --format json | python3 "$ROOT_DIR/deploy/check_compose_policy.py" \
     --bind-ip "$PADO_LOCAL_BIND_IP" --port "$PORT" --bridge "$ENTRY_BRIDGE" \
     --operator-cidr "$PADO_OPERATOR_CIDR" --project "$PROJECT"
 }

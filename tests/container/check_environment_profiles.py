@@ -7,13 +7,13 @@ import sys
 
 ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT))
-from deploy.stage9.environment_profile import render,verify,PROFILES
+from deploy.environment_profile import render,verify,PROFILES
 
 
 def main():
     env=dict(os.environ,PADO_CONFIG_GID=str(os.getgid()))
     base=json.loads(subprocess.check_output(['docker','compose','-p','pado-stage9-local','-f',
-        str(ROOT/'deploy/stage9/compose.local.yaml'),'config','--format','json'],env=env))
+        str(ROOT/'deploy/compose.local.yaml'),'config','--format','json'],env=env))
     for kind in PROFILES:
         config=ROOT/'config' if kind=='validation' else ROOT/'config/operations'
         document=render(base,kind,'ci-profile',config)

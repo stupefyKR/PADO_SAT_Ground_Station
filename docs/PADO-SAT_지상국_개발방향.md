@@ -125,7 +125,7 @@ DGS의 각 역할을 하나의 범용 라우터·프록시로 합치지 않는�
 
 ### 5.1 현재 배포 방식
 
-`deploy/stage9/compose.local.yaml`은 Windows 관제 PC와 VMware VM의 **비운용 시험**에 사용한다. `./pado-gs.sh start`는 사설 바인드 주소와 관제 PC CIDR 및 Compose 토폴로지를 검사하고, `DOCKER-USER`에 허용 출발지·8080 포트와 게이트웨이의 신규 외부 발신 거부 규칙을 건 뒤 Compose를 올린다. 정책을 설치할 수 없으면 기동하지 않는다. `stop`은 이 프로젝트의 컨테이너와 해당 규칙을 내리고 데이터 볼륨을 남긴다. `cleanup`은 확인 후 볼륨까지 제거한다. 컨테이너 및 볼륨 동작은 [단계 9 실행 안내](../deploy/stage9/README.md)에 둔다.
+`deploy/compose.local.yaml`은 Windows 관제 PC와 VMware VM의 **비운용 시험**에 사용한다. `./pado-gs.sh start`는 사설 바인드 주소와 관제 PC CIDR 및 Compose 토폴로지를 검사하고, `DOCKER-USER`에 허용 출발지·8080 포트와 게이트웨이의 신규 외부 발신 거부 규칙을 건 뒤 Compose를 올린다. 정책을 설치할 수 없으면 기동하지 않는다. `stop`은 이 프로젝트의 컨테이너와 해당 규칙을 내리고 데이터 볼륨을 남긴다. `cleanup`은 확인 후 볼륨까지 제거한다. 컨테이너 및 볼륨 동작은 [단계 9 실행 안내](../deploy/README.md)에 둔다.
 
 컨테이너는 가능한 범위에서 비루트 UID, 읽기 전용 루트 파일시스템, `cap_drop: [ALL]`, `no-new-privileges`, 제한된 임시 쓰기 공간, 전용 볼륨, `journald` 로그를 쓴다. 초기 볼륨 소유권 설정 컨테이너처럼 별도 권한이 필요한 예외는 한시적으로 분리해 기록한다. Docker socket은 앱 컨테이너에 마운트하지 않는다. 단계 7의 Compose는 네트워크 **probe**이며 실제 운용 서비스 배포 파일이 아니다.
 
@@ -217,7 +217,7 @@ FDS가 만든 `orbit_view.json`을 인증된 포털에서 읽는다. 3D 지구�
 
 ### 8.2 백업
 
-단계 8 도구는 선택된 일반 파일의 SHA-256 스냅샷을 만들고 별도 해시로 검증·복원한다. 실행 중 DB의 일관된 덤프, 암호화, 불변 저장, 독립 매체, 전체 서버 복구는 제공하지 않는다. NAS 선정은 필요하지 않지만 **독립 백업 매체·키 분리·복구 시나리오와 실제 복원 시험**은 운용 전에 완료해야 한다. HMAC 비밀키는 일반 데이터 스냅샷에 넣지 않는다. [단계 8 안내](../deploy/stage8/README.md) 참조.
+단계 8 도구는 선택된 일반 파일의 SHA-256 스냅샷을 만들고 별도 해시로 검증·복원한다. 실행 중 DB의 일관된 덤프, 암호화, 불변 저장, 독립 매체, 전체 서버 복구는 제공하지 않는다. NAS 선정은 필요하지 않지만 **독립 백업 매체·키 분리·복구 시나리오와 실제 복원 시험**은 운용 전에 완료해야 한다. HMAC 비밀키는 일반 데이터 스냅샷에 넣지 않는다. [백업·복구 안내](RECOVERY.md) 참조.
 
 ## 9. 서브시스템 간 전송과 TC 경계
 
@@ -263,7 +263,7 @@ FDS가 만든 `orbit_view.json`을 인증된 포털에서 읽는다. 3D 지구�
 | `libgs/`, `services/` | 공통 C 계약, ROS/MPS/DGS 시험 경계, 웹/API와 시뮬레이터 |
 | `services/fds/` | Orekit 궤도 계산·시험 |
 | `web/` | ORBIT·ROS·MPS·로그인 화면과 로컬 자산 |
-| `deploy/stage7/`, `deploy/stage8/`, `deploy/stage9/` | 격리 probe, 스냅샷·퍼징, 로컬 웹 Compose와 배포 설명 |
+| `deploy/`, `docker/`, `tools/`, `docs/RECOVERY.md` | 실행 Compose·이미지, 격리 probe, 스냅샷·퍼징과 복구 설명 |
 | `tools/`, `tests/` | N2·비밀정보 검사, FDS 입력/게시, 통합·거부·보안 시험 |
 | `docs/TC_TM/` | PDR 기반 응용 패킷 초안·그림·운용 전 검토표 |
 

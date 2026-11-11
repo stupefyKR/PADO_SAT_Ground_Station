@@ -91,7 +91,7 @@ TM의 `utc_ms`는 위성 측정 시각이고, `received_utc`는 지상국 수신
 
 ```sh
 cd ~/pado-gs
-git pull --ff-only origin feat/fds-core
+git pull --ff-only origin main
 ./pado-gs.sh start
 ./pado-gs.sh status
 ```

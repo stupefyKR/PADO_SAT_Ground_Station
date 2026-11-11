@@ -103,7 +103,7 @@ ROS 종합 관제에는 배터리·전력 요약과 추세 그래프가 표시�
 
 ```sh
 cd ~/pado-gs
-git pull --ff-only origin feat/fds-core
+git pull --ff-only origin main
 ./pado-gs.sh start
 ./pado-gs.sh status
 ```

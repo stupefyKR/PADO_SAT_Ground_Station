@@ -14,7 +14,7 @@
       "score": {"architecture": 100, "core": 25, "integration": 25, "field": 0},
       "implemented": "단일 웹 진입·내부망 격리, 파일·시험 프레임 검증",
       "remaining": "실제 안테나·TLE 출처·SDC 연동과 현장 보안 검증",
-      "evidence": ["docs/PADO-SAT_지상국_개발방향.md", "deploy/stage9/README.md", "tests/test_stage9_network_policy.py"]
+      "evidence": ["docs/PADO-SAT_지상국_개발방향.md", "deploy/README.md", "tests/test_stage9_network_policy.py"]
     },
     {
       "id": "ROS",
@@ -54,7 +54,7 @@
       "score": {"architecture": 100, "core": 95, "integration": 90, "field": 0},
       "implemented": "500 km·06시 가상 궤도, 5초 TM·시험 TC/ACK 왕복",
       "remaining": "실제 VM 통합 검증, 장애·이상 시나리오 확대",
-      "evidence": ["services/sim_sat/emulator.py", "services/sim_ground/receiver.py", "deploy/stage9/compose.local.yaml", "tests/test_sim_sat_emulator.py", "tests/test_sim_ground_receiver.py"]
+      "evidence": ["services/sim_sat/emulator.py", "services/sim_ground/receiver.py", "deploy/compose.local.yaml", "tests/test_sim_sat_emulator.py", "tests/test_sim_ground_receiver.py"]
     }
   ]
 }

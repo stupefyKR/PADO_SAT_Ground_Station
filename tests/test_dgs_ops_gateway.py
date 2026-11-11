@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import unittest
 from unittest import mock
 
-from deploy.stage9 import dgs_ops_gateway
+from deploy import dgs_ops_gateway
 
 
 class GatewayOperatorAclTests(unittest.TestCase):

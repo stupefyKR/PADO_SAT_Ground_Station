@@ -8,11 +8,11 @@ import shutil
 import subprocess
 import unittest
 
-from deploy.stage9 import check_compose_policy
+from deploy import check_compose_policy
 
 
 ROOT = Path(__file__).resolve().parents[1]
-COMPOSE = ROOT / "deploy" / "stage9"
+COMPOSE = ROOT / "deploy"
 
 
 def approved_volume_fixture(document, service_mounts):
@@ -91,7 +91,7 @@ class DgsBoundaryInvariantTests(unittest.TestCase):
                                 "security_opt": ["no-new-privileges:true"],
                                 "environment": {"PADO_GATEWAY_OPERATOR_CIDR":
                                                 "192.168.45.1/32"},
-                                "command": ["python3", "/app/deploy/stage9/dgs_ops_gateway.py",
+                                "command": ["python3", "/app/deploy/dgs_ops_gateway.py",
                                             "--listen-port", "8080", "--upstream-port",
                                             "8080"]},
                 "portal": {"networks": {"dgs_portal": None, "portal_ros": None,
@@ -390,7 +390,7 @@ class DgsBoundaryInvariantTests(unittest.TestCase):
         gateway = dev["services"]["dgs-ops-gateway"]
         gateway["ports"] = [{"host_ip": "127.0.0.1", "published": "8443",
                              "target": 8443, "protocol": "tcp"}]
-        gateway["command"] = ["python3", "/app/deploy/stage9/dgs_ops_gateway.py",
+        gateway["command"] = ["python3", "/app/deploy/dgs_ops_gateway.py",
                               "--listen-port", "8443", "--upstream-port", "8443"]
         gateway["environment"] = {}
         dev["networks"]["entry"]["driver_opts"][
@@ -448,6 +448,7 @@ class DgsBoundaryInvariantTests(unittest.TestCase):
                     text=True, capture_output=True, check=False)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 config = json.loads(result.stdout)
+                self.assertEqual(config["name"], project or "stage9")
                 check_compose_policy.check(config, host, port, bridge,
                                            project=project)
 

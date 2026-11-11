@@ -1,180 +1,140 @@
 # PADO-SAT Ground System
 
-## 개요
+경희대학교 PWNLAB의 PADO-SAT 큐브위성 지상국 소프트웨어입니다. Linux VM 한 대에서
+DGS, ROS, MPS, FDS와 웹 포털을 역할별 Docker 컨테이너로 실행합니다.
+관제 PC는 내부망의 웹 포털에 접속하며, **런타임 애플리케이션의 외부 통신은 DGS만 수행**합니다.
 
-경희대학교 PWNLAB의 PADO-SAT 큐브위성 지상국 소프트웨어 저장소입니다. 작업 폴더 안의 `pado-gs/`가 Git 저장소 루트입니다. 2026-10-23 사용자 결정에 따라 실제 운영은 **Linux VM 한 대에서 서브시스템별 Docker 컨테이너**로 구성합니다. 단계 1–8의 개발 기준선을 완료했고 단계 9의 FDS·MPS·ROS·가상 위성 웹 연동을 비운용 시험 기준선으로 개발 중입니다. 실제 서버 적용은 모든 개발 후 배포 수락에서 수행합니다. 실제 위성에 송신하거나 실제 외부 지상국에 연결하는 실행 기능은 없습니다.
+이 저장소의 소스 루트는 `pado-gs/`입니다. 상위 작업 폴더의 발표 산출물·임시 작업물과
+저장소 내부의 `out/`, `build*/`는 실행 소스와 구분합니다.
+개발·운용 절차의 전체 목록은 [문서 안내](docs/README.md)를 참고하세요.
 
-GitHub 원격 저장소는 비공개로 설정되어 있습니다(2026-10-21 확인). 초기 푸시 뒤 공개 설정을 발견해 즉시 비공개로 전환한 기록은 [진행 기록](docs/PROGRESS.md)에 남겼습니다.
+## 시작하기
 
-기준 문서: [원본 N2 포함 제안서](docs/지상국.pdf), [N2 인터페이스 표·그림](docs/N2_ICD/README.md), [개발방향](docs/PADO-SAT_지상국_개발방향.md), [보안 계획서](docs/PADO-SAT_지상국_보안설계_개발방향계획서.md), [진행 기록](docs/PROGRESS.md), [결정 기록](docs/DECISIONS.md)
-
-## VMware 시험 웹 실행
-
-TC·TM 통합 시험은 **`bash pado-validation.sh start`**로 실행한다. 검증용 로그인은
-`http://192.168.45.128:8080/login`이며, MPS/ROS의 **Validation Packets**에서
-TC 전종 시험과 10,000개 TM 수신·파싱을 예약할 수 있다. 가상 위성이 없는 별도
-운용 환경은 **`bash pado-operations.sh start`**, `http://192.168.45.128:8082/login`이다.
-공통 이미지를 사용하고 계정·API·저장소·망은 분리한다. 실제 외부 입력은 별도 연결이
-필요하다. [검증 절차와 범위](docs/TC_TM/VALIDATION.md)를 먼저 참고한다.
-
-아래는 기존 개발 스택(`pado-gs.sh`)의 실행 방법이다.
-
-Windows 관제 PC(`192.168.45.1`)와 VMware Linux VM(`192.168.45.128`)의
-사설망 시험 환경에서는 저장소를 clone한 뒤 다음처럼 시작한다. Docker Engine
-stable 28.0.0 이상, Compose v2 플러그인, `curl`이 필요하며, 첫 실행 때 웹
-로그인 계정 비밀번호를 묻는다.
+Linux VM에 Docker Engine 28 이상, Docker Compose v2 플러그인, Python 3,
+`iptables`와 방화벽 규칙을 관리할 권한이 필요합니다. 첫 이미지 빌드에 필요한
+의존성·Orekit 데이터 다운로드는 배포 준비 과정에서 수행합니다.
 
 ```sh
-git clone https://github.com/stupefyKR/PADO_SAT_Ground_Station.git pado-gs
+git clone --branch main https://github.com/stupefyKR/PADO_SAT_Ground_Station.git pado-gs
 cd pado-gs
-git switch feat/fds-core
-./pado-gs.sh start
+bash pado-validation.sh start
 ```
 
-Windows 브라우저에서 `http://192.168.45.128:8080/login`에 접속한다. VM의
-8080은 Portal이 아니라 **DGS-OPS-Gateway**만 게시하며, 게이트웨이가 내부
-Portal의 고정 주소로 전달한다. Portal·ROS·MPS·FDS·시뮬레이터에는 직접 외부망
-경로를 주지 않는다. VM 또는 관제 PC 주소가 다르면 각각 `PADO_LOCAL_BIND_IP`와
-`PADO_OPERATOR_CIDR`로 지정한다. `./pado-gs.sh stop`은 데이터 볼륨을 보존하며,
-`./pado-gs.sh cleanup`은 삭제 확인 뒤 계정·시험 시퀀스·FDS 결과를 포함한 프로젝트
-볼륨과 로컬 이미지를 제거한다. 방화벽 접근 범위와 상세 절차는
-[단계 9 안내](deploy/stage9/README.md)를 참고한다. 이 스택은 실제 TC를
-송출하지 않는 비운용 시험 구성이다.
+| 환경 | 실행 | Windows 관제 PC 접속 |
+|---|---|---|
+| 지상국 검증 | `bash pado-validation.sh start` | `http://192.168.45.128:8080/login` |
+| 운용 구성 | `bash pado-operations.sh start` | `http://192.168.45.128:8082/login` |
 
-시작 후 `/orbit`에서 가상 PADO-SAT 궤도와 두 지상국의 PASS를, `/ops`의
-`TM · 자세`에서 시험 EPS 전압·온도와 자세를, `/mps`에서 PASS·경로·시험
-시퀀스 구성을 확인할 수 있다. 가상 위성은 5초마다 초안 EPS/AOCS/GNSS TM
-PDU를 내부 Docker TCP 연결로 보내고, 시험 지상 수신기가 이를 검증·파싱해
-ROS 화면 자료와 FDS용 N11 시험 파일을 만든다. FDS는 새 GNSS가 유효하면
-그 상태를 우선 사용하고 72시간 이상 낡거나 없으면 가상 TLE로 전환한다.
-MPS에서 연세대 UHF PASS에 저장한 읽기 전용 시험 시퀀스를 ROS에 전달하면,
-ROS의 별도 `SIM ONLY` 영역에서 시퀀스 단위 AOS 기준 예약과 가상 위성의
-`COMMAND_RESULT` 응답을 볼 수 있다. 이 왕복 경로는 실제 TC 승인·송출과
-분리돼 있다.
-연결 구조와 로그 확인 명령은 [단계 9 안내](deploy/stage9/README.md)에 있다.
+검증·운용은 같은 이미지와 화면·파싱·예약 코드를 사용하며 계정, API, 설정,
+데이터 볼륨과 네트워크를 분리합니다. 검증 로그인에 성공하면 가상 PADO-SAT가
+활성화됩니다. 운용 구성에는 가상 위성이 없으며 실제 입력이 연결되기 전에는
+TM·궤도·PASS를 입력 대기로 표시합니다.
 
-## 진행 상태
+처음 시작할 때 해당 환경의 계정을 생성합니다. VM 또는 관제 PC 주소가 다르면
+실제 사설 주소를 지정합니다. 관제 PC 주소는 VM에서 보이는 출발지 주소입니다.
 
-| 단계 | 내용 | 상태 | 비고 |
-|---|---|---|---|
-| 초기 구성 | 저장소·빌드·시험 골격 | 완료 | Windows 일반·ASan 시험 통과; 이후 단계 1에서 Linux CI 검증 |
-| 1 | `interfaces/`, `libgs/` | 완료(기준선) | N2 21개 원본 화살표, 설계 허용 경로 21개, Windows·Linux 매니페스트·로그·파일 교환 시험 통과; TC/TM 실값은 ICD 대기 |
-| 2 | 서브시스템 간 통신 기반 | 완료(개발 기준선) | VMware Linux VM의 Docker 격리 네트워크에서 mTLS·SFTP 송수신/거부 시험 통과 |
-| 3 | TM 수신 경로 | 완료(시뮬레이터 기준선) | `fake_kari` → `dgs-gs` → `ros-core`; 실제 ICD·TM 해석 대기 |
-| 4-1 | MPS 입력·카탈로그 기준선 | 완료(비운용 기준선) | 빈 명령 DB 판독과 FDS N13 PASS 파일 쌍 검증·시간순 반입; 실제 SFTP 서비스 연결 대기 |
-| 4-2 | 시퀀스 초안·버전 이력 | 완료(비운용 기준선) | 패스·DB 버전 결합, 불변 이력, 동시 수정 거부; 영속 저장소 미연결 |
-| 4-3 | 충돌 분석 | 완료(기존 시험 계약 기준선) | 6개 합성 규칙은 TC 후보 선택 경로와 분리; 실제 충돌 정책은 위성개발측 논의 대기 |
-| 4-4 | 승인·출력·ROS 연동 | 완료(비운용 시험 기준선) | 최신 초안 승인, `TEST_ONLY_SEQUENCE`·매니페스트, ROS 독립 재검증; 실제 TC ICD 대기 |
-| 4-5 | Mission Request·업링크 반입 | 완료(비운용 시험 기준선) | 두 단계 출처 체인·해시·버전·권한·FlatSat 기록 ID 검사; 외부 본문 형식 대기 |
-| 5 | TC 검증→승인→signer→tc-gate→`fake_sat` ACK | 완료(비운용 시험 기준선) | 위험 TC 별도 lead 승인·게이트 차단 시험 통과; 실제 명령·프레임·HMAC 사양 대기 |
-| 6 | FDS·DGS-NET·아카이브·SDC 교환 | 완료(비운용 파일 교환 기준선) | N05·N08–N18 경로·유형·SFTP 시험 통과; FDS N13/N15 출고함·단발 송수신 CLI 추가, 실제 상대·상주 서비스 연결 대기 |
-| 7 | 단일 VM의 Docker·UFW 배포 기반 | 완료(개발 기준선) | N2 연결 쌍·Docker 격리·journald·UFW·시뮬레이터 앱 경계 시험 통과; 실제 서버 적용은 최종 배포 수락 절차 |
-| 8 | 백업·복구·퍼징·핵심 서비스 보안 시험 | 완료(개발 기준선) | 로컬 복원·변조 거부 및 4개 파서 ASan+UBSan 퍼징 통과; 실제 백업 매체·FlatSat 복구는 최종 배포 수락 절차 |
-| 9 | 포털 인증·ROS/MPS 웹 UI | 진행 중(비운용 기준선) | Argon2id·TOTP 세션, 로컬 HTTP 시험의 내부 토큰/별도 개발 구성의 mTLS, 상주 C 읽기 서비스, 가상 위성 TM→ROS 시험 그래프·자세 및 GNSS→FDS 입력, MPS 저장 시퀀스→ROS 시험 예약→가상 위성 ACK 왕복; 운용 코어·ICD·관제 PC 현장 시험 대기 |
-| FDS 코어 | TLE SGP4·GNSS 예비 수치 전파 | 진행 중(비운용 계산 기준선) | 두 안테나 최대 72시간 산출, N05 인증 SFTP pull·N11 수신함 스냅샷·반복 계산, N13/N15 출고함과 MPS 일정 반입. 실제 GNSS TM ICD·정밀도 검증·SFTP 서버·서비스 배포 연결 대기 |
+```sh
+PADO_LOCAL_BIND_IP=192.168.45.128 \
+PADO_OPERATOR_CIDR=192.168.45.1/32 \
+bash pado-validation.sh start
+```
 
-## 아키텍처
+검증 환경의 기본 시험은 PASS 대기 없이 연속 연결합니다. MPS 또는 ROS의
+**Validation Packets**에서 TC 시퀀스와 10,000개 정상·손상·급변 TM 검증을
+예약하고 송신 RAW, 수신 원문·파싱 값, 거부 사유와 센서 이벤트를 확인합니다.
+자세한 순서는 [TC·TM 검증 절차](docs/TC_TM/VALIDATION.md)에 있습니다.
 
-현행 [개발방향](docs/PADO-SAT_지상국_개발방향.md)의 목표 운용 구조는 Linux VM 한 대에서 Portal, ROS, MPS, FDS, DGS-Archive, DGS-GS, DGS-NET을 역할별 컨테이너로 분리합니다([결정 #16·#40](docs/DECISIONS.md)). **모든 런타임 애플리케이션의 외부망 통신은 DGS만 수행**합니다. 로컬 웹 시험에는 DGS-OPS-Gateway가 관제 PC 접속을 Portal로 고정 전달하며, 비DGS 컨테이너의 외부 발신 경로를 차단하는 구조를 적용합니다. 현 로컬 Compose에는 실제 DGS-GS/NET/Archive 운용 서비스가 없고, 다른 출발지·재부팅 후 정책의 현장 실증은 배포 수락에 남아 있습니다. [단계 7 배포 기준선](deploy/stage7/README.md)의 Compose는 네트워크 검증용이며 운용 앱 배포 파일이 아닙니다. 실제 서버 적용 순서는 [서버 설정 매뉴얼](deploy/stage7/SERVER_SETUP.md)에 있습니다.
+```sh
+# 업데이트: 기존 데이터와 계정을 유지
+git switch main
+git pull --ff-only origin main
+bash pado-validation.sh start
 
-단계 8의 로컬 백업·복원과 퍼징 절차는 [단계 8 시험 안내](deploy/stage8/README.md)에 정리했습니다. NAS 장비 연동은 현재 개발·배포 수락 범위에서 제외하고, 장비가 정해진 뒤 별도 과제로 추가합니다([결정 #19](docs/DECISIONS.md)). 운용 전 독립 백업·복원 방안은 별도로 검증해야 합니다.
+# 상태 확인 / 실행 중지
+bash pado-validation.sh status
+bash pado-validation.sh stop
+```
 
-단계 9의 비운용 웹 개발 기준선과 컨테이너 실행 조건은 [단계 9 안내](deploy/stage9/README.md)에 있습니다. 인증된 `/orbit` 화면은 FDS가 게시한 궤도 표본으로 3D 지구·주야간·2D 지상궤적·두 지상국 PASS polar plot을 동시에 표시합니다. 로컬 시험 스택의 기본 입력은 **고도 약 500 km, LTAN 12시의 가상 PADO-SAT SSO TLE**다. 시험 실행기가 TLE epoch를 갱신해 최대 72시간의 FDS 예측 결과를 게시한다. 별도의 가상 위성이 이 TLE에서 생성된 궤도를 기준으로 EPS/AOCS/GNSS 시험 PDU를 보내며, ROS에는 파싱된 센서·자세가, FDS에는 검증된 GNSS 시험 파일이 전달된다. 내부 TCP 9200은 Docker 내부망 전용이고 RF·CSP·AX100 장비 경로가 아니다. 원본 ISS 고정 TLE는 선택형 과거 화면 시험 자료로 보존한다. 실제 PADO-SAT N05 TLE·N11 GNSS와 실측 안테나 설정은 별도 경로다.
+운용 구성은 위 명령의 `pado-validation.sh`를 `pado-operations.sh`로 바꿉니다.
+`stop`은 데이터를 보존합니다. `cleanup`은 확인 후 해당 환경의 컨테이너·네트워크와
+데이터 볼륨을 삭제하므로 시험 결과를 유지하려면 사용하지 않습니다.
+호스트 설정 파일과 두 환경이 사용하는 공통 이미지는 유지합니다.
+기존 개발 스택 실행기 `pado-gs.sh`도 호환성을 위해 제공합니다.
+상세 배포·방화벽·로그 절차는 [배포 안내](deploy/README.md)를 참고하세요.
 
-FDS의 오프라인 Java/Orekit 계산기 입력, 두 안테나 설정, 결과 CSV와 시험 방법은 [FDS 코어 안내](services/fds/README.md)에 있습니다. 예시 주파수는 운용 RF 값이 아니며, 실제 안테나 좌표·TM ICD·정밀도 검증 전 산출물은 비운용입니다.
+## 주요 기능과 범위
 
-계획된 운용 TC 경로는 MPS 시퀀스 승인 → `ros-core` 명령 DB 재검증 → `ros-signer` 승인 확인·HMAC → TLS → `dgs-gs` `tc-gate` → `kari-adapter`입니다. 현재 단계 5는 합성 프레임을 이용한 모듈 간 시험 경로이며 실제 송출 경로는 구현되지 않았습니다. [개발방향 12장](docs/PADO-SAT_지상국_개발방향.md), [MPS 시험 계약](interfaces/mps/test_contract.md), [TC 시험 계약](interfaces/tc/test_contract.md)을 참고하세요.
+| 구성 | 기능 |
+|---|---|
+| DGS | 외부 접점 통제, 수신 패킷 검증·격리, TC 송신 원문·TM 수신 기록 |
+| ROS | 센서 그래프·한계 초과 이벤트, RAW·파싱 조회, CAD 자세 표시·최근 3일 이력, TC 예약·응답 확인 |
+| MPS | 두 지상국 PASS와 ground track·polar plot 조회, TC 순서·인자·AOS 기준 시퀀스 구성 |
+| FDS | TLE/SGP4와 GNSS 기반 예비 수치 전파, 최대 72시간 궤도력·PASS·도플러 산출 |
+| 검증 위성 | 500 km·98.4°·LTAN 12h 시험 궤도, −X Nadir, GNSS·장비 HK·전력/배터리 모델, 비콘·TC·저장 TM 왕복 |
 
-가상 위성의 100 Wh 배터리·태양전지 발전·장치별 소비전력 모델과 VM 설정은 [전력 모델 안내](docs/SIM_EPS.md)에 있습니다.
-ROS의 최근 3일 GNSS 위치·수신 자세 재생과 늦게 받은 TM 반영은 [위치·자세 이력 안내](docs/ROS_STATE_HISTORY.md)에 있습니다.
-DSP·MSP 정격과 장치 소비전력은 공통 설정 파일에서, 센서 하한·상한은 같은 파일 또는 ROS 화면에서 변경합니다([설정 안내](docs/SPACECRAFT_SETTINGS.md)).
+현재 구현과 시험은 지상국 개발 기준선입니다. 실제 비행 TC/TM·인증·ACK 규격,
+RF/CSP/AX100 및 항우연·연세대 연결, FDS 정확도와 실제 운용 승인 경로는 별도
+합의·통합 검증이 필요합니다. 검증 환경의 ACK는 실제 장치 동작 완료를 증명하지
+않습니다. FDS 기동 기능, NAS 및 S-band 탑재체 과학자료 수신은 현재 범위에서 제외합니다.
 
 ## 저장소 구조
 
-| 디렉터리 | 계획된 역할 |
-|---|---|
-| `interfaces/` | 원본 N2와 설계 허용 연결 방향, 비운용 명령·TM DB, 매니페스트 스키마, 프레임 TBD |
-| `libgs/` | 매니페스트 파싱·검증, SHA-256, 한 줄 JSON 로그, 원자적 파일 공개·교환 검증 |
-| `third_party/` | cJSON v1.7.19 소스·라이선스·해시 |
-| `services/` | 서브시스템 서비스 |
-| `web/` | 로컬 웹 리소스 |
-| `docker/`, `deploy/` | 컨테이너 및 단일 VM 배포 설정 |
-| `sim/` | 외부 연동 시뮬레이터 |
-| `tests/` | 단위·통합 시험 |
-| `tools/` | 인터페이스·비밀정보·배포 흐름 검사 및 호스트 감사 도구 |
+```text
+pado-gs/
+├── config/       # 공통 물리 설정 예시; 실제 환경별 설정은 Git 제외
+├── deploy/       # Compose, 환경 분리·DGS 정책 검사, 게이트웨이, 실행 안내
+│   └── stage7/   # 컨테이너 격리 probe와 실제 서버 설정 절차
+├── docker/       # 웹·DGS 링크·FDS Dockerfile
+├── docs/         # 개발방향, 결정·진행 기록, 기능·인터페이스·복구 문서
+├── interfaces/   # N2, 패킷 카탈로그, 스키마와 시험 계약
+├── libgs/        # C 공통 검증·파일 교환·TLS/SFTP/Unix socket 라이브러리
+├── services/     # 서브시스템 C·Python 코드와 FDS Java/Maven 코드
+├── sim/          # C 경계 시험용 외부 지상국·위성 모듈
+├── tests/        # 단위·통합·컨테이너 시험
+├── third_party/  # 버전·출처를 고정한 외부 소스
+├── tools/        # 전파 파이프라인·게시·검사·자료 생성 도구
+└── web/          # 공통 리소스와 로그인·ROS·MPS·ORBIT·검증 화면
+```
+
+`out/`, `build*/`, FDS의 `target/`은 재생성 가능한 로컬 출력입니다.
+Java의 `src/main/java/kr/ac/khu/padosat/fds/` 경로는 Maven·패키지 규칙을 따릅니다.
+배포 파일의 개발 단계 번호 중첩은 제거하되, 독립 격리 시험인 `stage7/`은 유지합니다.
+복구·퍼징 절차는 [복구 안내](docs/RECOVERY.md)에 있습니다.
 
 ## 빌드와 시험
 
-Windows에서는 Visual Studio 2022의 C 도구와 내장 CMake가 필요합니다. 아래는 이 환경에서 실행해 통과한 PowerShell 명령입니다. `14.44.35207`은 이 PC에 설치된 도구 버전이므로 다른 PC에서는 설치 버전에 맞춥니다.
-
-```powershell
-$cmake = 'C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe'
-$ctest = 'C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\ctest.exe'
-& $cmake -S . -B build-msvc-1444 -G 'Visual Studio 17 2022' -A x64 -T 'v143,version=14.44.35207'
-& $cmake --build build-msvc-1444 --config Release --parallel 1 -- /nr:false /p:VCToolsVersion=14.44.35207
-& $ctest --test-dir build-msvc-1444 -C Release --output-on-failure
-python -m unittest discover -s tests -p 'test_*.py' -v
-```
-
-AddressSanitizer 빌드·시험:
-
-```powershell
-& $cmake -S . -B build-asan -G 'Visual Studio 17 2022' -A x64 -T 'v143,version=14.44.35207' -DGS_ENABLE_SANITIZERS=ON
-& $cmake --build build-asan --config Release --parallel 1 -- /nr:false /p:VCToolsVersion=14.44.35207
-$env:PATH = 'C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\bin\Hostx64\x64;' + $env:PATH
-& $ctest --test-dir build-asan -C Release --output-on-failure
-```
-
-GNU/Clang 빌드에는 개발방향 11.5절의 경고·하드닝 옵션을 적용하고, `GS_ENABLE_SANITIZERS=ON`은 AddressSanitizer와 UndefinedBehaviorSanitizer를 함께 활성화합니다. MSVC는 대응 보안 옵션을 사용하며 sanitizer 빌드에는 AddressSanitizer만 제공합니다.
-
-단계 2 이후 Linux 빌드에는 `libssh-dev`와 `openssh-server`도 필요합니다. CTest는 시험 실행 중 임시 CA·TLS 인증서·SSH 키를 생성하고 127.0.0.2의 임시 SFTP 서버를 사용합니다. 비밀 키와 인증서 개인키는 저장소에 생성하지 않습니다. `libgs`는 상호 인증 TLS 길이 접두 프레임, Unix socket JSON 프레임, SSH 호스트 키 고정 SFTP 파일·매니페스트 업로드와 읽기 전용 회수 경로를 제공합니다. 단계 3 서비스는 `--sim-only` 시험 경로로만 실행되며 VM 배포 설정은 아직 없습니다.
-
-단계 4-4·4-5는 Windows와 Linux CTest의 `gs_stage4_tests`로 승인·출력·ROS 재검증 및 요청·업링크 반입의 허용·거부 경로를 확인합니다. 검증 결과는 [진행 기록](docs/PROGRESS.md)에 남깁니다. VMware Ubuntu 26.04 VM 안의 Ubuntu 24.04 시험 컨테이너에서 단계 2의 컨테이너 간 mTLS·SFTP·격리 시험을 수행했습니다. 매니페스트·MPS 입력 파서는 libFuzzer 대상으로 등록했으며 퍼징 실행은 단계 8에서 수행합니다. 공통 SFTP 송수신은 단계 2에 있고, 서비스별 inbox 감시·격리·삭제는 이후 서비스 통합에서 추가합니다.
-
-단계 5의 `gs_stage5_tests`는 합성 TC 검증부터 승인·태그 부착·게이트·`fake_sat` ACK까지의 한 프로세스 시험과 거부 사례를 확인합니다. 시험 키는 실행 중에 생성하며 실제 위성 키나 프레임 형식을 사용하지 않습니다.
-
-단계 6의 `gs_stage6_tests`는 N2 경로표와 코드의 일치, NORAD TLE 형식, Archive의 입력·전달·변조 거부를 검사합니다. Linux `gs_sftp_tests`는 N05·N08–N18의 SFTP 파일 쌍 송수신과 SDC→Archive→MPS 매니페스트 전달을 검사합니다. [시험 계약](interfaces/stage6/test_contract.md)에 실제 운용 경계를 기록했습니다.
-
-`.github/workflows/ci.yml`은 Ubuntu GCC Release, Clang ASan+UBSan, 정적 분석, Python 검사를 푸시마다 실행합니다. 같은 시험을 Linux에서 재현하려면 OpenSSL 개발 헤더, Ninja, GCC, Clang, Python이 필요합니다.
+Linux C 빌드는 CMake, Ninja, GCC/Clang, OpenSSL·libssh 개발 헤더를 사용합니다.
+TLS/SFTP 시험에는 `openssl`, `ssh-keygen`, `sshd`도 필요합니다.
 
 ```sh
 cmake -S . -B build-linux-release -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc
 cmake --build build-linux-release --parallel 2
 ctest --test-dir build-linux-release --output-on-failure
-cmake -S . -B build-linux-sanitized -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_COMPILER=clang -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DGS_ENABLE_SANITIZERS=ON
-cmake --build build-linux-sanitized --parallel 2
-ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 ctest --test-dir build-linux-sanitized --output-on-failure
 python3 -m unittest discover -s tests -p 'test_*.py' -v
-python3 tools/check_secrets.py --staged
 ```
-
-## 로컬 개발 환경
-
-단계 3의 `fake_kari` → `dgs-gs` → `ros-core` 수신 경로는 Linux에서 CTest의 `gs_stage3_tests`로 실행합니다. `openssl`이 시험용 CA·상호 인증서를 임시 디렉터리에 만들고, 두 유효 프레임의 ROS 기록과 다섯 무효 입력의 DGS-GS 격리를 검사합니다. 프레임은 [시험 전용 규격](interfaces/frames/simulator.md)이며 실제 TM 항목을 해석하지 않습니다.
-
-단계 4-1의 `gs_mps_inputs_tests`는 Windows와 Linux CTest에 포함됩니다. 현재 `interfaces/command_db/commands.json`의 비운용 상태를 확인하고, 운용 활성화·미정 명령 항목·비정상 JSON을 거부합니다. `gs_mps_fds_tests`는 FDS N13 PASS 일정의 매니페스트·CSV 검증과 PASS별 TC 후보 순서·리비전을 시험합니다. TC 후보는 명령 DB 항목이나 송출 명령으로 해석하지 않으며, 실제 전송·영속 서비스와 충돌 정책은 아직 연결되지 않았습니다. 명령 DB 입력 파서는 `GS_BUILD_MPS_CATALOG_FUZZER=ON`으로 Clang libFuzzer 대상으로 빌드할 수 있습니다.
-
-단계 2 공통 통신의 Linux 시험도 위 CMake·CTest 명령으로 실행합니다. Docker가 있는 개발용 Linux VM에서는 다음 명령으로 두 컨테이너의 실제 네트워크 주소를 이용해 상호 인증 TLS, SFTP 파일·매니페스트, 잘못된 상대 인증서와 분리된 네트워크의 접속 거부를 시험합니다. `openssl`과 `ssh-keygen`이 필요하며, 시험 키·인증서는 임시 디렉터리에 생성됩니다. 스크립트는 시험 컨테이너·네트워크를 제거하고, 빌드된 이미지 `pado-stage2-test:local`은 재사용할 수 있게 남깁니다.
 
 ```sh
-python3 tests/container/run_network.py --build
+cmake -S . -B build-linux-sanitized -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_COMPILER=clang -DGS_ENABLE_SANITIZERS=ON
+cmake --build build-linux-sanitized --parallel 2
+ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 ctest --test-dir build-linux-sanitized --output-on-failure
 ```
 
-이 시험은 VMware의 단일 Linux VM 안에서 수행했습니다. 운영도 단일 VM으로 변경했으며, 단계 7에서는 컨테이너 연결 쌍·호스트 UFW·로그를 별도로 검증합니다. [단계 7 절차](deploy/stage7/README.md)를 참고하세요.
+Windows에서는 Visual Studio 2022 C 도구와 CMake를 갖춘 개발자 PowerShell에서
+다음처럼 실행합니다. Linux 전용 통신 시험은 Linux CI에서 검증합니다.
 
-## 보안 주의 사항
+```powershell
+cmake -S . -B build-msvc -G "Visual Studio 17 2022" -A x64
+cmake --build build-msvc --config Release --parallel 2
+ctest --test-dir build-msvc -C Release --output-on-failure
+python -m unittest discover -s tests -p 'test_*.py' -v
+```
 
-비밀 키, 인증서 개인키, 비밀번호, 토큰과 로컬 데이터는 Git에 넣지 않습니다. `.gitignore`와 `.githooks/pre-commit`의 검사는 기본 방어이며, 커밋 전 `python tools/check_secrets.py --staged`로 색인 전체를 검사합니다. 이 검사는 알려진 파일 경로와 일부 자격증명 패턴을 감지하므로 전문 비밀정보 감사의 대체재가 아닙니다.
+FDS는 Java 17·Maven·Orekit을 사용합니다. 입력·물리 자료·자체 시험은
+[FDS 안내](services/fds/README.md)를 따릅니다. Docker 네트워크 시험은
+`python3 tests/container/run_network.py --build`로 실행하며, 전체 Linux 빌드·정적 분석·
+ASan/UBSan·FDS·컨테이너 시험은 [GitHub Actions](.github/workflows/ci.yml)에서 수행합니다.
 
-TC는 계획된 검증·승인·서명·게이트 경로로만 송출하며, 위험 TC는 작성자와 승인자가 달라야 합니다. 현재 검증·승인·서명·게이트 로직은 시험용으로 구현됐고 실제 송출 기능은 없습니다.
-
-## 미결 사항
-
-- TBD(ICD): 항우연·연세대 연동 포트, 프로토콜, 프레임 형식
-- TBD(HMAC): 트랜시버 HMAC 세부 사양
-- TBD(ICD): PDR 기반 [TC/TM 초안 58/16종](docs/TC_TM/README.md)은 정리했으나 비행 승인 명령 ID·인자·TM 항목/보정은 미확정. 운용 DB는 `operational: false`
-- TBD(ICD): DGS-GS 원시데이터 임시 영역의 용량·보관시간·회수 주기
-
-## 변경 이력 요약
-
-단계 1 인터페이스·공통 파일 교환 기준선은 2026-10-21 완료했습니다. 세부 시험·결정 기록은 [진행 기록](docs/PROGRESS.md)을 참조합니다.
+비밀번호·토큰·개인키와 실제 데이터는 Git에 저장하지 않습니다.
+커밋 전에 `python tools/check_secrets.py --staged`를 실행합니다.
+현재 상태와 남은 외부 협의는 [진행 기록](docs/PROGRESS.md),
+[결정 기록](docs/DECISIONS.md), [TC·TM 검토표](docs/TC_TM/REVIEW_GATES.md)를 참고하세요.

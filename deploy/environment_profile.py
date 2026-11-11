@@ -10,7 +10,7 @@ import json
 from pathlib import Path
 import sys
 
-from deploy.stage9.check_compose_policy import check, check_actual_networks
+from deploy.check_compose_policy import check, check_actual_networks
 
 
 PROFILES = {
@@ -79,7 +79,7 @@ def render(base, kind, deployment_id, config_dir):
         network['name']=f'{project}_{name}'
     result['networks']['entry']['driver_opts']['com.docker.network.bridge.name']=bridge
     gateway=services['dgs-ops-gateway']
-    gateway['command']=['python3','/app/deploy/stage9/dgs_ops_gateway.py','--listen-port',str(port),'--upstream-port','8080']
+    gateway['command']=['python3','/app/deploy/dgs_ops_gateway.py','--listen-port',str(port),'--upstream-port','8080']
     gateway['ports'][0].update(published=str(port),target=port)
     return result
 

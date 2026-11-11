@@ -19,7 +19,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 COMPOSE = ("docker", "compose", "-p", "pado-stage9-local", "-f",
-           str(ROOT / "deploy" / "stage9" / "compose.local.yaml"))
+           str(ROOT / "deploy" / "compose.local.yaml"))
 TCP_PROBE = """import socket,sys
 s=socket.socket()
 s.settimeout(2)

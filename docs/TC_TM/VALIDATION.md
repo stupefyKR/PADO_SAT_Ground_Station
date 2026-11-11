@@ -31,7 +31,7 @@ FSW를 개발하기 전에 지상국의 TC 구성·예약·송신과 TM 수신·
 
 ```sh
 cd ~/pado-gs
-git pull --ff-only origin feat/fds-core
+git pull --ff-only origin main
 bash pado-validation.sh start
 bash pado-validation.sh status
 ```
@@ -103,7 +103,7 @@ TM PASS는 10,000개 모두 관측, 정상 파싱, 손상 거부, 정상 필드 
 | `services/sim_ground/measurement.py` | 일반 수신과 공통 GNSS·자세 검사 |
 | `services/sim_ground/tc_journal.py` | DGS 송신 원문 |
 | `web/validation/console.js` | ROS·MPS 공통 검증 화면 |
-| `deploy/stage9/environment_profile.py` | 공통 Compose에서 실행 환경·저장소 분리 |
+| `deploy/environment_profile.py` | 공통 Compose에서 실행 환경·저장소 분리 |
 | `GET /api/environment` | 현재 환경 표시 |
 | `GET /api/ros/validation/coverage` | TC 범위·미정 ICD 목록 |
 | `POST /api/ros/validation/runs` | `{target_utc_s, seed}` 예약 |

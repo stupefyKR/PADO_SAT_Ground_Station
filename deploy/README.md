@@ -1,4 +1,17 @@
-# 단계 9 웹 개발 기준선
+# 지상국 실행·배포 안내
+
+## 검증·운용 환경 실행
+
+현재 권장 실행기는 저장소 루트의 `bash pado-validation.sh start`와
+`bash pado-operations.sh start`다. 검증 환경은 `8080`, 운용 구성은 `8082`를
+사용하며 공통 이미지와 별도 계정·저장소·네트워크로 실행한다.
+[TC·TM 검증 절차](../docs/TC_TM/VALIDATION.md)와 [시작하기](../README.md)를
+먼저 참고한다. 아래 `pado-gs.sh` 설명은 기존 개발 스택과 공통 실행기 동작을
+다루며, 새 검증에는 전용 실행기를 사용한다.
+
+Compose 파일은 `deploy/`, Dockerfile은 `docker/`에 있다. 폴더 이동 전의
+직접 Compose 개발 실행과 같은 볼륨을 쓰도록 기본 프로젝트명 `stage9`를
+명시했다. 검증·운용 실행기는 기존처럼 각 환경의 `-p` 이름을 지정한다.
 
 ## Windows 관제 PC에서 VMware 서버 HTTP로 확인
 
@@ -12,7 +25,7 @@
 
 VM에 **Docker Engine 28 이상**, Compose 플러그인, Python 3과
 `iptables`가 설치돼 있다면 저장소를 clone하고
-이번 작업 브랜치를 선택한 뒤 저장소 루트에서 실행한다. 스크립트의 `start`는
+main 브랜치의 저장소 루트에서 실행한다. 스크립트의 `start`는
 이미지를 빌드하고, 관제 PC에서 DGS 진입점으로 오는 트래픽에만 접근 규칙을 설정하고,
 컨테이너를 올리고 포털 응답을 확인한다. 처음 실행해 계정 DB가 비어 있으면 사용자 이름
 `planner01`·역할 `planner`의 비밀번호를 대화식으로 두 번 입력받는다. 비밀번호를
@@ -25,7 +38,7 @@ VM에 **Docker Engine 28 이상**, Compose 플러그인, Python 3과
 ```sh
 git clone https://github.com/stupefyKR/PADO_SAT_Ground_Station.git pado-gs
 cd pado-gs
-git switch feat/fds-core
+git switch main
 ./pado-gs.sh start
 ```
 
@@ -75,7 +88,7 @@ UFW의 SSH 규칙은 스크립트가 변경하지 않는다.
 VM 브라우저 접속으로 별도 확인한다.
 
 관제 PC 접근 시험에는 `compose.local.yaml`을 **`./pado-gs.sh`로만** 시작한다.
-`docker compose -f deploy/stage9/compose.local.yaml up`을 직접 실행하면
+`docker compose -f deploy/compose.local.yaml up`을 직접 실행하면
 호스트의 접근·송신 차단 규칙을 설치하지 않으므로 DGS 전용 통신 정책을
 충족하지 않는다. 게이트웨이의 상대 주소 검사는 이 우회 시에도 적용되지만,
 호스트 방화벽의 대체 수단은 아니다. `compose.dev.yaml`은 개발자 VM의
@@ -217,8 +230,8 @@ PDU만 지운다. 미확인분은 남겨 다음 요청에서 다시 보내고 �
 `config/spacecraft.json`의 `sensor_limits`에서 읽는다. ROS 종합 관제의
 센서 허용 범위 설정에서 하한·상한을 저장하면 기존 그래프와 경보에도 반영된다.
 DSP·MSP 정격과 장치 소비전력도 같은 파일에서 관리한다.
-최초 생성·보존·권한과 편집 절차는 [공통 설정 안내](../../docs/SPACECRAFT_SETTINGS.md)에 있다.
-자세한 항목·원본 자료와의 차이는 [TM 프로파일 안내](../../docs/SIM_TELEMETRY_PROFILE.md)에 있다.
+최초 생성·보존·권한과 편집 절차는 [공통 설정 안내](../docs/SPACECRAFT_SETTINGS.md)에 있다.
+자세한 항목·원본 자료와의 차이는 [TM 프로파일 안내](../docs/SIM_TELEMETRY_PROFILE.md)에 있다.
 
 관제용 DGS 진입점 외에 호스트에 게시된 포트는 없다. TCP 9200은 `sim_tm` Docker 내부망에서
 가상 위성과 시험 수신기 사이에만 사용한다. 이 경로는 **RF·CSP·AX100 프레임,
@@ -229,7 +242,7 @@ VM에서 시작한 뒤 컨테이너 상태와 로그를 확인하려면:
 
 ```sh
 ./pado-gs.sh status
-docker compose -p pado-stage9-local -f deploy/stage9/compose.local.yaml \
+docker compose -p pado-stage9-local -f deploy/compose.local.yaml \
   logs --tail=100 fds-synthetic-demo sim-satellite sim-ground ros-api mps-api
 ```
 
@@ -437,12 +450,12 @@ MPS C 읽기 서비스는 `PADO_STAGE9_MPS_SCHEDULE_DIR`(기본
 
 ```sh
 export PADO_STAGE9_CERT_DIR=/absolute/path/to/development-certs
-docker compose -f deploy/stage9/compose.dev.yaml config
-docker compose -f deploy/stage9/compose.dev.yaml build
-docker compose -f deploy/stage9/compose.dev.yaml run --rm --no-deps portal \
+docker compose -f deploy/compose.dev.yaml config
+docker compose -f deploy/compose.dev.yaml build
+docker compose -f deploy/compose.dev.yaml run --rm --no-deps portal \
   python3 -m services.webapp.main add-user --db /state/accounts.db \
   --username planner01 --role planner
-docker compose -f deploy/stage9/compose.dev.yaml up -d
+docker compose -f deploy/compose.dev.yaml up -d
 ```
 
 계정 생성 명령은 비밀번호를 화면에 표시하지 않는 입력으로 받는다. `lead`
@@ -456,7 +469,7 @@ docker compose -f deploy/stage9/compose.dev.yaml up -d
 ```sh
 python3 -m unittest tests.test_stage9_auth tests.test_stage9_core_adapter \
   tests.test_stage9_core_probe tests.test_stage9_web -v
-docker compose -f deploy/stage9/compose.dev.yaml ps
+docker compose -f deploy/compose.dev.yaml ps
 ```
 
 Linux 시험은 Argon2id 실제 검증, TOTP 재사용 거부, 세션 만료·잠금,

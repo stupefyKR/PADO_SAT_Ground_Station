@@ -81,7 +81,7 @@ CRC·PDU 길이·시험 표시·TC 종류 검사는 공통 코덱에서 수행�
 
 ```sh
 cd ~/pado-gs
-git pull --ff-only origin feat/fds-core
+git pull --ff-only origin main
 ./pado-gs.sh start
 docker logs --tail=30 pado-stage9-local-sim-satellite-1
 ```

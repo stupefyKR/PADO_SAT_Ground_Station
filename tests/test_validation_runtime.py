@@ -11,7 +11,7 @@ import time
 import unittest
 from unittest.mock import patch
 
-from deploy.stage9.environment_profile import render, verify, PROFILES
+from deploy.environment_profile import render, verify, PROFILES
 from services.spacecraft_config import get_sensor_limits
 from services.validation.scheduler import RunStore
 from services.validation.runtime import activated, ContinuousContact
@@ -26,8 +26,8 @@ class EnvironmentProfileTests(unittest.TestCase):
         base=fixture.good; base['name']='pado-stage9-local'
         # Minimal normalized fixture uses the same build sources as Compose.
         for name,s in base['services'].items():
-            s['build']={'context':str(ROOT),'dockerfile':'docker/stage9/SimTm.Dockerfile' if name in ('sim-ground','sim-satellite','sim-volume-init') else 'docker/stage9/Dockerfile'}
-            if name.startswith('fds-'):s['build']['dockerfile']='docker/stage9/FdsDemo.Dockerfile'
+            s['build']={'context':str(ROOT),'dockerfile':'docker/SimTm.Dockerfile' if name in ('sim-ground','sim-satellite','sim-volume-init') else 'docker/Dockerfile'}
+            if name.startswith('fds-'):s['build']['dockerfile']='docker/FdsDemo.Dockerfile'
         base['services']['sim-ground']['command']=['python3','receiver','--n11-inbox','/n11-inbox/scenario-ltan12-v1']
         for kind in PROFILES:
             directory=ROOT/'config' if kind=='validation' else ROOT/'config/operations'

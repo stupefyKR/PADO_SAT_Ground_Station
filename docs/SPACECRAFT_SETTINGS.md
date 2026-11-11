@@ -59,7 +59,7 @@ UTC와 과거 RAW 패킷은 바뀌지 않는다. 새 허용 범위는 현재 표
 
 ```sh
 cd ~/pado-gs
-git pull --ff-only origin feat/fds-core
+git pull --ff-only origin main
 ./pado-gs.sh start
 ./pado-gs.sh status
 ```
@@ -73,7 +73,7 @@ git pull --ff-only origin feat/fds-core
 
 ```sh
 export PADO_CONFIG_GID=$(id -g)
-docker compose -p pado-stage9-local -f deploy/stage9/compose.local.yaml config --quiet
+docker compose -p pado-stage9-local -f deploy/compose.local.yaml config --quiet
 ```
 
 네이티브 실행에서 경로를 바꾸려면 `PADO_SPACECRAFT_CONFIG` 또는 수신기의

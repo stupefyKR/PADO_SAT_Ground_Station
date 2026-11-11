@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class CatalogPackagingTests(unittest.TestCase):
     def test_catalog_paths_are_traversable_and_files_read_only_before_service_user(self):
-        lines = (ROOT / "docker/stage9/Dockerfile").read_text(encoding="utf-8").splitlines()
+        lines = (ROOT / "docker/Dockerfile").read_text(encoding="utf-8").splitlines()
         instructions = []
         pending = ""
         for line in lines:
