@@ -129,6 +129,44 @@ def direct_entry_ip(env: dict[str, str]) -> str:
     return str(ipaddress.ip_interface(members[0]["IPv4Address"]).ip)
 
 
+def verify_loopback(namespace: str, lan_ip: str, operator_ip: str,
+                    env: dict[str, str]) -> None:
+    """Recreate the same disposable stack with the new host-only entry point."""
+    run("bash", str(ROOT / "pado-gs.sh"), "start", env=env, timeout=600)
+    gateway_id=run(*COMPOSE,"ps","--quiet","dgs-ops-gateway",env=env).strip()
+    inspection=json.loads(run("docker","inspect",gateway_id,env=env))[0]
+    bindings=inspection['NetworkSettings']['Ports']
+    if bindings!={'8080/tcp':[{'HostIp':'127.0.0.1','HostPort':'8080'}]}:
+        raise RuntimeError(f'loopback gateway published unexpected ports: {bindings}')
+    for service in ("portal","ros-api","mps-api","sim-ground"):
+        identity=run(*COMPOSE,"ps","--quiet",service,env=env).strip()
+        ports=json.loads(run("docker","inspect",identity,env=env))[0]['HostConfig']['PortBindings']
+        if ports:
+            raise RuntimeError(f'{service} unexpectedly publishes a host port')
+    # This host-origin request includes Docker's DNAT or userland-proxy path.
+    # A success proves the relay accepts the exact host peer after translation.
+    run(sys.executable,"-c",OPERATOR_HTTP_PROBE,'127.0.0.1',env=env,timeout=15)
+    run("sudo","-n","ip","netns","exec",namespace,"python3","-c",
+        TCP_PROBE,lan_ip,"8080",operator_ip,env=env,timeout=15)
+    target=direct_entry_ip(env)
+    run("sudo","-n","ip","netns","exec",namespace,"python3","-c",
+        TCP_PROBE,target,"8080",operator_ip,env=env,timeout=15)
+    # Changing the published address must retain both outbound deny paths.
+    with socket.socket() as listener:
+        listener.bind((lan_ip,0));listener.listen(1)
+        before=drop_count('INPUT','pado-gs-local-host',env)
+        denied_tcp('dgs-ops-gateway',lan_ip,listener.getsockname()[1],env)
+        if drop_count('INPUT','pado-gs-local-host',env)<=before:
+            raise RuntimeError('loopback DGS-to-host did not hit the INPUT deny rule')
+    before=drop_count('PADO_GS_LOCAL','br-pado-local',env,interface_column=5)
+    denied_tcp('dgs-ops-gateway','198.51.100.1',9,env)
+    if drop_count('PADO_GS_LOCAL','br-pado-local',env,interface_column=5)<=before:
+        raise RuntimeError('loopback DGS outbound did not hit the FORWARD deny rule')
+    run('bash',str(ROOT/'pado-gs.sh'),'status',env=env,timeout=30)
+    print('host loopback→DGS→portal: PASS; LAN and direct container bypass: DENIED')
+    print('loopback mode DGS outbound and unpublished subsystem APIs: verified')
+
+
 def main() -> int:
     if not sys.platform.startswith("linux"):
         raise RuntimeError("live DGS boundary test requires Linux Docker")
@@ -267,6 +305,8 @@ def main() -> int:
         print("DGS→host INPUT and DGS→outside FORWARD: DENIED by owned rules")
         print("non-operator→host 8080: DENIED by owned rule")
         print("direct-to-DGS container bypass: DENIED (owned rule verified)")
+        env.update(PADO_LOCAL_BIND_IP='127.0.0.1',PADO_OPERATOR_CIDR='127.0.0.1/32')
+        verify_loopback(namespace,bind,operator_ip,env)
         return 0
     except BaseException as exc:
         failure = exc

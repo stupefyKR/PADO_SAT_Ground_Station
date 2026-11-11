@@ -120,6 +120,18 @@ class DgsBoundaryInvariantTests(unittest.TestCase):
             service.setdefault("security_opt", ["no-new-privileges:true"])
         approved_volume_fixture(self.good, check_compose_policy.LOCAL_VOLUMES)
 
+    def test_loopback_host_binding_requires_exact_local_operator_policy(self):
+        document = copy.deepcopy(self.good)
+        gateway = document["services"]["dgs-ops-gateway"]
+        gateway["ports"][0]["host_ip"] = "127.0.0.1"
+        gateway["environment"]["PADO_GATEWAY_OPERATOR_CIDR"] = "127.0.0.1/32"
+        check_compose_policy.check(document, "127.0.0.1", 8080, "br-pado-local", "127.0.0.1/32")
+        for bind, cidr in (("127.0.0.1", "192.168.45.1/32"),
+                           ("127.0.0.1", "127.0.0.0/8"), ("0.0.0.0", "127.0.0.1/32"),
+                           ("192.168.45.128", "127.0.0.1/32")):
+            with self.subTest(bind=bind, cidr=cidr), self.assertRaises(ValueError):
+                check_compose_policy.check(document, bind, 8080, "br-pado-local", cidr)
+
     def test_dgs_gateway_is_the_only_external_boundary(self):
         check_compose_policy.check(self.good, "192.168.45.128", 8080,
                                    "br-pado-local")

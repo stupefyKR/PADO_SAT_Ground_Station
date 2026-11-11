@@ -17,21 +17,29 @@ Linux VM에 Docker Engine 28 이상, Docker Compose v2 플러그인, Python 3,
 ```sh
 git clone --branch main https://github.com/stupefyKR/PADO_SAT_Ground_Station.git pado-gs
 cd pado-gs
-bash pado-validation.sh start
+bash pado.sh start
 ```
 
-| 환경 | 실행 | Windows 관제 PC 접속 |
+| 환경 | 실행 | 서버 로컬 접속 |
 |---|---|---|
-| 지상국 검증 | `bash pado-validation.sh start` | `http://192.168.45.128:8080/login` |
-| 운용 구성 | `bash pado-operations.sh start` | `http://192.168.45.128:8082/login` |
+| 지상국 검증 | `bash pado.sh start` 또는 `bash pado-validation.sh start` | `http://127.0.0.1:8080/login` |
+| 운용 구성 | `bash pado-operations.sh start` | `http://127.0.0.1:8082/login` |
 
 검증·운용은 같은 이미지와 화면·파싱·예약 코드를 사용하며 계정, API, 설정,
 데이터 볼륨과 네트워크를 분리합니다. 검증 로그인에 성공하면 가상 PADO-SAT가
 활성화됩니다. 운용 구성에는 가상 위성이 없으며 실제 입력이 연결되기 전에는
 TM·궤도·PASS를 입력 대기로 표시합니다.
 
-처음 시작할 때 해당 환경의 계정을 생성합니다. VM 또는 관제 PC 주소가 다르면
-실제 사설 주소를 지정합니다. 관제 PC 주소는 VM에서 보이는 출발지 주소입니다.
+`pado.sh`는 검증 환경 실행기의 짧은 이름입니다. 기본값은 서버의 루프백에만
+게시합니다. Windows 관제 PC에서 VMware의 웹 화면을 보려면 다음 SSH 터널을
+열어 둔 뒤 Windows 브라우저에서 `http://127.0.0.1:8080/login`에 접속합니다.
+
+```sh
+ssh -N -L 127.0.0.1:8080:127.0.0.1:8080 kgt@192.168.45.128
+```
+
+처음 시작할 때 해당 환경의 계정을 생성합니다. 기존처럼 사설망에서 직접 접속하려면
+서버에서 실제 사설 주소와 관제 PC의 출발지 주소를 명시합니다.
 
 ```sh
 PADO_LOCAL_BIND_IP=192.168.45.128 \

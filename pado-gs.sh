@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Manage the single-VM, private-LAN HTTP ground-station stack.
+# Manage the single-VM HTTP stack, published on loopback by default.
 set -Eeuo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -10,8 +10,12 @@ FIREWALL_MARK="pado-gs-local-http"
 HOST_FIREWALL_MARK="pado-gs-local-host"
 ENTRY_BRIDGE="br-pado-local"
 PORT=8080
-PADO_LOCAL_BIND_IP="${PADO_LOCAL_BIND_IP:-192.168.45.128}"
-PADO_OPERATOR_CIDR="${PADO_OPERATOR_CIDR:-192.168.45.1/32}"
+PADO_LOCAL_BIND_IP="${PADO_LOCAL_BIND_IP:-127.0.0.1}"
+if [[ "$PADO_LOCAL_BIND_IP" == 127.0.0.1 ]]; then
+  PADO_OPERATOR_CIDR="${PADO_OPERATOR_CIDR:-127.0.0.1/32}"
+else
+  PADO_OPERATOR_CIDR="${PADO_OPERATOR_CIDR:-192.168.45.1/32}"
+fi
 export PADO_LOCAL_BIND_IP PADO_OPERATOR_CIDR
 PADO_ENVIRONMENT="${PADO_ENVIRONMENT:-legacy}"
 export PADO_ENVIRONMENT
@@ -41,8 +45,9 @@ Usage: ./pado-gs.sh start|stop|status|cleanup [--yes]
                    named volumes (including accounts and saved drafts).
   cleanup --yes    Skip the interactive deletion confirmation.
 
-Optional environment: PADO_LOCAL_BIND_IP (default 192.168.45.128),
-PADO_OPERATOR_CIDR (default 192.168.45.1/32).
+Optional environment: PADO_LOCAL_BIND_IP (default 127.0.0.1),
+PADO_OPERATOR_CIDR (default 127.0.0.1/32 for loopback;
+192.168.45.1/32 when a private LAN bind is explicitly selected).
 Start requires Docker Engine 28.0.0 or newer and Docker Compose v2.
 Operator settings in config/spacecraft.json are seeded once and retained.
 EOF
@@ -170,7 +175,7 @@ PY
 }
 
 validate_lan() {
-  python3 - "$PADO_LOCAL_BIND_IP" "$PADO_OPERATOR_CIDR" <<'PY' || die 'Invalid LAN bind address or operator CIDR.'
+  python3 - "$PADO_LOCAL_BIND_IP" "$PADO_OPERATOR_CIDR" <<'PY' || die 'Invalid LAN/loopback bind address or operator CIDR.'
 import ipaddress
 import sys
 
@@ -181,7 +186,10 @@ try:
         raise ValueError("IPv4 is required")
     lan_ranges = tuple(map(ipaddress.ip_network,
                            ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")))
-    if not any(bind in lan for lan in lan_ranges) or not any(
+    if str(bind) == "127.0.0.1":
+        if str(operator) != "127.0.0.1/32":
+            raise ValueError("loopback bind requires operator CIDR 127.0.0.1/32")
+    elif not any(bind in lan for lan in lan_ranges) or not any(
             operator.subnet_of(lan) for lan in lan_ranges):
         raise ValueError("addresses must be RFC 1918 private LAN addresses")
 except ValueError as exc:
@@ -193,7 +201,7 @@ import ipaddress, sys
 wanted = ipaddress.ip_address(sys.argv[1])
 assigned = [ipaddress.ip_interface(line.split()[3]).ip for line in sys.stdin if len(line.split()) >= 4]
 raise SystemExit(0 if wanted in assigned else 1)
-' "$PADO_LOCAL_BIND_IP" || die "$PADO_LOCAL_BIND_IP is not assigned to this VM. Set PADO_LOCAL_BIND_IP to its current private IP."
+' "$PADO_LOCAL_BIND_IP" || die "$PADO_LOCAL_BIND_IP is not assigned to this host. Select 127.0.0.1 or its current private IP."
 }
 
 firewall_available() {
@@ -600,7 +608,11 @@ start_stack() {
   if ! verify_runtime_networks --require-gateway; then
     rollback_start gateway-network-validation
   fi
-  note "Open http://$PADO_LOCAL_BIND_IP:$PORT/login from the operator PC ($PADO_OPERATOR_CIDR)."
+  if [[ "$PADO_LOCAL_BIND_IP" == 127.0.0.1 ]]; then
+    note "Open http://127.0.0.1:$PORT/login on this Linux host, or use SSH local forwarding from the operator PC."
+  else
+    note "Open http://$PADO_LOCAL_BIND_IP:$PORT/login from the operator PC ($PADO_OPERATOR_CIDR)."
+  fi
   compose ps
 }
 

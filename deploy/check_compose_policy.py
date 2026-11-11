@@ -111,6 +111,17 @@ def check(document: dict, bind_ip: str, port: int, bridge: str,
     require(isinstance(services, dict) and isinstance(networks, dict),
             "Compose services and networks are required")
     local = port == 8080
+    if local:
+        bind = ipaddress.IPv4Address(bind_ip)
+        operator = ipaddress.IPv4Network(operator_cidr, strict=True)
+        private_blocks = tuple(map(ipaddress.IPv4Network,
+            ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")))
+        if str(bind) == "127.0.0.1":
+            require(str(operator) == "127.0.0.1/32", "loopback bind requires loopback operator CIDR")
+        else:
+            require(any(bind in block for block in private_blocks) and
+                    any(operator.subnet_of(block) for block in private_blocks),
+                    "LAN bind and operator CIDR must use RFC 1918 addresses")
     expected_services = LOCAL_SERVICES if local else COMMON_SERVICES
     expected_networks = set(NETWORK_MEMBERS) if local else set(NETWORK_MEMBERS) - {"sim_tm"}
     expected_volumes = LOCAL_VOLUMES if local else DEV_VOLUMES
@@ -366,7 +377,7 @@ def main() -> None:
     parser.add_argument("--bind-ip", required=True)
     parser.add_argument("--port", type=int, required=True)
     parser.add_argument("--bridge", required=True)
-    parser.add_argument("--operator-cidr", default="192.168.45.1/32")
+    parser.add_argument("--operator-cidr", default="127.0.0.1/32")
     parser.add_argument("--actual-networks", action="store_true")
     parser.add_argument("--require-gateway", action="store_true")
     parser.add_argument("--project")

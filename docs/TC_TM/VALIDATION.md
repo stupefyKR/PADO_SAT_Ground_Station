@@ -7,7 +7,7 @@ FSW를 개발하기 전에 지상국의 TC 구성·예약·송신과 TM 수신·
 | 항목 | 지상국 검증 | 운용 지상국 |
 |---|---|---|
 | 실행 | `bash pado-validation.sh start` | `bash pado-operations.sh start` |
-| 로그인 | `http://192.168.45.128:8080/login` | `http://192.168.45.128:8082/login` |
+| 서버 로컬 로그인 | `http://127.0.0.1:8080/login` | `http://127.0.0.1:8082/login` |
 | Compose 프로젝트 | `pado-stage9-local` | `pado-operations` |
 | 공통 기능 | ROS·MPS·ORBIT, 인증·예약·파싱 코드 | 동일한 화면·이미지·코드 |
 | 가상 위성 | 기존 500 km / 98.4° / LTAN 12h, −X Nadir | 포함하지 않음 |
@@ -38,7 +38,7 @@ bash pado-validation.sh status
 
 기존 시험 프로젝트의 볼륨과 계정은 유지한다. 이전 ISS 생성기 등 같은 프로젝트의 옛 컨테이너는 시작 과정에서 제거하며 볼륨은 보존한다. 초기 FDS 계산이 끝날 때까지 첫 비콘을 기다린다.
 
-1. Windows에서 `http://192.168.45.128:8080/login`에 로그인한다. 상단의 **지상국 검증** 표시를 확인한다.
+1. 서버에서 `http://127.0.0.1:8080/login`에 로그인한다. Windows에서는 [배포 안내](../../deploy/README.md)의 SSH 터널을 연 뒤 같은 주소로 접속한다. 상단의 **지상국 검증** 표시를 확인한다.
 2. ROS 종합 관제에서 정상 HK 비콘을 확인한다. 기본 검증 연결은 연속 연결이므로 PASS까지 기다리지 않는다. 이 설정은 RF 가시성을 검증하기 위한 설정이 아니다.
 3. MPS 또는 ROS의 **TC 준비 · 예약**에서 **Validation Packets**를 누른다.
 4. 시퀀스 전체 시작 UTC와 seed를 정한다. 기본은 현재로부터 약 15초 후이며 최소 3초 이후·24시간 이내로 예약한다. MPS에서 PASS를 선택했다면 **선택한 PASS 기준 적용**으로 AOS 몇 초 후의 UTC를 적용할 수 있다.

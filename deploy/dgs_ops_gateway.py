@@ -10,6 +10,8 @@ from __future__ import annotations
 import argparse
 import ipaddress
 import os
+from pathlib import Path
+import re
 import select
 import socket
 import socketserver
@@ -19,6 +21,48 @@ import threading
 UPSTREAM_HOST = "portal"
 MAX_CONNECTIONS = 64
 IDLE_TIMEOUT_SECONDS = 90
+LOOPBACK_OPERATOR = ipaddress.IPv4Network("127.0.0.1/32")
+PRIVATE_BLOCKS = tuple(ipaddress.IPv4Network(cidr) for cidr in
+                      ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"))
+
+
+def default_gateway(route_path: Path = Path("/proc/net/route")) -> ipaddress.IPv4Address | None:
+    """Read the single exact private host gateway; malformed routes add no peer.
+
+    Docker may preserve a localhost source or proxy it through this address.
+    Never authorize the bridge subnet or a destination supplied by the client.
+    """
+    try:
+        with route_path.open("rb") as stream:
+            raw = stream.read(65537)
+        if len(raw) > 65536:
+            return None
+        lines = raw.decode("ascii").splitlines()
+        header = "Iface Destination Gateway Flags RefCnt Use Metric Mask MTU Window IRTT".split()
+        if not lines or lines[0].split() != header or len(lines) > 257:
+            return None
+        gateways = []
+        for line in lines[1:]:
+            if not line.strip():
+                continue
+            fields = line.split()
+            if (len(fields) != 11 or not re.fullmatch(r"[A-Za-z0-9_.-]{1,15}", fields[0]) or
+                    any(not re.fullmatch(r"[0-9A-Fa-f]{8}", fields[index]) for index in (1, 2, 7)) or
+                    not re.fullmatch(r"[0-9A-Fa-f]{1,4}", fields[3]) or
+                    any(not re.fullmatch(r"[0-9]+", fields[index]) for index in (4, 5, 6, 8, 9, 10))):
+                return None
+            if fields[1] != "00000000" or fields[7] != "00000000":
+                continue
+            flags = int(fields[3], 16)
+            if (flags & 3) != 3:
+                return None
+            address = ipaddress.IPv4Address(bytes.fromhex(fields[2])[::-1])
+            if not any(address in block for block in PRIVATE_BLOCKS):
+                return None
+            gateways.append(address)
+        return gateways[0] if len(gateways) == 1 else None
+    except (OSError, UnicodeError, ValueError):
+        return None
 
 
 class Gateway(socketserver.ThreadingMixIn, socketserver.TCPServer):
@@ -31,6 +75,7 @@ class Gateway(socketserver.ThreadingMixIn, socketserver.TCPServer):
                  operator_cidr: ipaddress.IPv4Network | None):
         self.upstream_port = upstream_port
         self.operator_cidr = operator_cidr
+        self.host_gateway = default_gateway() if operator_cidr == LOOPBACK_OPERATOR else None
         self.connection_slots = threading.BoundedSemaphore(MAX_CONNECTIONS)
         super().__init__(address, Relay)
 
@@ -59,7 +104,7 @@ class Relay(socketserver.BaseRequestHandler):
                 peer_ip = ipaddress.IPv4Address(self.client_address[0])
             except ipaddress.AddressValueError:
                 return
-            if peer_ip not in server.operator_cidr:
+            if peer_ip not in server.operator_cidr and peer_ip != getattr(server, "host_gateway", None):
                 return
         try:
             upstream = socket.create_connection(
@@ -104,10 +149,9 @@ def main() -> None:
             operator_cidr = ipaddress.IPv4Network(cidr_text, strict=True)
         except ValueError as exc:
             parser.error(f"invalid operator CIDR: {exc}")
-        private_blocks = tuple(ipaddress.IPv4Network(cidr) for cidr in
-                               ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"))
-        if not any(operator_cidr.subnet_of(block) for block in private_blocks):
-            parser.error("operator CIDR must be within a private IPv4 range")
+        if operator_cidr != LOOPBACK_OPERATOR and not any(
+                operator_cidr.subnet_of(block) for block in PRIVATE_BLOCKS):
+            parser.error("operator CIDR must be 127.0.0.1/32 or within a private IPv4 range")
     else:
         if cidr_text:
             parser.error("development loopback gateway does not use a LAN operator CIDR")

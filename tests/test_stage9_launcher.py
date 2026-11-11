@@ -38,6 +38,7 @@ if name == "sudo":
     sys.exit(subprocess.run(args, check=False).returncode)
 
 if name == "ip":
+    print("1: lo    inet 127.0.0.1/8 scope host lo")
     print("2: eth0    inet 192.168.45.128/24 brd 192.168.45.255 scope global eth0")
     sys.exit(0)
 
@@ -669,6 +670,39 @@ class LauncherLifecycleTests(unittest.TestCase):
         self.assertFalse(any("stop" in call or "up" in call
                              for call in self.calls() if call[0] == "docker"))
         self.assertEqual(self.rules(), {"DOCKER-USER": [], "INPUT": []})
+
+    def test_short_launcher_defaults_to_loopback_validation_with_firewall(self):
+        for key in ("PADO_LOCAL_BIND_IP", "PADO_OPERATOR_CIDR", "PADO_ENVIRONMENT"):
+            self.env.pop(key, None)
+        gateway = self.compose_policy["services"]["dgs-ops-gateway"]
+        gateway["ports"][0]["host_ip"] = "127.0.0.1"
+        gateway["environment"]["PADO_GATEWAY_OPERATOR_CIDR"] = "127.0.0.1/32"
+        self.compose_json_path.write_text(json.dumps(self.compose_policy), encoding="utf-8")
+        for script in ("pado.sh", "pado-validation.sh"):
+            shutil.copyfile(ROOT / script, self.fixture_root / script)
+        result = subprocess.run(["bash", str(self.fixture_root / "pado.sh"), "start"],
+            cwd=self.fixture_root, env=self.env, text=True, capture_output=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("http://127.0.0.1:8080/login", result.stdout)
+        profile = json.loads((self.fixture_root / "out/deploy/validation/compose.json").read_text())
+        self.assertEqual(profile["services"]["dgs-ops-gateway"]["ports"][0]["host_ip"], "127.0.0.1")
+        owned = self.rules()["PADO_GS_LOCAL"]
+        self.assertIn("127.0.0.1/32", owned[0])
+        self.assertIn("127.0.0.1", owned[0])
+        self.assertTrue(any("-o" in rule and "br-pado-local" in rule and "DROP" in rule for rule in owned))
+        self.assertTrue(any("-i" in rule and "br-pado-local" in rule and "DROP" in rule for rule in owned))
+        self.assertEqual(self.rules()["INPUT"][0][-2:], ["-j", "DROP"])
+
+    def test_loopback_rejects_nonlocal_operator_and_wildcard_bind(self):
+        for bind, cidr in (("127.0.0.1", "192.168.45.1/32"),
+                           ("127.0.0.1", "127.0.0.0/8"), ("0.0.0.0", "127.0.0.1/32")):
+            with self.subTest(bind=bind, cidr=cidr):
+                self.env.update(PADO_LOCAL_BIND_IP=bind, PADO_OPERATOR_CIDR=cidr)
+                result = self.invoke("start")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Invalid LAN", result.stderr)
+                self.assertNotIn("PADO_GS_LOCAL", self.rules())
+        self.assertFalse(any("up" in call for call in self.calls() if call[0] == "docker"))
 
     def test_documentation_address_cannot_be_used_as_lan_bind(self):
         self.env["PADO_LOCAL_BIND_IP"] = "192.0.2.1"
