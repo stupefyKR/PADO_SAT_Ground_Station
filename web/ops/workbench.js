@@ -54,6 +54,7 @@
   let historyCoverageKey = "";
   let packetBrowser = null;
   let sensorSettings = null;
+  let equipmentOverview = null;
   let spacecraftEventsPending = false;
   const CURRENT_SAMPLE_AGE_MS = 120_000;
 
@@ -1099,6 +1100,10 @@
           renderSensors(); renderCurrentAlerts();
         }});
       if (window.rosPacketBrowser) packetBrowser = window.rosPacketBrowser.create({api});
+      if (window.rosEquipmentOverview) {
+        equipmentOverview = window.rosEquipmentOverview.create({api});
+        equipmentOverview?.refresh();
+      }
       try { await refreshDrafts(); }
       catch (error) { message("sequence-message", `ROS 초안 저장소 연결 실패: ${error.message}`, true); }
       try { await refreshSimDrafts(); }
@@ -1131,6 +1136,7 @@
       if (document.visibilityState === "visible" && session) {
         refreshBeacon();
         refreshSpacecraftEvents();
+        equipmentOverview?.refresh();
         if (!$("ros-view-telemetry").hidden) packetBrowser?.refresh();
         refreshSimTmRequests().catch((error) =>
           message("sim-tm-request-message", `요청 상태 갱신 실패: ${error.message}`, true));

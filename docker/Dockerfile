@@ -30,6 +30,7 @@ COPY services/webapp /app/services/webapp
 COPY services/validation /app/services/validation
 COPY services/spacecraft_config.py /app/services/spacecraft_config.py
 COPY config/spacecraft.example.json /app/config/spacecraft.example.json
+COPY config/equipment-layout.example.json /app/config/equipment-layout.example.json
 COPY services/sim_ground/archive.py /app/services/sim_ground/archive.py
 COPY services/sim_ground/tc_journal.py /app/services/sim_ground/tc_journal.py
 COPY services/sim_ground/measurement.py /app/services/sim_ground/measurement.py
@@ -42,5 +43,5 @@ RUN mkdir -p /app/interfaces/command_db /app/interfaces/pado_packets
 COPY interfaces/command_db/commands.json /app/interfaces/command_db/commands.json
 COPY interfaces/pado_packets/draft_v0.json /app/interfaces/pado_packets/draft_v0.json
 RUN chmod 0755 /app /app/config /app/interfaces /app/interfaces/command_db /app/interfaces/pado_packets \
-    && chmod 0444 /app/config/spacecraft.example.json /app/interfaces/command_db/commands.json /app/interfaces/pado_packets/draft_v0.json
+    && chmod 0444 /app/config/spacecraft.example.json /app/config/equipment-layout.example.json /app/interfaces/command_db/commands.json /app/interfaces/pado_packets/draft_v0.json
 USER 10001:10001

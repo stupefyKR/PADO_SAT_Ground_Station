@@ -31,8 +31,8 @@
       <div class="top-right"><span id="user-badge" class="user-badge">확인 중</span><button id="logout" class="ghost">로그아웃</button></div>
     </header>
     <main class="orbit-content">
-      <div class="orbit-notice"><strong id="orbit-mode-label">PADO-SAT SIMULATION</strong><span id="orbit-source-note">500 km SSO · LTAN 06h 가상 TLE의 FDS 결과를 기다리는 중입니다. 지상국 좌표는 시험용 근삿값이며 컨택은 운용 판단에 사용할 수 없습니다.</span></div>
-      <div class="orbit-target-bar"><label for="orbit-target">표시 위성</label><select id="orbit-target"><option value="synthetic">가상 PADO-SAT · 500 km SSO</option><option value="iss">ISS · 고정 TLE 외삽 시험</option><option value="operational">실제 운용 위성 · 입력 대기</option></select><span id="orbit-target-status" role="status">가상 위성 FDS 결과 확인 중</span></div>
+      <div class="orbit-notice"><strong id="orbit-mode-label">PADO-SAT SIMULATION</strong><span id="orbit-source-note">500 km SSO · LTAN 12h 가상 TLE의 FDS 결과를 기다리는 중입니다. 지상국 좌표는 시험용 근삿값이며 컨택은 운용 판단에 사용할 수 없습니다.</span></div>
+      <div class="orbit-target-bar"><label for="orbit-target">표시 위성</label><select id="orbit-target"><option value="synthetic">가상 PADO-SAT · 500 km SSO</option><option value="iss">ISS · 고정 TLE 외삽 시험</option><option value="operational">실제 운용 위성 · 입력 대기</option></select><label for="orbit-footprint-elevation">가시 경계 고각</label><select id="orbit-footprint-elevation"><option value="0" selected>0° · 지평선</option><option value="5">5°</option><option value="10">10°</option><option value="20">20°</option></select><span id="orbit-target-status" role="status">가상 위성 FDS 결과 확인 중</span></div>
       <div class="orbit-layout">
         <section class="orbit-stage" aria-labelledby="orbit-title">
           <div class="orbit-stage-head">
@@ -51,7 +51,7 @@
               <canvas id="orbit-flat" aria-label="현재 위성 위치와 향후 3주기의 2D 지상궤적"></canvas>
             </div>
           </div>
-          <div class="orbit-map-legend"><span><i class="orbit-key track"></i>향후 3주기</span><span><i class="orbit-key yonsei"></i>연세대 UHF</span><span><i class="orbit-key kari"></i>대전 S-band</span><span>현재 UTC 기준으로 자동 갱신</span></div>
+          <div class="orbit-map-legend"><span><i class="orbit-key track"></i>향후 3주기</span><span><i class="orbit-key visibility"></i>현재 가시 범위</span><span><i class="orbit-key yonsei"></i>연세대 UHF</span><span><i class="orbit-key kari"></i>대전 S-band</span><span>선택한 고각의 기하학적 범위 · 지상국 컨택 예측은 PASS 기준</span></div>
           <p class="orbit-map-credit">지구 이미지: NASA Earth Observatory · Blue Marble: Next Generation. 출처 주소는 저장소의 assets/README.md에 기록했습니다. 참고 사이트의 Esri·Maxar 이미지는 사용하지 않았습니다.</p>
         </section>
         <aside class="orbit-side">

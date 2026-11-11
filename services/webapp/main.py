@@ -33,6 +33,7 @@ from .sim_tc_dispatch import SimTcDispatcher
 from .tm_preview import MAX_SNAPSHOT_BYTES, PreviewError, load_beacon, load_snapshot
 from .state_history import StateHistoryError, history_query, state_history
 from .settings import SettingsError, SettingsStore
+from .equipment import EquipmentError, equipment_status, MAX_RESPONSE_BYTES as MAX_EQUIPMENT_RESPONSE
 from services.validation.runtime import environment, control_directory
 from services.validation.scheduler import RunStore
 from services.validation import recorder as validation_recorder
@@ -82,6 +83,8 @@ ASSETS = {
     "/assets/ros-attitude-gl.js": ("ops/attitude_gl.js", "text/javascript; charset=utf-8"),
     "/assets/ros-attitude-viewer.js": ("ops/attitude_viewer.js", "text/javascript; charset=utf-8"),
     "/assets/ros-workbench.css": ("ops/workbench.css", "text/css; charset=utf-8"),
+    "/assets/ros-equipment-overview.js": ("ops/equipment_overview.js", "text/javascript; charset=utf-8"),
+    "/assets/ros-equipment-overview.css": ("ops/equipment_overview.css", "text/css; charset=utf-8"),
     "/assets/pado-sat-deployed-mesh.json": ("assets/pado-sat-deployed-mesh.json", "application/json"),
     "/assets/pado-sat-appearance.json": ("assets/pado-sat-appearance.json", "application/json"),
     "/assets/pado-sat-surface-front.png": ("assets/pado-sat-surface-front.png", "image/png"),
@@ -99,6 +102,7 @@ PROXY_ROUTES = {
     "/api/ros/overview": ("ros", "/overview"),
     "/api/ros/test-tm-snapshot": ("ros", "/test-tm-snapshot"),
     "/api/ros/test-beacon": ("ros", "/test-beacon"),
+    "/api/ros/equipment-status": ("ros", "/equipment-status"),
     "/api/ros/settings": ("ros", "/settings"),
     "/api/ros/test-sequences": ("ros", "/test-sequences"),
     "/api/ros/test-reservations": ("ros", "/test-reservations"),
@@ -844,6 +848,7 @@ class Handler(BaseHTTPRequestHandler):
             response = connection.getresponse()
             base_path = urlsplit(path).path
             maximum = (2*1024*1024 if base_path.startswith('/validation/') else
+                       MAX_EQUIPMENT_RESPONSE if base_path == "/equipment-status" else
                        MAX_TM_ARCHIVE_RESPONSE if archive_route(base_path) or base_path=="/state-history" else
                        MAX_SNAPSHOT_BYTES if path == "/test-tm-snapshot" else
                        2 * 1024 * 1024 if path == "/test-sim-sequences" else
@@ -854,7 +859,7 @@ class Handler(BaseHTTPRequestHandler):
             if len(data) > maximum or (method == "GET" and not base_path.startswith('/validation/') and not archive_route(base_path) and base_path!="/state-history" and path not in
                                             ("/test-sequences", "/test-reservations",
                                              "/test-candidates",
-                                             "/test-tm-snapshot", "/test-beacon") and
+                                             "/test-tm-snapshot", "/test-beacon", "/equipment-status") and
                                             response.status != HTTPStatus.OK):
                 self._error(HTTPStatus.BAD_GATEWAY, "backend_failure")
             elif deliver:
@@ -907,6 +912,14 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 self._json(HTTPStatus.OK, self.server.settings.view())
             except SettingsError as error:
+                self._error(HTTPStatus.SERVICE_UNAVAILABLE, str(error))
+            return
+        if self.server.mode == "ros" and path == "/equipment-status":
+            try:
+                archive = self.server.tm_preview.with_name("received_tm.sqlite3") if self.server.tm_preview else None
+                self._json(HTTPStatus.OK, equipment_status(archive,
+                    settings_path=self.server.settings.path, limits=self.server.settings.limits()))
+            except (EquipmentError, SettingsError) as error:
                 self._error(HTTPStatus.SERVICE_UNAVAILABLE, str(error))
             return
         kind = archive_route(path) if self.server.mode == "ros" else None

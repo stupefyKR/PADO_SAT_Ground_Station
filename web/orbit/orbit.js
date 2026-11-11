@@ -9,7 +9,7 @@ const ORBIT_TARGETS = Object.freeze({
 });
 const orbitState = {
   data: null, samples: [], stations: [], time: Date.now(), lon: 127, lat: 24, zoom: 1,
-  target: "synthetic", requestId: 0,
+  target: "synthetic", requestId: 0, footprintElevationDeg: 0,
   image: new Image(), gl: null, program: null, texture: null,
   lastUi: 0, nightStamp: -1, nightCanvas: document.createElement("canvas")
 };
@@ -108,7 +108,7 @@ function setOrbitData(input, label) {
   orbitEl("orbit-sidebar-mode").textContent = target.name;
   orbitEl("orbit-sidebar-note").textContent = target.note;
   orbitEl("orbit-source-note").textContent =
-    `${orbitState.target === "synthetic" ? "가상 PADO-SAT (500 km SSO · LTAN 06h)" : orbitState.target === "iss" ? "2026년 고정 ISS 참조 TLE를 장기 외삽·재적합한 가상 위치 (실제 ISS 아님)" : `${target.name} · NORAD ${input.norad_id}`} · ${input.source} / ${input.model} · 계산 입력 epoch ${formattedUtc(parsed.inputEpoch)} · ${orbitState.target === "operational" ? "안테나 설정을 확인하세요. " : "안테나 좌표는 시험용 근삿값입니다. "}현재 산출물은 운용 판단에 사용하지 마세요.`;
+    `${orbitState.target === "synthetic" ? "가상 PADO-SAT (500 km SSO · LTAN 12h)" : orbitState.target === "iss" ? "2026년 고정 ISS 참조 TLE를 장기 외삽·재적합한 가상 위치 (실제 ISS 아님)" : `${target.name} · NORAD ${input.norad_id}`} · ${input.source} / ${input.model} · 계산 입력 epoch ${formattedUtc(parsed.inputEpoch)} · ${orbitState.target === "operational" ? "안테나 설정을 확인하세요. " : "안테나 좌표는 시험용 근삿값입니다. "}현재 산출물은 운용 판단에 사용하지 마세요.`;
   orbitEl("orbit-data-state").textContent = `${label} · ${isCurrentData() ? "현재 위치 표시 가능" : "현재 유효한 입력·예측 범위 없음"}`;
   orbitEl("orbit-target-status").textContent = isCurrentData() ?
     orbitState.target === "iss" ? "가상 외삽 위치 표시 중" : "현재 위치 표시 중" : "FDS 결과 갱신 필요";
@@ -371,6 +371,73 @@ function drawMarker(context, point, color, label, radius = 5, labelOffset = [6, 
   context.fillText(label, point.x + radius + labelOffset[0], point.y + labelOffset[1]);
 }
 
+function visibilityFootprint(xyz, minimumElevationDeg = 0, segments = 256) {
+  if (!Array.isArray(xyz) || xyz.length !== 3 || !xyz.every(Number.isFinite) ||
+      !Number.isFinite(minimumElevationDeg) || minimumElevationDeg < 0 || minimumElevationDeg >= 90 ||
+      !Number.isInteger(segments) || segments < 16 || segments > 2048) return null;
+  const distance = Math.hypot(...xyz);
+  if (!Number.isFinite(distance) || distance <= ORBIT_EARTH_RADIUS_M) return null;
+  const elevation = rad(minimumElevationDeg);
+  const angle = Math.acos(clamp(ORBIT_EARTH_RADIUS_M / distance * Math.cos(elevation), -1, 1)) - elevation;
+  if (!Number.isFinite(angle) || angle <= 0) return null;
+  const center = xyz.map(value => value / distance);
+  const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2],
+    a[0] * b[1] - a[1] * b[0]];
+  const reference = Math.abs(center[2]) < .9 ? [0, 0, 1] : [1, 0, 0];
+  const rawRight = cross(reference, center), length = Math.hypot(...rawRight);
+  const right = rawRight.map(value => value / length), up = cross(center, right);
+  const points = [];
+  for (let index = 0; index <= segments; index++) {
+    const phase = index % segments / segments * 2 * Math.PI;
+    const unit = center.map((value, axis) => Math.cos(angle) * value + Math.sin(angle) *
+      (Math.cos(phase) * right[axis] + Math.sin(phase) * up[axis]));
+    points.push({xyz: unit.map(value => value * ORBIT_EARTH_RADIUS_M),
+      lon: Math.atan2(unit[1], unit[0]) * 180 / Math.PI,
+      lat: Math.asin(clamp(unit[2], -1, 1)) * 180 / Math.PI});
+  }
+  return {points, angularRadiusRad: angle, groundRadiusM: angle * ORBIT_EARTH_RADIUS_M};
+}
+
+function footprintVisibleSegment(a, b, forward) {
+  const first = dot(a.xyz, forward), second = dot(b.xyz, forward);
+  if (first < 0 && second < 0) return null;
+  if (first >= 0 && second >= 0) return [a, b];
+  const fraction = first / (first - second);
+  const xyz = a.xyz.map((value, index) => value + fraction * (b.xyz[index] - value));
+  const magnitude = Math.hypot(...xyz);
+  if (!magnitude) return null;
+  const edge = {xyz: xyz.map(value => value / magnitude * ORBIT_EARTH_RADIUS_M)};
+  return first >= 0 ? [a, edge] : [edge, b];
+}
+
+function footprintFlatSegments(a, b) {
+  // Unwrap the short arc before splitting it at the +/-180 degree map edges.
+  let longitude = b.lon;
+  if (longitude - a.lon > 180) longitude -= 360;
+  if (longitude - a.lon < -180) longitude += 360;
+  if (longitude >= -180 && longitude <= 180) return [[a, {...b, lon: longitude}]];
+  const edge = longitude > 180 ? 180 : -180;
+  const fraction = (edge - a.lon) / (longitude - a.lon);
+  const latitude = a.lat + fraction * (b.lat - a.lat);
+  return [[a, {lon: edge, lat: latitude}], [{lon: -edge, lat: latitude}, b]];
+}
+
+function drawVisibilityFootprint(context, current, canvas, flat, scale) {
+  const footprint = visibilityFootprint(current?.xyz, orbitState.footprintElevationDeg);
+  if (!footprint) return;
+  const forward = flat ? null : orbitBasis().forward;
+  context.strokeStyle = "#ffffff"; context.lineWidth = 1.6 * scale; context.beginPath();
+  for (let index = 1; index < footprint.points.length; index++) {
+    const a = footprint.points[index - 1], b = footprint.points[index];
+    const segments = flat ? footprintFlatSegments(a, b) : [footprintVisibleSegment(a, b, forward)].filter(Boolean);
+    for (const segment of segments) {
+      const [start, end] = segment.map(point => flat ? projectFlat(point, canvas) : project3d(point.xyz, canvas));
+      context.moveTo(start.x, start.y); context.lineTo(end.x, end.y);
+    }
+  }
+  context.stroke();
+}
+
 function drawOverlay(canvas, flat) {
   const context = canvas.getContext("2d");
   if (!flat) context.clearRect(0, 0, canvas.width, canvas.height);
@@ -378,6 +445,7 @@ function drawOverlay(canvas, flat) {
   const points = routePoints(), current = points[0], projected = points.map((point) =>
     flat ? projectFlat(point, canvas) : project3d(point.xyz, canvas));
   const scale = Math.min(window.devicePixelRatio || 1, 2);
+  drawVisibilityFootprint(context, current, canvas, flat, scale);
   for (let index = 1; index < points.length; index++) {
     const a = projected[index - 1], b = projected[index];
     const lonDelta = Math.abs(points[index].lon - points[index - 1].lon);
@@ -616,6 +684,13 @@ function chooseOrbitTarget(target) {
 
 function orbitControls() {
   orbitEl("orbit-target").addEventListener("change", (event) => chooseOrbitTarget(event.target.value));
+  orbitEl("orbit-footprint-elevation")?.addEventListener("change", (event) => {
+    const elevation = Number(event.target.value);
+    if ([0, 5, 10, 20].includes(elevation)) {
+      orbitState.footprintElevationDeg = elevation;
+      orbitRender(true);
+    }
+  });
   orbitEl("orbit-center").addEventListener("click", () => {
     const sample = sampleAt(orbitState.time);
     if (sample && isCurrentData()) { orbitState.lon = sample.lon; orbitState.lat = sample.lat; orbitRender(true); }

@@ -41,6 +41,7 @@ __pycache__/
 
 # Operator-managed physical settings and ROS sensor limits
 /config/spacecraft.json
+/config/equipment-layout.json
 /config/operations/
 /config/.spacecraft-settings.lock
 /config/.spacecraft-*.tmp

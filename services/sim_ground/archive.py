@@ -93,6 +93,7 @@ def _path(path: Path, *, existing: bool) -> None:
 
 def _connect(path: Path) -> sqlite3.Connection:
     _path(path, existing=True)
+    connection = None
     try:
         connection = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True,
                                      timeout=3)
@@ -103,6 +104,8 @@ def _connect(path: Path) -> sqlite3.Connection:
             raise ArchiveError("archive_invalid")
         return connection
     except sqlite3.Error as error:
+        if connection is not None:
+            connection.close()
         raise ArchiveError("archive_unavailable") from error
 
 

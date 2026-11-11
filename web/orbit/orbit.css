@@ -23,6 +23,7 @@
 .orbit-map-legend{display:flex;flex-wrap:wrap;gap:12px;padding:9px 13px;border-top:1px solid #2c4b59;color:#c3d5df;font-size:.68rem}
 .orbit-key{display:inline-block;width:13px;height:3px;margin:0 5px 2px 0;vertical-align:middle;background:#70c9db}
 .orbit-key.yonsei{background:#e1b165}.orbit-key.kari{background:#95d2a9}
+.orbit-key.visibility{background:#fff}#orbit-footprint-elevation{min-width:130px}
 .orbit-map-tools{position:absolute;top:14px;right:14px;display:flex;gap:4px}
 .orbit-map-tools button,.orbit-load-actions button{border:1px solid #477184;background:#143548;color:#d6edf2;padding:7px 9px;font-size:.7rem}
 .orbit-map-tools button:hover,.orbit-load-actions button:hover{background:#245269}

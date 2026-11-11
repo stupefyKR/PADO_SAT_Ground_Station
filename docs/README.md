@@ -39,6 +39,7 @@
 | [ROS·MPS 화면 구조](STAGE9_UI.md) | 화면별 역할과 시험 흐름 |
 | [ROS 위치·자세 이력](ROS_STATE_HISTORY.md) | 최근 3일 재생, 미수신 자세·늦은 TM 반영 |
 | [ROS CAD 자세 뷰어](ROS_CAD_자세_뷰어.md) | 모델·축·표면 이미지와 지구·태양 표시 |
+| [장비 상태·스택 배치](STACK_LAYOUT.md) | 고정 CAD 연결선, 장비 계측·측정 UTC, 배치·TM 매핑 갱신 |
 
 ## 가상 위성
 

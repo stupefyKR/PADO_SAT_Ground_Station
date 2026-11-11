@@ -40,6 +40,9 @@ def build() -> list[Path]:
         html = html.replace('<div class="shell">',
                             f'{banner}<div class="shell">', 1)
         if source == "ops":
+            overview_css = (ROOT / "web/ops/equipment_overview.css").read_text(encoding="utf-8")
+            html = html.replace('<link rel="stylesheet" href="/assets/ros-equipment-overview.css">',
+                                f"<style>{overview_css}</style>")
             html = html.replace('id="ros-mode">확인 중', 'id="ros-mode">SIM_ONLY')
             html = html.replace('id="ros-tm">확인 중', 'id="ros-tm">시험 규격')
             html = html.replace('id="ros-tc">차단', 'id="ros-tc">차단')
@@ -86,7 +89,7 @@ def build() -> list[Path]:
             html = html.replace('<script src="/assets/ros-workbench.js" defer></script>', '')
             for script in ("ros-packet-browser.js", "ros-attitude-math.js",
                            "ros-attitude-gl.js", "ros-attitude-viewer.js", "ros-state-history.js",
-                           "ros-sensor-settings.js"):
+                           "ros-sensor-settings.js", "ros-equipment-overview.js"):
                 html = html.replace(f'<script src="/assets/{script}" defer></script>', '')
         else:
             html = html.replace('<script src="/assets/mps-live.js" defer></script>', '')

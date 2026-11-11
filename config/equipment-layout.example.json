@@ -1,0 +1,1072 @@
+{
+  "schema": "pado.equipment-layout.v1",
+  "revision": "stack-ifb-261026-p2-v1",
+  "status": "PROVISIONAL_REFERENCE",
+  "frame": "BODY",
+  "units": "mm",
+  "source": {
+    "file": "PADO-SAT_3D스택_IFB_261026(배포용).html",
+    "sha256": "b88a73774af8c0730217b60e77918a46e8e59e225241eafe8dd3e0fd5986cd8c",
+    "revision": "261026",
+    "plan": "p2",
+    "provisional": true,
+    "selection_basis": "첨부 HTML의 초기 plan='p2'. 초기 explode=0.35는 전개 표시 효과이므로 배치 계산에는 explode=0을 사용합니다."
+  },
+  "stack_transform": {
+    "source_frame": "STACK_RENDER_X_Y_Z",
+    "source_units": "mm",
+    "source_to_body_matrix": [
+      [
+        1,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        -1
+      ],
+      [
+        0,
+        1,
+        0
+      ]
+    ],
+    "translation_body_mm": [
+      0,
+      0,
+      0
+    ],
+    "status": "LONG_AXIS_KNOWN_IN_PLANE_INFERRED",
+    "note": "스택 렌더 Y가 CREST 쪽 BODY +Z입니다. BODY X/Y 방향은 자료가 STR CAD 확인 대상으로 남겨 두어 화면용 오른손 대응을 사용합니다. 현재 중심 앵커는 모두 스택 중심선에 있어 이 부호 가정에 영향을 받지 않습니다."
+  },
+  "stack": {
+    "order_positive_z_to_negative_z": [
+      "crest",
+      "dmc",
+      "adcs",
+      "p60",
+      "ifb",
+      "satnogs",
+      "bpx",
+      "siren",
+      "ant"
+    ],
+    "compact_gap_mm": 3,
+    "frame_size_source_mm": [
+      100,
+      340.5,
+      100
+    ],
+    "board_width_source_mm": 90,
+    "board_depth_source_mm": 96,
+    "compact_total_height_mm": 301,
+    "height_status": "SOURCE_APPROXIMATION"
+  },
+  "telemetry_contract": "현재 지상국 시험 패킷 및 pado.sim-full-hk.v1의 필드 연결입니다. 실제 FSW 센서 위치·바이트맵·단위 승인과 구분합니다.",
+  "unmapped_legacy_equipment": [
+    {
+      "key": "SRS_4",
+      "note": "p2 스택에는 SRS-4가 없으며 SatNOGS로 표시됩니다. 기존 시뮬레이터 SRS_4 값은 새 무선기의 계측으로 표시하지 않습니다."
+    }
+  ],
+  "equipment": [
+    {
+      "id": "crest",
+      "source_id": "crest",
+      "label": "CREST",
+      "group": "CREST",
+      "anchor_body_mm": [
+        0,
+        0,
+        103
+      ],
+      "size_body_mm": [
+        90,
+        96,
+        95
+      ],
+      "anchor_kind": "BOARD_CENTER_PROXY",
+      "anchor_status": "PROVISIONAL",
+      "location_note": "스택 자료의 근사 보드 중심입니다. 개별 센서의 실측 위치가 아닙니다.",
+      "geometry_role": "STACK_HOST",
+      "telemetry_status": "MAPPED_TEST_FIELDS",
+      "callout": {
+        "side": "left",
+        "order": 0
+      },
+      "readings": [
+        {
+          "id": "voltage",
+          "label": "공급 전압",
+          "unit": "V",
+          "kind": "numeric",
+          "decimals": 1,
+          "tm": {
+            "packet": "CREST_HEALTH",
+            "field": "voltage_v"
+          },
+          "sensor_limit_key": "CREST_HEALTH.voltage_v",
+          "full_hk_path": [
+            "equipment",
+            "CREST",
+            "voltage_v"
+          ],
+          "max_age_s": 120,
+          "full_hk_max_age_s": 1200
+        },
+        {
+          "id": "current",
+          "label": "전류",
+          "unit": "A",
+          "kind": "numeric",
+          "decimals": 1,
+          "tm": {
+            "packet": "CREST_HEALTH",
+            "field": "current_a"
+          },
+          "sensor_limit_key": "CREST_HEALTH.current_a",
+          "full_hk_path": [
+            "equipment",
+            "CREST",
+            "current_a"
+          ],
+          "max_age_s": 120,
+          "full_hk_max_age_s": 1200
+        },
+        {
+          "id": "temperature",
+          "label": "온도",
+          "unit": "°C",
+          "kind": "numeric",
+          "decimals": 1,
+          "tm": {
+            "packet": "CREST_HEALTH",
+            "field": "temperature_c"
+          },
+          "sensor_limit_key": "CREST_HEALTH.temperature_c",
+          "full_hk_path": [
+            "equipment",
+            "CREST",
+            "temperature_c"
+          ],
+          "max_age_s": 120,
+          "full_hk_max_age_s": 1200
+        }
+      ]
+    },
+    {
+      "id": "a3200",
+      "source_id": "dmc",
+      "label": "A3200 OBC",
+      "group": "CDHS",
+      "anchor_body_mm": [
+        0,
+        0,
+        41.5
+      ],
+      "size_body_mm": [
+        90,
+        96,
+        22
+      ],
+      "anchor_kind": "BOARD_CENTER_PROXY",
+      "anchor_status": "PROVISIONAL",
+      "location_note": "호스트 보드 중심을 공유합니다. 개별 모듈·센서의 횡방향 위치는 미확정입니다.",
+      "geometry_role": "SHARED_HOST_PROXY",
+      "telemetry_status": "MAPPED_TEST_FIELDS",
+      "callout": {
+        "side": "right",
+        "order": 0
+      },
+      "readings": [
+        {
+          "id": "cpu",
+          "label": "CPU 사용률",
+          "unit": "%",
+          "kind": "numeric",
+          "decimals": 1,
+          "tm": {
+            "packet": "OBC_HEALTH",
+            "field": "cpu_usage_pct"
+          },
+          "sensor_limit_key": "OBC_HEALTH.cpu_usage_pct",
+          "full_hk_path": [
+            "equipment",
+            "A3200",
+            "cpu_usage_pct"
+          ],
+          "max_age_s": 120,
+          "full_hk_max_age_s": 1200
+        },
+        {
+          "id": "ram",
+          "label": "RAM 사용률",
+          "unit": "%",
+          "kind": "numeric",
+          "decimals": 1,
+          "tm": {
+            "packet": "OBC_HEALTH",
+            "field": "ram_usage_pct"
+          },
+          "full_hk_path": [
+            "equipment",
+            "A3200",
+            "ram_usage_pct"
+          ],
+          "max_age_s": 120,
+          "full_hk_max_age_s": 1200
+        },
+        {
+          "id": "boot_count",
+          "label": "부팅 횟수",
+          "unit": "회",
+          "kind": "counter",
+          "decimals": 0,
+          "tm": {
+            "packet": "OBC_HEALTH",
+            "field": "boot_count"
+          },
+          "full_hk_path": [
+            "equipment",
+            "A3200",
+            "boot_count"
+          ],
+          "max_age_s": 120,
+          "full_hk_max_age_s": 1200
+        }
+      ]
+    },
+    {
+      "id": "ax100",
+      "source_id": "dmc",
+      "label": "AX100 UHF",
+      "group": "CS",
+      "anchor_body_mm": [
+        0,
+        0,
+        41.5
+      ],
+      "size_body_mm": [
+        90,
+        96,
+        22
+      ],
+      "anchor_kind": "BOARD_CENTER_PROXY",
+      "anchor_status": "PROVISIONAL",
+      "location_note": "호스트 보드 중심을 공유합니다. 개별 모듈·센서의 횡방향 위치는 미확정입니다.",
+      "geometry_role": "SHARED_HOST_PROXY",
+      "telemetry_status": "MAPPED_TEST_FIELDS",
+      "callout": {
+        "side": "left",
+        "order": 1
+      },
+      "readings": [
+        {
+          "id": "board_temperature",
+          "label": "보드 온도",
+          "unit": "°C",
+          "kind": "numeric",
+          "decimals": 1,
+          "tm": {
+            "packet": "AX100_LINK",
+            "field": "board_temperature_c"
+          },
+          "full_hk_path": [
+            "equipment",
+            "AX100",
+            "temp_brd"
+          ],
+          "max_age_s": 120,
+          "full_hk_max_age_s": 1200
+        },
+        {
+          "id": "pa_temperature",
+          "label": "PA 온도",
+          "unit": "°C",
+          "kind": "numeric",
+          "decimals": 1,
+          "tm": {
+            "packet": "AX100_LINK",
+            "field": "pa_temperature_c"
+          },
+          "sensor_limit_key": "AX100_LINK.pa_temperature_c",
+          "full_hk_path": [
+            "equipment",
+            "AX100",
+            "temp_pa"
+          ],
+          "max_age_s": 120,
+          "full_hk_max_age_s": 1200
+        },
+        {
+          "id": "rssi",
+          "label": "수신 신호",
+          "unit": "dBm",
+          "kind": "numeric",
+          "decimals": 1,
+          "tm": {
+            "packet": "AX100_LINK",
+            "field": "last_rssi_dbm"
+          },
+          "sensor_limit_key": "AX100_LINK.last_rssi_dbm",
+          "full_hk_path": [
+            "equipment",
+            "AX100",
+            "last_rssi"
+          ],
+          "max_age_s": 120,
+          "full_hk_max_age_s": 1200
+        }
+      ]
+    },
+    {
+      "id": "oem719a",
+      "source_id": "dmc",
+      "label": "OEM719A GNSS",
+      "group": "AOCS",
+      "anchor_body_mm": [
+        0,
+        0,
+        41.5
+      ],
+      "size_body_mm": [
+        90,
+        96,
+        22
+      ],
+      "anchor_kind": "BOARD_CENTER_PROXY",
+      "anchor_status": "PROVISIONAL",
+      "location_note": "호스트 보드 중심을 공유합니다. 개별 모듈·센서의 횡방향 위치는 미확정입니다.",
+      "geometry_role": "SHARED_HOST_PROXY",
+      "telemetry_status": "MAPPED_TEST_FIELDS",
+      "callout": {
+        "side": "right",
+        "order": 1
+      },
+      "readings": [
+        {
+          "id": "temperature",
+          "label": "수신기 온도",
+          "unit": "°C",
+          "kind": "numeric",
+          "decimals": 1,
+          "tm": null,
+          "full_hk_path": [
+            "equipment",
+            "OEM719A",
+            "HWMONITOR",
+            "temperature_c"
+          ],
+          "max_age_s": 120,
+          "full_hk_max_age_s": 1200
+        },
+        {
+          "id": "voltage",
+          "label": "공급 전압",
+          "unit": "V",
+          "kind": "numeric",
+          "decimals": 1,
+          "tm": null,
+          "full_hk_path": [
+            "equipment",
+            "OEM719A",
+            "HWMONITOR",
+            "supply_voltage_v"
+          ],
+          "max_age_s": 120,
+          "full_hk_max_age_s": 1200
+        },
+        {
+          "id": "solution_status",
+          "label": "측위 상태",
+          "unit": "code",
+          "kind": "code",
+          "decimals": 0,
+          "tm": {
+            "packet": "GNSS_PVT",
+            "field": "solution_status"
+          },
+          "full_hk_path": [
+            "equipment",
+            "OEM719A",
+            "BESTPOS",
+            "solution_status"
+          ],
+          "max_age_s": 120,
+          "full_hk_max_age_s": 1200
+        }
+      ]
+    },
+    {
+      "id": "cubeadcs",
+      "source_id": "adcs",
+      "label": "CubeADCS",
+      "group": "AOCS",
+      "anchor_body_mm": [
+        0,
+        0,
+        5
+      ],
+      "size_body_mm": [
+        90,
+        96,
+        45
+      ],
+      "anchor_kind": "BOARD_CENTER_PROXY",
+      "anchor_status": "PROVISIONAL",
+      "location_note": "스택 자료의 근사 보드 중심입니다. 개별 센서의 실측 위치가 아닙니다.",
+      "geometry_role": "STACK_HOST",
+      "telemetry_status": "MAPPED_TEST_FIELDS",
+      "callout": {
+        "side": "right",
+        "order": 2
+      },
+      "readings": [
+        {
+          "id": "adcs_state",
+          "label": "ADCS 상태",
+          "unit": "code",
+          "kind": "code",
+          "decimals": 0,
+          "tm": {
+            "packet": "AOCS_STATE",
+            "field": "adcs_state"
+          },
+          "full_hk_path": [
+            "equipment",
+            "CubeADCS",
+            "current_adcs_state"
+          ],
+          "max_age_s": 120,
+          "full_hk_max_age_s": 1200
+        },
+        {
+          "id": "control_mode",
+          "label": "제어 모드",
+          "unit": "code",
+          "kind": "code",
+          "decimals": 0,
+          "tm": {
+            "packet": "AOCS_STATE",
+            "field": "control_mode"
+          },
+          "full_hk_path": [
+            "equipment",
+            "CubeADCS",
+            "adcs_state",
+            "control_mode"
+          ],
+          "max_age_s": 120,
+          "full_hk_max_age_s": 1200
+        },
+        {
+          "id": "rate_z",
+          "label": "Z축 각속도",
+          "unit": "rad/s",
+          "kind": "numeric",
+          "decimals": 1,
+          "tm": {
+            "packet": "AOCS_STATE",
+            "field": "body_rate_z_rad_s"
+          },
+          "full_hk_path": [
+            "equipment",
+            "CubeADCS",
+            "adcs_measurements",
+            "body_rate_rad_s",
+            2
+          ],
+          "max_age_s": 120,
+          "full_hk_max_age_s": 1200
+        }
+      ]
+    },
+    {
+      "id": "p60",
+      "source_id": "p60",
+      "label": "P60 Dock",
+      "group": "EPS",
+      "anchor_body_mm": [
+        0,
+        0,
+        -32.5
+      ],
+      "size_body_mm": [
+        90,
+        96,
+        24
+      ],
+      "anchor_kind": "BOARD_CENTER_PROXY",
+      "anchor_status": "PROVISIONAL",
+      "location_note": "스택 자료의 근사 보드 중심입니다. 개별 센서의 실측 위치가 아닙니다.",
+      "geometry_role": "STACK_HOST",
+      "telemetry_status": "MAPPED_TEST_FIELDS",
+      "callout": {
+        "side": "left",
+        "order": 2
+      },
+      "readings": [
+        {
+          "id": "voltage",
+          "label": "배터리 전압",
+          "unit": "V",
+          "kind": "numeric",
+          "decimals": 1,
+          "tm": {
+            "packet": "EPS_P60",
+            "field": "battery_voltage_v"
+          },
+          "sensor_limit_key": "EPS_P60.battery_voltage_v",
+          "full_hk_path": [
+            "equipment",
+            "P60_Dock",
+            "batt_v"
+          ],
+          "max_age_s": 120,
+          "full_hk_max_age_s": 1200
+        },
+        {
+          "id": "current",
+          "label": "배터리 전류",
+          "unit": "A",
+          "kind": "numeric",
+          "decimals": 1,
+          "tm": {
+            "packet": "EPS_P60",
+            "field": "battery_current_a"
+          },
+          "sensor_limit_key": "EPS_P60.battery_current_a",
+          "full_hk_path": [
+            "equipment",
+            "P60_Dock",
+            "batt_c"
+          ],
+          "max_age_s": 120,
+          "full_hk_max_age_s": 1200
+        },
+        {
+          "id": "temperature",
+          "label": "배터리 온도",
+          "unit": "°C",
+          "kind": "numeric",
+          "decimals": 1,
+          "tm": {
+            "packet": "EPS_P60",
+            "field": "battery_temperature_c"
+          },
+          "sensor_limit_key": "EPS_P60.battery_temperature_c",
+          "full_hk_path": [
+            "equipment",
+            "P60_Dock",
+            "batt_temp",
+            0
+          ],
+          "max_age_s": 120,
+          "full_hk_max_age_s": 1200
+        }
+      ]
+    },
+    {
+      "id": "acu",
+      "source_id": "p60",
+      "label": "ACU-200",
+      "group": "EPS",
+      "anchor_body_mm": [
+        0,
+        0,
+        -32.5
+      ],
+      "size_body_mm": [
+        90,
+        96,
+        24
+      ],
+      "anchor_kind": "BOARD_CENTER_PROXY",
+      "anchor_status": "PROVISIONAL",
+      "location_note": "호스트 보드 중심을 공유합니다. 개별 모듈·센서의 횡방향 위치는 미확정입니다.",
+      "geometry_role": "SHARED_HOST_PROXY",
+      "telemetry_status": "MAPPED_TEST_FIELDS",
+      "callout": {
+        "side": "left",
+        "order": 3
+      },
+      "readings": [
+        {
+          "id": "input_voltage",
+          "label": "채널 0 입력 전압",
+          "unit": "V",
+          "kind": "numeric",
+          "decimals": 1,
+          "tm": {
+            "packet": "EPS_ACU",
+            "field": "input_voltage_0_v"
+          },
+          "full_hk_path": [
+            "equipment",
+            "ACU_200",
+            "v_in",
+            0
+          ],
+          "max_age_s": 120,
+          "full_hk_max_age_s": 1200
+        },
+        {
+          "id": "input_current",
+          "label": "채널 0 입력 전류",
+          "unit": "A",
+          "kind": "numeric",
+          "decimals": 1,
+          "tm": {
+            "packet": "EPS_ACU",
+            "field": "input_current_0_a"
+          },
+          "full_hk_path": [
+            "equipment",
+            "ACU_200",
+            "c_in",
+            0
+          ],
+          "max_age_s": 120,
+          "full_hk_max_age_s": 1200
+        },
+        {
+          "id": "temperature",
+          "label": "온도",
+          "unit": "°C",
+          "kind": "numeric",
+          "decimals": 1,
+          "tm": null,
+          "full_hk_path": [
+            "equipment",
+            "ACU_200",
+            "temp",
+            0
+          ],
+          "max_age_s": 120,
+          "full_hk_max_age_s": 1200
+        }
+      ]
+    },
+    {
+      "id": "pdu1",
+      "source_id": "p60",
+      "label": "PDU-200 1",
+      "group": "EPS",
+      "anchor_body_mm": [
+        0,
+        0,
+        -32.5
+      ],
+      "size_body_mm": [
+        90,
+        96,
+        24
+      ],
+      "anchor_kind": "BOARD_CENTER_PROXY",
+      "anchor_status": "PROVISIONAL",
+      "location_note": "호스트 보드 중심을 공유합니다. 개별 모듈·센서의 횡방향 위치는 미확정입니다.",
+      "geometry_role": "SHARED_HOST_PROXY",
+      "telemetry_status": "MAPPED_TEST_FIELDS",
+      "telemetry_note": "현재 PDU 1/2와 스택 X2/X3의 번호 대응은 미확정입니다.",
+      "callout": {
+        "side": "right",
+        "order": 3
+      },
+      "readings": [
+        {
+          "id": "voltage",
+          "label": "버스 전압",
+          "unit": "V",
+          "kind": "numeric",
+          "decimals": 1,
+          "tm": {
+            "packet": "EPS_PDU1",
+            "field": "bus_voltage_v"
+          },
+          "sensor_limit_key": "EPS_PDU1.bus_voltage_v",
+          "max_age_s": 120,
+          "full_hk_max_age_s": 1200
+        },
+        {
+          "id": "temperature",
+          "label": "온도",
+          "unit": "°C",
+          "kind": "numeric",
+          "decimals": 1,
+          "tm": {
+            "packet": "EPS_PDU1",
+            "field": "temperature_c"
+          },
+          "sensor_limit_key": "EPS_PDU1.temperature_c",
+          "max_age_s": 120,
+          "full_hk_max_age_s": 1200
+        },
+        {
+          "id": "uptime",
+          "label": "가동 시간",
+          "unit": "s",
+          "kind": "counter",
+          "decimals": 0,
+          "tm": {
+            "packet": "EPS_PDU1",
+            "field": "uptime_s"
+          },
+          "full_hk_path": [
+            "equipment",
+            "PDU_200_1",
+            "uptime"
+          ],
+          "max_age_s": 120,
+          "full_hk_max_age_s": 1200
+        }
+      ]
+    },
+    {
+      "id": "pdu2",
+      "source_id": "p60",
+      "label": "PDU-200 2",
+      "group": "EPS",
+      "anchor_body_mm": [
+        0,
+        0,
+        -32.5
+      ],
+      "size_body_mm": [
+        90,
+        96,
+        24
+      ],
+      "anchor_kind": "BOARD_CENTER_PROXY",
+      "anchor_status": "PROVISIONAL",
+      "location_note": "호스트 보드 중심을 공유합니다. 개별 모듈·센서의 횡방향 위치는 미확정입니다.",
+      "geometry_role": "SHARED_HOST_PROXY",
+      "telemetry_status": "MAPPED_TEST_FIELDS",
+      "telemetry_note": "현재 PDU 1/2와 스택 X2/X3의 번호 대응은 미확정입니다.",
+      "callout": {
+        "side": "right",
+        "order": 4
+      },
+      "readings": [
+        {
+          "id": "voltage",
+          "label": "버스 전압",
+          "unit": "V",
+          "kind": "numeric",
+          "decimals": 1,
+          "tm": {
+            "packet": "EPS_PDU2",
+            "field": "bus_voltage_v"
+          },
+          "max_age_s": 120,
+          "full_hk_max_age_s": 1200
+        },
+        {
+          "id": "temperature",
+          "label": "온도",
+          "unit": "°C",
+          "kind": "numeric",
+          "decimals": 1,
+          "tm": {
+            "packet": "EPS_PDU2",
+            "field": "temperature_c"
+          },
+          "full_hk_path": [
+            "equipment",
+            "PDU_200_2",
+            "temp"
+          ],
+          "max_age_s": 120,
+          "full_hk_max_age_s": 1200
+        },
+        {
+          "id": "uptime",
+          "label": "가동 시간",
+          "unit": "s",
+          "kind": "counter",
+          "decimals": 0,
+          "tm": {
+            "packet": "EPS_PDU2",
+            "field": "uptime_s"
+          },
+          "full_hk_path": [
+            "equipment",
+            "PDU_200_2",
+            "uptime"
+          ],
+          "max_age_s": 120,
+          "full_hk_max_age_s": 1200
+        }
+      ]
+    },
+    {
+      "id": "ifb",
+      "source_id": "ifb",
+      "label": "IFB",
+      "group": "IFB",
+      "anchor_body_mm": [
+        0,
+        0,
+        -52.5
+      ],
+      "size_body_mm": [
+        90,
+        96,
+        10
+      ],
+      "anchor_kind": "BOARD_CENTER_PROXY",
+      "anchor_status": "PROVISIONAL",
+      "location_note": "스택 자료의 근사 보드 중심입니다. 개별 센서의 실측 위치가 아닙니다.",
+      "geometry_role": "STACK_HOST",
+      "telemetry_status": "UNMAPPED",
+      "telemetry_note": "자료상 MCU가 없는 패시브 보드입니다. 독립 계측 TM은 정의되지 않았습니다.",
+      "callout": {
+        "side": "left",
+        "order": 4
+      },
+      "readings": []
+    },
+    {
+      "id": "satnogs",
+      "source_id": "satnogs",
+      "label": "SatNOGS COMMS",
+      "group": "CS",
+      "anchor_body_mm": [
+        0,
+        0,
+        -68.5
+      ],
+      "size_body_mm": [
+        90,
+        96,
+        16
+      ],
+      "anchor_kind": "BOARD_CENTER_PROXY",
+      "anchor_status": "PROVISIONAL",
+      "location_note": "스택 자료의 근사 보드 중심입니다. 개별 센서의 실측 위치가 아닙니다.",
+      "geometry_role": "STACK_HOST",
+      "telemetry_status": "UNMAPPED",
+      "telemetry_note": "새 스택 장비입니다. 기존 SRS_4의 TM·정격을 이 장비에 대신 적용하지 않습니다.",
+      "callout": {
+        "side": "right",
+        "order": 5
+      },
+      "readings": []
+    },
+    {
+      "id": "bpx",
+      "source_id": "bpx",
+      "label": "BPX 배터리",
+      "group": "EPS",
+      "anchor_body_mm": [
+        0,
+        0,
+        -100.5
+      ],
+      "size_body_mm": [
+        90,
+        96,
+        42
+      ],
+      "anchor_kind": "BOARD_CENTER_PROXY",
+      "anchor_status": "PROVISIONAL",
+      "location_note": "스택 자료의 근사 보드 중심입니다. 개별 센서의 실측 위치가 아닙니다.",
+      "geometry_role": "STACK_HOST",
+      "telemetry_status": "MAPPED_TEST_FIELDS",
+      "callout": {
+        "side": "left",
+        "order": 5
+      },
+      "readings": [
+        {
+          "id": "voltage",
+          "label": "배터리 전압",
+          "unit": "V",
+          "kind": "numeric",
+          "decimals": 1,
+          "tm": {
+            "packet": "EPS_BPX",
+            "field": "battery_voltage_v"
+          },
+          "full_hk_path": [
+            "equipment",
+            "BPX",
+            "vbatt"
+          ],
+          "max_age_s": 120,
+          "full_hk_max_age_s": 1200
+        },
+        {
+          "id": "temperature",
+          "label": "배터리 온도 0",
+          "unit": "°C",
+          "kind": "numeric",
+          "decimals": 1,
+          "tm": {
+            "packet": "EPS_BPX",
+            "field": "battery_temperature_0_c"
+          },
+          "sensor_limit_key": "EPS_BPX.battery_temperature_0_c",
+          "full_hk_path": [
+            "equipment",
+            "BPX",
+            "batt_temp1"
+          ],
+          "max_age_s": 120,
+          "full_hk_max_age_s": 1200
+        },
+        {
+          "id": "charge_current",
+          "label": "충전 전류",
+          "unit": "A",
+          "kind": "numeric",
+          "decimals": 1,
+          "tm": {
+            "packet": "EPS_BPX",
+            "field": "charge_current_a"
+          },
+          "sensor_limit_key": "EPS_BPX.charge_current_a",
+          "full_hk_path": [
+            "equipment",
+            "BPX",
+            "chargercur"
+          ],
+          "max_age_s": 120,
+          "full_hk_max_age_s": 1200
+        },
+        {
+          "id": "discharge_current",
+          "label": "방전 전류",
+          "unit": "A",
+          "kind": "numeric",
+          "decimals": 1,
+          "tm": {
+            "packet": "EPS_BPX",
+            "field": "discharge_current_a"
+          },
+          "sensor_limit_key": "EPS_BPX.discharge_current_a",
+          "full_hk_path": [
+            "equipment",
+            "BPX",
+            "dischargercur"
+          ],
+          "max_age_s": 120,
+          "full_hk_max_age_s": 1200
+        }
+      ]
+    },
+    {
+      "id": "siren",
+      "source_id": "siren",
+      "label": "SIREN",
+      "group": "SIREN",
+      "anchor_body_mm": [
+        0,
+        0,
+        -132.5
+      ],
+      "size_body_mm": [
+        90,
+        96,
+        16
+      ],
+      "anchor_kind": "BOARD_CENTER_PROXY",
+      "anchor_status": "PROVISIONAL",
+      "location_note": "스택 자료의 근사 보드 중심입니다. 개별 센서의 실측 위치가 아닙니다.",
+      "geometry_role": "STACK_HOST",
+      "telemetry_status": "MAPPED_TEST_FIELDS",
+      "callout": {
+        "side": "right",
+        "order": 6
+      },
+      "readings": [
+        {
+          "id": "hardware_state",
+          "label": "하드웨어 상태",
+          "unit": "code",
+          "kind": "code",
+          "decimals": 0,
+          "tm": {
+            "packet": "SIREN_HEALTH",
+            "field": "hardware_state"
+          },
+          "full_hk_path": [
+            "equipment",
+            "SIREN",
+            "hardware_state"
+          ],
+          "max_age_s": 120,
+          "full_hk_max_age_s": 1200
+        },
+        {
+          "id": "fault_code",
+          "label": "고장 코드",
+          "unit": "code",
+          "kind": "code",
+          "decimals": 0,
+          "tm": {
+            "packet": "SIREN_HEALTH",
+            "field": "fault_code"
+          },
+          "full_hk_path": [
+            "equipment",
+            "SIREN",
+            "fault_code"
+          ],
+          "max_age_s": 120,
+          "full_hk_max_age_s": 1200
+        },
+        {
+          "id": "risk_score",
+          "label": "위험 점수",
+          "unit": "",
+          "kind": "numeric",
+          "decimals": 1,
+          "tm": {
+            "packet": "SIREN_ALERT",
+            "field": "risk_score"
+          },
+          "full_hk_path": [
+            "equipment",
+            "SIREN",
+            "risk_score"
+          ],
+          "max_age_s": 120,
+          "full_hk_max_age_s": 1200
+        }
+      ]
+    },
+    {
+      "id": "uhf_antenna",
+      "source_id": "ant",
+      "label": "UHF 안테나",
+      "group": "CS",
+      "anchor_body_mm": [
+        0,
+        0,
+        -147
+      ],
+      "size_body_mm": [
+        90,
+        96,
+        7
+      ],
+      "anchor_kind": "BOARD_CENTER_PROXY",
+      "anchor_status": "PROVISIONAL",
+      "location_note": "스택 자료의 근사 보드 중심입니다. 개별 센서의 실측 위치가 아닙니다.",
+      "geometry_role": "STACK_HOST",
+      "telemetry_status": "UNMAPPED",
+      "telemetry_note": "ANTS1 개별 TM과 기존 전개 플래그의 대응은 확인되지 않았습니다.",
+      "callout": {
+        "side": "left",
+        "order": 6
+      },
+      "readings": []
+    }
+  ],
+  "camera": {
+    "yaw_rad": -0.98,
+    "pitch_rad": 0.48,
+    "zoom": 1
+  }
+}

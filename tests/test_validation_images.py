@@ -29,7 +29,10 @@ class ValidationImageImports(unittest.TestCase):
                         destination.parent.mkdir(parents=True,exist_ok=True)
                         if original.is_dir():shutil.copytree(original,destination,dirs_exist_ok=True)
                         else:shutil.copyfile(original,destination)
-                result=subprocess.run([sys.executable,'-c','; '.join('import '+m for m in modules)],
+                checks='; '.join('import '+m for m in modules)
+                if name=='Dockerfile':
+                    checks+='; from services.webapp.equipment import load_layout; assert len(load_layout()[0]["equipment"]) == 14'
+                result=subprocess.run([sys.executable,'-c',checks],
                     cwd=app,env=dict(os.environ,PYTHONPATH=str(app)),capture_output=True,text=True)
                 self.assertEqual(result.returncode,0,result.stderr)
 
