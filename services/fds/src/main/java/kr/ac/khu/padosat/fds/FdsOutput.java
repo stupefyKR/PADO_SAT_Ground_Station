@@ -13,6 +13,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
@@ -26,6 +27,7 @@ import org.orekit.utils.PVCoordinates;
 /** Writes a complete run to a new directory before making any result visible. */
 public final class FdsOutput {
     private static final double LIGHT_SPEED_MPS = 299792458.0;
+    private static final String PROFILE_HEADER = "schema,station_id,band,pass_id,utc,azimuth_deg,elevation_deg,range_m,range_rate_mps,carrier_hz,doppler_shift_hz,received_hz,frequency_example\n";
 
     private FdsOutput() { }
 
@@ -56,12 +58,13 @@ public final class FdsOutput {
             throw new IOException("atomic output publication is unavailable", error);
         } finally {
             if (Files.exists(staging)) {
-                try (var files = Files.list(staging)) {
-                    for (Path file : files.toList()) {
+                // walk does not follow symbolic links. The tree is our newly
+                // created staging directory, including per-pass CSV files.
+                try (var files = Files.walk(staging)) {
+                    for (Path file : files.sorted(Comparator.reverseOrder()).toList()) {
                         Files.deleteIfExists(file);
                     }
                 }
-                Files.deleteIfExists(staging);
             }
         }
     }
@@ -85,13 +88,14 @@ public final class FdsOutput {
 
     private static void writeProfile(Path directory, FdsConfig config, BoundedPropagator orbit,
                                      AbsoluteDate start, AbsoluteDate end) throws IOException {
+        Path dopplerDirectory = Files.createDirectory(directory.resolve("doppler_profiles"));
         try (BufferedWriter writer = Files.newBufferedWriter(directory.resolve("pass_information.csv"),
                      StandardCharsets.UTF_8);
              BufferedWriter requests = Files.newBufferedWriter(directory.resolve("pass_request.csv"),
                      StandardCharsets.UTF_8);
              BufferedWriter pointing = Files.newBufferedWriter(directory.resolve("antenna_pointing.csv"),
                      StandardCharsets.UTF_8)) {
-            writer.write("schema,station_id,band,pass_id,utc,azimuth_deg,elevation_deg,range_m,range_rate_mps,carrier_hz,doppler_shift_hz,received_hz,frequency_example\n");
+            writer.write(PROFILE_HEADER);
             requests.write("schema,station_id,band,pass_id,aos_utc,los_utc,minimum_elevation_deg,clipped_start,clipped_end,quality,station_parameters_status\n");
             pointing.write("schema,station_id,band,pass_id,utc,azimuth_deg,elevation_deg,quality,station_parameters_status\n");
             for (FdsConfig.Station station : config.stations()) {
@@ -102,28 +106,35 @@ public final class FdsOutput {
                             "fds.pass-request.draft.v1,%s,%s,%s,%s,%s,%.6f,%s,%s,PRELIMINARY_NOT_FOR_OPERATIONS,UNVERIFIED_TEST_VALUES%n",
                             station.id(), station.band(), pass.id(), utc(pass.aos()), utc(pass.los()),
                             station.minimumElevationDeg(), pass.clippedStart(), pass.clippedEnd()));
-                    for (AbsoluteDate time = pass.aos(); time.compareTo(pass.los()) < 0;
-                         time = time.shiftedBy(config.profileStepSeconds())) {
-                        profileRow(writer, pointing, predictor, pass, time);
+                    try (BufferedWriter doppler = Files.newBufferedWriter(
+                            dopplerDirectory.resolve(pass.id() + ".csv"), StandardCharsets.UTF_8)) {
+                        doppler.write(PROFILE_HEADER);
+                        for (AbsoluteDate time = pass.aos(); time.compareTo(pass.los()) < 0;
+                             time = time.shiftedBy(config.profileStepSeconds())) {
+                            profileRow(writer, doppler, pointing, predictor, pass, time);
+                        }
+                        profileRow(writer, doppler, pointing, predictor, pass, pass.los());
                     }
-                    profileRow(writer, pointing, predictor, pass, pass.los());
                 }
             }
         }
     }
 
-    private static void profileRow(BufferedWriter writer, BufferedWriter pointing,
+    private static void profileRow(BufferedWriter writer, BufferedWriter doppler,
+                                   BufferedWriter pointing,
                                    PassPredictor predictor,
                                    PassPredictor.Pass pass, AbsoluteDate time) throws IOException {
         PassPredictor.Observation observation = predictor.at(time);
         FdsConfig.Station station = pass.station();
         double shift = -station.carrierHz() * observation.rangeRateMps() / LIGHT_SPEED_MPS;
-        writer.write(String.format(Locale.ROOT,
+        String row = String.format(Locale.ROOT,
                 "fds.pass-information.v1,%s,%s,%s,%s,%.6f,%.6f,%.3f,%.6f,%.3f,%.6f,%.6f,%s%n",
                 station.id(), station.band(), pass.id(), utc(time), observation.azimuthDeg(),
                 observation.elevationDeg(), observation.rangeM(), observation.rangeRateMps(),
                 station.carrierHz(), shift, station.carrierHz() + shift,
-                station.exampleFrequency()));
+                station.exampleFrequency());
+        writer.write(row);
+        doppler.write(row);
         pointing.write(String.format(Locale.ROOT,
                 "fds.antenna-pointing.draft.v1,%s,%s,%s,%s,%.6f,%.6f,PRELIMINARY_NOT_FOR_OPERATIONS,UNVERIFIED_TEST_VALUES%n",
                 station.id(), station.band(), pass.id(), utc(time), observation.azimuthDeg(),

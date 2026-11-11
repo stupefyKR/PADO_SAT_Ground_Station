@@ -37,11 +37,12 @@ public final class OrbitViewWriter {
             writer.write("{\"schema\":\"fds.orbit-view.v1\",\"quality\":\"PRELIMINARY_NOT_FOR_OPERATIONS\"");
             writer.write(String.format(Locale.ROOT,
                     ",\"norad_id\":%d,\"source\":\"%s\",\"model\":\"%s\",\"input_epoch_utc\":\"%s\""
-                            + ",\"input_sha256\":\"%s\",\"generated_utc\":\"%s\""
+                            + ",\"input_sha256\":\"%s\",\"contact_schedule_sha256\":\"%s\",\"generated_utc\":\"%s\""
                             + ",\"start_utc\":\"%s\",\"end_utc\":\"%s\""
                             + ",\"sample_step_s\":%d,\"orbital_period_s\":%.3f",
                     config.noradId(), source.source(), source.model(), FdsOutput.utc(source.epoch()),
-                    FdsOutput.sha256(input), Instant.now(), FdsOutput.utc(start), FdsOutput.utc(end),
+                    FdsOutput.sha256(input), FdsOutput.sha256(file.resolveSibling("contact_schedule.csv")),
+                    Instant.now(), FdsOutput.utc(start), FdsOutput.utc(end),
                     config.ephemerisStepSeconds(), period));
             writer.write(",\"stations\":[");
             boolean firstStation = true;

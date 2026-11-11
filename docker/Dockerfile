@@ -34,7 +34,7 @@ COPY services/sim_ground/archive.py /app/services/sim_ground/archive.py
 COPY services/sim_ground/tc_journal.py /app/services/sim_ground/tc_journal.py
 COPY services/sim_ground/measurement.py /app/services/sim_ground/measurement.py
 COPY deploy/dgs_ops_gateway.py /app/deploy/dgs_ops_gateway.py
-COPY tools/pado_packet_codec.py tools/orbit_history.py tools/preview_draft_tm.py /app/tools/
+COPY tools/pado_packet_codec.py tools/orbit_history.py tools/preview_draft_tm.py tools/doppler_profiles.py tools/stage_fds_outbox.py /app/tools/
 COPY web /app/web
 # Explicitly create searchable parents: read-only file modes must never remove
 # directory traversal for the non-root service user.

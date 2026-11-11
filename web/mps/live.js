@@ -174,6 +174,7 @@ function mpsObserve(row, station) {
 }
 
 function mpsDrawPass(pass) {
+  if (!pass && typeof mpsClearDoppler === "function") mpsClearDoppler();
   const state = document.getElementById("pass-view-state");
   const note = document.getElementById("pass-view-note");
   const ground = document.getElementById("mps-ground-view");
@@ -300,6 +301,7 @@ function mpsDrawPass(pass) {
 function mpsSetOrbit(orbit) {
   mpsOrbitView = orbit;
   if (mpsSelectedPass) mpsDrawPass(mpsSelectedPass);
+  if (mpsSelectedPass && typeof mpsRefreshDoppler === "function") mpsRefreshDoppler();
 }
 
 function mpsFieldInput(name, type, editable) {
@@ -321,6 +323,7 @@ function mpsFieldInput(name, type, editable) {
 function mpsRenderSequenceEditor(pass, schedule, session, drafts) {
   mpsSelectedPass = pass;
   mpsDrawPass(pass);
+  if (typeof mpsLoadDoppler === "function") mpsLoadDoppler(pass, schedule);
   mpsRenderN10Feedback();
   const panel = document.querySelector(".draft-panel");
   const scroll = panel.querySelector(".table-scroll");

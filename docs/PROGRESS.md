@@ -1,5 +1,12 @@
 # 진행 기록
 
+## 2026-11-11 — FDS 도플러 프로파일·MPS 그래프와 CSV
+
+- 기존 FDS 관측값을 재사용해 실행 결과의 `doppler_profiles/`에 PASS별 CSV를 저장하고, MPS PASS 선택 시 UTC별 도플러 그래프·기준 주파수·표본 조회와 원본 CSV 다운로드를 연결했다. 연세대 UHF·항우연 S-band 모두 지원한다.
+- N13 본문 해시·FDS 입력·위성·예측창과 파일 무결성을 대조한 현재 프로파일만 기존 읽기 전용 FDS 볼륨에 게시한다. 로그인·환경 분리를 유지하며 일정 변경·자료 대기·지연 응답이 이전 그래프나 다운로드로 이어지지 않게 처리한다.
+- Java 자체 시험과 실제 TLE/SGP4→가상 TM→GNSS 기반 FDS 통합 smoke에서 두 지상국의 게시 결과·N13 해시·원본 CSV 바이트 일치를 확인했다. Linux HTTP 로그인·JSON/CSV·파일 게시 경계와 Node 기반 PASS 전환·그래프·다운로드 시험도 확인한다. 상세는 [도플러 안내](FDS_DOPPLER.md), 결정 [#43](DECISIONS.md)을 따른다.
+- 로컬 검증: Linux 전체 회귀 411개 중 371개 통과, Docker·Node·C 빌드 산출물 등 환경에 따른 40개 제외. 실제 Linux HTTP·게시 집중 시험 19개와 Windows Node UI·이미지 의존성 시험 9개는 모두 통과했다. Java 자체 시험·TLE/GNSS 통합 smoke도 통과했다.
+
 ## 2026-11-11 — 저장소 경로·문서·브랜치 정리
 
 - 배포 파일은 `deploy/`, 공통 이미지 Dockerfile은 `docker/`로 한 단계 줄이고 복구 안내를 `docs/RECOVERY.md`로 옮겼다. 실행기·Python import·이미지 COPY·Compose 상대경로·CI·테스트·문서 링크를 함께 변경했다. Compose의 이전 기본 프로젝트명과 검증·운용의 명시적 프로젝트명·볼륨·방화벽 정책을 유지한다.

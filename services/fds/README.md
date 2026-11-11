@@ -31,12 +31,20 @@ python3 tools/send_fds_outbox.py \
 |---|---|---|
 | `contact_schedule.csv` | 안테나별 AOS·LOS·최고 고각과 시각, 예측창 경계 잘림 표시 | N13 `CONTACT_SCHEDULE` |
 | `pass_information.csv` | 가시 구간 10초 간격 방위각·고각·거리·거리 변화율·도플러 | N15 `PASS_INFORMATION` |
+| `doppler_profiles/<pass_id>.csv` | 같은 PASS 계산에서 분리한 지상국별 도플러 프로파일. MPS 그래프·다운로드 원본 | 로컬 FDS 산출물 |
 | `orbit_ephemeris.csv` | 60초 간격 GCRF 위치(m)·속도(m/s) | N15 `ORBIT_EPHEMERIS` |
 | `pass_request.csv` | 두 지상국의 AOS·LOS, 최소 고각과 예측창 잘림 여부를 담은 시험 요청 초안 | N08 `PASS_REQUEST` — 로컬 전용 |
 | `antenna_pointing.csv` | 같은 패스의 10초 간격 방위각·고각 시험 지향값 | N08 `ANTENNA_POINTING` — 로컬 전용 |
 | `orbit_view.json` | 같은 전파 결과의 60초 간격 ITRF 위치·지상궤적·태양 방향, 두 지상국 PASS 구간 | 포털 내부 읽기 전용 화면 자료 (N2 외부 교환물 아님) |
 
 각 CSV는 버전형 스키마 열로 시작하고 UTC는 밀리초와 `Z`로 출력한다. 다섯 파일에 기존 매니페스트 스키마의 SHA-256·유형·송신자·수신자를 담은 `.manifest.json`을 붙인다. N08 두 파일의 수신처는 `dgs-gs`지만 **외부 송신 기능은 없다.** 모든 N08 행은 `PRELIMINARY_NOT_FOR_OPERATIONS`와 `UNVERIFIED_TEST_VALUES`를 명시한다. 안테나 좌표·고각 기준·주파수는 현재 시험 설정이며, N08 파일을 실제 안테나 명령이나 패스 요청으로 사용할 수 없다. 도플러 부호는 거리 변화율이 음수(접근)일 때 양수 주파수 편이이며, `-carrier_hz × range_rate_mps / c`의 1차 근사다. 패스 경계는 설정한 최소 고각을 기준으로 탐색하고 0.1초 이하까지 세분화한다. 최대 전파 기간은 72시간이다.
+
+PASS별 도플러 파일은 `pass_information.csv`에서 해당 PASS의 헤더·행을 그대로
+분리한 CSV다. 별도 전파나 웹 계산 없이 같은 관측값을 사용한다. AOS·LOS를
+포함하고 `profile_step_s` 간격으로 UTC·거리 변화율·기준 주파수·편이·수신
+주파수를 저장한다. `orbit_view.json`의 `contact_schedule_sha256`과 읽기 전용
+프로파일 묶음을 통해 MPS가 선택한 N13 일정과 일치하는 결과만 표시·다운로드한다.
+저장 경로와 화면·파일 사용법은 [도플러 프로파일 안내](../../docs/FDS_DOPPLER.md)에 있다.
 
 ## 개발 실행
 

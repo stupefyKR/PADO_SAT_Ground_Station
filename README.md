@@ -68,7 +68,7 @@ bash pado-validation.sh stop
 |---|---|
 | DGS | 외부 접점 통제, 수신 패킷 검증·격리, TC 송신 원문·TM 수신 기록 |
 | ROS | 센서 그래프·한계 초과 이벤트, RAW·파싱 조회, CAD 자세 표시·최근 3일 이력, TC 예약·응답 확인 |
-| MPS | 두 지상국 PASS와 ground track·polar plot 조회, TC 순서·인자·AOS 기준 시퀀스 구성 |
+| MPS | 두 지상국 PASS와 ground track·polar plot·도플러 그래프·CSV 조회, TC 순서·인자·AOS 기준 시퀀스 구성 |
 | FDS | TLE/SGP4와 GNSS 기반 예비 수치 전파, 최대 72시간 궤도력·PASS·도플러 산출 |
 | 검증 위성 | 500 km·98.4°·LTAN 12h 시험 궤도, −X Nadir, GNSS·장비 HK·전력/배터리 모델, 비콘·TC·저장 TM 왕복 |
 

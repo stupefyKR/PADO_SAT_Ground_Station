@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import tempfile
 from datetime import datetime, timedelta, timezone
@@ -13,9 +14,27 @@ from services.sim_ground.receiver import ContactGate, TmReceiver, load_limits
 from services.sim_sat.emulator import generate_packet_batch, load_orbit_view
 from services.webapp.tm_preview import load_snapshot
 from tools.build_synthetic_demo import run_once
+from tools.doppler_profiles import select_profile
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def check_doppler(options, expected_source: str) -> None:
+    """Check Java CSV -> atomic publication -> the web's read contract."""
+    identifier = (options.mps_schedule_dir / "current.txt").read_text(encoding="ascii").strip()
+    schedule = options.mps_schedule_dir / identifier / "contact_schedule.csv"
+    digest = hashlib.sha256(schedule.read_bytes()).hexdigest()
+    view = options.view_dir / "orbit_view.json"
+    bundle = json.loads(view.with_name("doppler_profiles.json").read_text())
+    for station in ("yonsei", "kari"):
+        pass_id = next(name for name in bundle["profiles"] if name.startswith(station + "-"))
+        profile, raw = select_profile(view, pass_id, digest)
+        assert profile["source"] == expected_source
+        assert profile["station_id"] == station
+        assert raw == (options.output_root / identifier / "doppler_profiles" / (pass_id + ".csv")).read_bytes()
+        assert profile["profile_sha256"] == hashlib.sha256(raw).hexdigest()
+    print(f"FDS {expected_source} Doppler publication and exact CSV verified for both stations")
 
 
 def main() -> None:
@@ -35,6 +54,7 @@ def main() -> None:
                                   n11_inbox=base / "n11-inbox")
         _, source = run_once(options)
         assert source == "TLE", source
+        check_doppler(options, source)
         truth_path = options.truth_view_dir / "orbit_view.json"
         view = load_orbit_view(truth_path)
         truth = json.loads(truth_path.read_text(encoding="utf-8"))
@@ -70,6 +90,7 @@ def main() -> None:
         assert operator["source"] == "GNSS"
         assert operator["norad_id"] == 99999
         assert any(options.mps_schedule_dir.iterdir())
+        check_doppler(options, source)
         print("TEST_ONLY satellite TM -> ROS snapshot + N11 -> FDS GNSS + MPS passed")
 
 

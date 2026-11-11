@@ -20,6 +20,10 @@
 .pass-view-grid{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(280px,.8fr);gap:12px;padding:12px}
 .pass-view-grid>div{min-width:0}.pass-view-grid h3{font-size:.78rem;color:#a8c5ce;margin:0 0 7px}
 .pass-view-grid canvas{width:100%;height:auto;display:block;border:1px solid #345063;background:#091b2a}
+.doppler-panel .panel-head{flex-wrap:wrap;gap:12px}.doppler-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.doppler-chart-wrap{padding:0 12px 12px}.doppler-chart-wrap canvas{display:block;width:100%;height:auto;border:1px solid #345063;background:#091b2a}
+.doppler-meta{padding:12px 15px;color:#b5d3dc;font:12px Consolas,monospace;overflow-wrap:anywhere}
+.doppler-panel .doppler-hover{min-height:38px;padding:10px 15px;color:#cde5e9;font:12px Consolas,monospace;border-top:1px solid #2a4656}
 .mps-sequence-form{display:flex;gap:8px;flex-wrap:wrap;align-items:end;padding:10px;border-bottom:1px solid #345063}
 .mps-sequence-form label{display:grid;gap:4px;color:#a8c5ce;font-size:.72rem}.mps-sequence-form input,.mps-sequence-form select{min-width:90px;max-width:180px}
 .mps-sequence-form .param-field{min-width:100px}.mps-sequence-form .param-field input{width:110px}

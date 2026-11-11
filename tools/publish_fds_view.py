@@ -10,8 +10,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 if __package__:
+    from .doppler_profiles import BUNDLE_NAME, build_bundle
     from .orbit_history import read_reconstruction, record_history
 else:
+    from doppler_profiles import BUNDLE_NAME, build_bundle
     from orbit_history import read_reconstruction, record_history
 
 
@@ -85,6 +87,7 @@ def publish(run: Path, destination: Path) -> Path:
     now = datetime.now(timezone.utc)
     if not (start <= now <= end and now - epoch < timedelta(hours=72)):
         raise ValueError("prediction does not cover now with an input younger than 72 hours")
+    doppler = build_bundle(run, payload)
     destination.mkdir(parents=True, exist_ok=True)
     final = destination / "orbit_view.json"
     if source.resolve() == final.resolve():
@@ -97,6 +100,10 @@ def publish(run: Path, destination: Path) -> Path:
         # It shares the existing read-only FDS mount but remains a separate,
         # explicitly retrospective product. It never enters forecast history.
         _atomic_publish(destination,destination / "orbit_reconstruction.json",reconstruction)
+    if doppler is not None:
+        # Publish the bounded CSV bundle first. Readers compare its schedule and
+        # orbit provenance, so the short transition cannot mix two FDS runs.
+        _atomic_publish(destination, destination / BUNDLE_NAME, doppler)
     _atomic_publish(destination,final,source.read_bytes())
     return final
 

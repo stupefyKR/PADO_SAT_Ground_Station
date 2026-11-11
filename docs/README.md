@@ -35,6 +35,7 @@
 | [TC·TM 검토·인계표](TC_TM/REVIEW_GATES.md) | CS·CDHS·장비 담당과 확정할 사항 |
 | [인터페이스 소스](../interfaces/README.md) | N2 JSON·스키마·시험 계약의 위치 |
 | [FDS](../services/fds/README.md) | TLE/GNSS 입력, 전파 모델, PASS·도플러·궤도력 산출 |
+| [PASS·도플러 프로파일](FDS_DOPPLER.md) | FDS 결과 저장 위치, MPS 그래프·CSV 다운로드 |
 | [ROS·MPS 화면 구조](STAGE9_UI.md) | 화면별 역할과 시험 흐름 |
 | [ROS 위치·자세 이력](ROS_STATE_HISTORY.md) | 최근 3일 재생, 미수신 자세·늦은 TM 반영 |
 | [ROS CAD 자세 뷰어](ROS_CAD_자세_뷰어.md) | 모델·축·표면 이미지와 지구·태양 표시 |

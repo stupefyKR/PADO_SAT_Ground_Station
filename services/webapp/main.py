@@ -39,6 +39,7 @@ from services.validation import recorder as validation_recorder
 from services.sim_ground.archive import ArchiveError, list_events, list_packets, packet_detail
 from tools.orbit_history import (HISTORY_NAME, RECONSTRUCTION_NAME, OrbitHistoryError,
     read_history as read_orbit_history, read_reconstruction)
+from tools.doppler_profiles import DopplerError, select_profile
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -89,6 +90,7 @@ ASSETS = {
     "/assets/pado-sat-surface-end.png": ("assets/pado-sat-surface-end.png", "image/png"),
     "/assets/mps-workflow.css": ("mps/workflow.css", "text/css; charset=utf-8"),
     "/assets/mps-live.js": ("mps/live.js", "text/javascript; charset=utf-8"),
+    "/assets/mps-doppler.js": ("mps/doppler.js", "text/javascript; charset=utf-8"),
     "/assets/orbit.js": ("orbit/orbit.js", "text/javascript; charset=utf-8"),
     "/assets/orbit.css": ("orbit/orbit.css", "text/css; charset=utf-8"),
     "/assets/earth-blue-marble-october.jpg": ("assets/earth-blue-marble-october.jpg", "image/jpeg"),
@@ -109,6 +111,21 @@ PROXY_ROUTES = {
     "/api/mps/test-sequences": ("mps", "/test-sequences"),
     "/api/mps/test-ros-feedback": ("ros", "/test-n10-feedback"),
 }
+
+
+def doppler_query(query: str) -> dict[str, str]:
+    """Select an immutable FDS product by its N13 digest, never by a path."""
+    if len(query) > 256:
+        raise ValueError("invalid_query")
+    pairs = parse_qsl(query, keep_blank_values=True, strict_parsing=True)
+    values = dict(pairs)
+    if (len(values) != len(pairs) or not {"pass_id", "schedule_sha256"} <= values.keys() or
+            values.keys() - {"pass_id", "schedule_sha256", "format"} or
+            not re.fullmatch(r"(?:yonsei|kari)-[A-Za-z0-9-]{1,54}", values["pass_id"]) or
+            not re.fullmatch(r"[0-9a-f]{64}", values["schedule_sha256"]) or
+            values.get("format", "json") not in ("json", "csv")):
+        raise ValueError("invalid_query")
+    return {**values, "format": values.get("format", "json")}
 
 
 def archive_query(query: str, *, events: bool = False) -> dict:
@@ -348,7 +365,12 @@ class Handler(BaseHTTPRequestHandler):
             return ""
         if parsed.query:
             kind = archive_route(parsed.path, portal=self.server.mode == "portal")
-            if parsed.path in ("/api/ros/state-history", "/state-history", "/api/fds/orbit-history"):
+            if parsed.path == "/api/fds/doppler":
+                try:
+                    doppler_query(parsed.query)
+                except ValueError:
+                    return ""
+            elif parsed.path in ("/api/ros/state-history", "/state-history", "/api/fds/orbit-history"):
                 try:
                     history_query(parsed.query,orbit=parsed.path=="/api/fds/orbit-history")
                 except ValueError:
@@ -667,6 +689,45 @@ class Handler(BaseHTTPRequestHandler):
             except (StateHistoryError,OrbitHistoryError,OSError,ValueError) as error:
                 self._error(HTTPStatus.BAD_REQUEST if str(error)=="invalid_query" else
                             HTTPStatus.SERVICE_UNAVAILABLE,str(error))
+            return
+        if path == "/api/fds/doppler":
+            if not self._session():
+                self._error(HTTPStatus.UNAUTHORIZED, "login_required")
+                return
+            try:
+                query = doppler_query(urlsplit(self.path).query)
+            except ValueError:
+                self._error(HTTPStatus.BAD_REQUEST, "invalid_query")
+                return
+            try:
+                source = self.server.orbit_view
+                if self.server.environment == "validation":
+                    source = self.server.synthetic_orbit_view or source
+                elif self.server.environment == "operations":
+                    source = self.server.operational_orbit_view or source
+                if source is None:
+                    self._error(HTTPStatus.SERVICE_UNAVAILABLE, "doppler_unavailable")
+                    return
+                payload, raw_csv = select_profile(source, query["pass_id"], query["schedule_sha256"])
+                if ((self.server.environment == "validation" and payload["norad_id"] != 99999) or
+                        (self.server.environment == "operations" and payload["norad_id"] in (25544, 99999))):
+                    self._error(HTTPStatus.SERVICE_UNAVAILABLE, "doppler_unavailable")
+                    return
+                if query["format"] == "csv":
+                    filename = f'doppler-{query["pass_id"]}-{query["schedule_sha256"][:12]}.csv'
+                    self._send(HTTPStatus.OK, raw_csv, "text/csv; charset=utf-8",
+                               extra={"Content-Disposition": f'attachment; filename="{filename}"',
+                                      "X-Pado-Schedule-SHA256": query["schedule_sha256"],
+                                      "X-Pado-Profile-SHA256": payload["profile_sha256"]})
+                else:
+                    self._json(HTTPStatus.OK, payload)
+            except DopplerError as error:
+                status = {"schedule_changed": HTTPStatus.CONFLICT,
+                          "pass_not_found": HTTPStatus.NOT_FOUND}.get(
+                              error.code, HTTPStatus.SERVICE_UNAVAILABLE)
+                self._error(status, error.code)
+            except (ValueError, KeyError, TypeError, OSError):
+                self._error(HTTPStatus.SERVICE_UNAVAILABLE, "doppler_unavailable")
             return
         if path == "/api/fds/orbit":
             if not self._session():

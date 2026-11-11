@@ -126,6 +126,8 @@ public final class FdsSelfTest {
                 "24h ephemeris cadence");
         String viewer = Files.readString(output.resolve("orbit_view.json"));
         check(viewer.contains("\"schema\":\"fds.orbit-view.v1\"") &&
+                viewer.contains("\"contact_schedule_sha256\":\"" +
+                        FdsOutput.sha256(output.resolve("contact_schedule.csv")) + "\"") &&
                 viewer.contains("\"orbital_period_s\":") &&
                 viewer.contains("\"id\":\"yonsei\"") &&
                 viewer.contains("\"id\":\"kari\"") &&
@@ -177,6 +179,7 @@ public final class FdsSelfTest {
                     "Doppler sign or magnitude");
             check(fields[12].equals("true"), "illustrative carrier must be marked");
         }
+        validateDopplerProducts(output, config.profileStepSeconds());
         check(Files.readString(output.resolve("run.properties")).contains("source=TLE"),
                 "source metadata absent");
         check(Files.readString(output.resolve("run.properties")).contains("maneuver_model=NONE"),
@@ -191,6 +194,65 @@ public final class FdsSelfTest {
         }
         rejected(() -> FdsOutput.write(output, config, selected, tle, orbit),
                 "existing output must not be replaced");
+        Path failed = temporary.resolve("failed-products");
+        rejected(() -> FdsOutput.write(failed, config, selected,
+                temporary.resolve("missing-input.tle"), orbit), "missing input hash");
+        check(!Files.exists(failed), "failed output was published");
+        try (var children = Files.list(temporary)) {
+            check(children.noneMatch(path -> path.getFileName().toString().startsWith("fds-staging-")),
+                    "failed output left nested Doppler staging files");
+        }
+    }
+
+    private static void validateDopplerProducts(Path output, int stepSeconds) throws IOException {
+        List<String> aggregate = Files.readAllLines(output.resolve("pass_information.csv"));
+        List<String> schedule = Files.readAllLines(output.resolve("contact_schedule.csv"));
+        Path directory = output.resolve("doppler_profiles");
+        try (var files = Files.list(directory)) {
+            check(files.count() == schedule.size() - 1, "per-pass Doppler count differs from N13");
+        }
+        for (String contactLine : schedule.subList(1, schedule.size())) {
+            String[] contact = contactLine.split(",");
+            String passId = contact[3];
+            List<String> expectedRows = aggregate.stream().skip(1)
+                    .filter(line -> line.split(",")[3].equals(passId)).toList();
+            check(!expectedRows.isEmpty(), "scheduled pass has no Doppler samples");
+            Path csv = directory.resolve(passId + ".csv");
+            String expected = aggregate.get(0) + "\n" +
+                    String.join(System.lineSeparator(), expectedRows) + System.lineSeparator();
+            check(Files.readString(csv).equals(expected),
+                    "Doppler CSV differs from calculated aggregate for " + passId);
+            check(expectedRows.get(0).split(",")[4].equals(contact[4]) &&
+                    expectedRows.get(expectedRows.size() - 1).split(",")[4].equals(contact[5]),
+                    "Doppler profile omits AOS or LOS");
+            Instant previous = null;
+            for (String row : expectedRows) {
+                String[] values = row.split(",");
+                check(values.length == 13 && values[0].equals("fds.pass-information.v1") &&
+                        values[1].equals(contact[1]) && values[2].equals(contact[2]),
+                        "Doppler station or schema mismatch");
+                Instant stamp = Instant.parse(values[4]);
+                if (previous != null) {
+                    long interval = stamp.toEpochMilli() - previous.toEpochMilli();
+                    check(interval > 0 && interval <= stepSeconds * 1000L + 1L,
+                            "Doppler sample order or cadence");
+                }
+                previous = stamp;
+                for (int column = 5; column <= 11; column++) {
+                    check(Double.isFinite(Double.parseDouble(values[column])),
+                            "nonfinite Doppler profile value");
+                }
+                double rate = Double.parseDouble(values[8]);
+                double carrier = Double.parseDouble(values[9]);
+                double shift = Double.parseDouble(values[10]);
+                double received = Double.parseDouble(values[11]);
+                check(Math.abs(shift + carrier * rate / 299792458.0) < 0.001 &&
+                        Math.abs(received - carrier - shift) < 0.001,
+                        "Doppler frequency formula");
+                check((rate >= -0.001 || shift > 0.0) && (rate <= 0.001 || shift < 0.0),
+                        "Doppler approach/recession sign");
+            }
+        }
     }
 
     private static void validateNumerical72h(Path fixture, Path temporary) throws Exception {
@@ -214,6 +276,7 @@ public final class FdsSelfTest {
                 "GNSS source metadata absent");
         check(Files.readAllLines(output.resolve("contact_schedule.csv")).size() > 2,
                 "72h GNSS passes absent");
+        validateDopplerProducts(output, config.profileStepSeconds());
     }
 
     private static void check(boolean success, String message) {
